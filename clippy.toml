@@ -1,0 +1,5 @@
+# clippy.toml — KaiCad lint configuration
+msrv = "2024"
+warn = ["clippy::all"]
+deny = ["clippy::correctness"]
+allow = ["clippy::match_same_arms"]

@@ -1,0 +1,12 @@
+[package]
+name = "renderer"
+version = "0.1.0"
+edition = "2024"
+description = "KaiCad Vulkan-based rendering engine"
+
+[dependencies]
+core = { path = "../core" }
+ash = "0.38"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }

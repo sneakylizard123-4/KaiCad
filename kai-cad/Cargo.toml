@@ -1,0 +1,19 @@
+[package]
+name = "kai-cad"
+version = "0.1.0"
+edition = "2024"
+description = "KaiCad — Modern EDA application in Rust"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+
+[[bin]]
+name = "kai-cad"
+path = "src/main.rs"
+
+[dependencies]
+core = { path = "core" }
+schematic = { path = "schematic" }
+pcb = { path = "pcb" }
+renderer = { path = "renderer" }
+ai = { path = "ai" }
+collab = { path = "collab" }

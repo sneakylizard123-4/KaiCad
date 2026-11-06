@@ -1,0 +1,28 @@
+[workspace]
+
+members = [
+    "core",
+    "schematic",
+    "pcb",
+    "renderer",
+    "ai",
+    "collab"
+]
+
+[profile.dev]
+debug = true
+lto = false
+incremental = true
+panic = "abort"
+
+[profile.release]
+debug = false
+lto = true
+incremental = true
+panic = "abort"
+opt-level = "z"
+codegen-units = 1
+parallel = false
+debug-assertions = false
+overflow-checks = false
+relocation-model = "pie"
