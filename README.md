@@ -32,7 +32,7 @@
 ### Building
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/KaiCad.git
+git clone https://github.com/sneakylizard123-4/KaiCad.git
 cd KaiCad
 
 # Build the workspace
