@@ -1,7 +1,5 @@
 //! PCB layer definitions.
 
-use serde::{Serialize, Deserialize};
-
 /// A PCB layer (copper, silk screen, mask, etc.).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LayerDefinition {

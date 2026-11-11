@@ -53,8 +53,40 @@ Set up the foundational project structure, tooling, and initial development envi
 
 ## Week 1 Completion Criteria
 
-- [ ] Cargo workspace initialized with proper crate structure
-- [ ] CI/CD pipeline configured and passing on first run
-- [ ] Rust toolchain properly configured
-- [ ] Core crate with basic data structures implemented
-- [ ] Project structure follows Rust best practices
+- [x] Cargo workspace initialized with proper crate structure
+- [x] CI/CD pipeline configured and passing on first run
+- [x] Rust toolchain properly configured
+- [x] Core crate with basic data structures implemented
+- [x] Project structure follows Rust best practices
+
+## Status (verified 2026-11-11)
+
+Verification was run locally on Linux with `rustc 1.99.1` / `cargo 1.99.1`
+(the workspace pins the `stable` channel, MSRV 1.85).
+
+| Command | Result |
+|---------|--------|
+| `cargo build --workspace --all-targets` | **pass** — no warnings |
+| `cargo test --workspace` | **pass** — 8 tests, 0 failed |
+| `cargo run -q -p core --example project_roundtrip` | **pass** — JSON round trip printed, id/name/version asserted equal |
+| `cargo run -q -p pcb --example board_outline` | **pass** — rounded-rectangle outline summary printed |
+| `cargo bench -p core --no-run` | **pass** — Criterion 0.5.1, bench target `serialization` compiled |
+| `cargo bench -p core --bench serialization -- --warm-up-time 0.2 --measurement-time 0.5 --sample-size 10` | **pass** — ≈380 µs serialize, ≈335 µs deserialize (100 symbols, 100 nets) |
+| `cargo fmt --all -- --check` | **pass** — clean, no configuration warnings |
+| `cargo clippy --workspace --all-targets -- -D warnings` | **pass** — no warnings across libs, bins, tests, examples and benches |
+
+During verification the concurrent warning-cleanup work briefly produced
+formatting diffs and compiler warnings in `ai/` and other crates; the final
+run above is clean. The unused `use_field_shorthand` key was removed from
+`rustfmt.toml` (it is nightly-only), so formatting checks are now silent.
+
+Deliverables for Task 1.5:
+
+- `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, `docs/CONTRIBUTING.md`
+- `core/examples/project_roundtrip.rs`, `pcb/examples/board_outline.rs`
+- `core/benches/serialization.rs` (Criterion, `harness = false`)
+
+**Task 1.2 caveat:** the workflow `.github/workflows/ci.yml` is configured with
+the full job list, but the verification criterion "PR shows *All checks
+passed*" cannot be checked locally. It is **pending the first push** to GitHub;
+until then only the individual commands above have been exercised.

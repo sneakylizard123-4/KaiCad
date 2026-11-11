@@ -1,8 +1,6 @@
 //! Vulkan pipeline management.
 
-use ash::{Instance, Device};
-use ash::vk::{SurfaceKHR, Format, Extent2D, ShaderModule, PrimitiveTopology, PhysicalDevice};
-use ash::khr::swapchain;
+use ash::vk::{PrimitiveTopology, ShaderModule};
 
 /// Graphics pipeline state.
 #[derive(Debug, Clone, Default)]

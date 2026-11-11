@@ -1,8 +1,5 @@
 //! Graph-based schematic operations.
 
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
-
 /// Graph representation for schematic connectivity.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Graph {
@@ -21,7 +18,8 @@ pub struct Node {
 /// Type of graph node.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub enum NodeType {
-    #[default] Symbol,
+    #[default]
+    Symbol,
     Net,
 }
 

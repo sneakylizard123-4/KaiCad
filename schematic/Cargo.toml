@@ -12,3 +12,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 core = { path = "../core" }
+
+[lints]
+workspace = true

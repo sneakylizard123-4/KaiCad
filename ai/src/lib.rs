@@ -4,15 +4,13 @@
 //! and design analysis. All AI outputs undergo deterministic validation before
 //! being applied to the design.
 
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
-use serde_json::Value;
-
 pub mod optimizer;
 pub mod suggester;
 pub mod validator;
 
 /// kAI assistant configuration.
+// "kAI" is the product's brand name for the AI subsystem.
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
 pub struct kAIConfig {
     pub model_endpoint: String,
@@ -33,6 +31,8 @@ impl Default for kAIConfig {
 }
 
 /// kAI assistant — main entry point for AI assistance.
+// "kAI" is the product's brand name for the AI subsystem.
+#[allow(non_camel_case_types)]
 pub struct kAI {
     pub config: kAIConfig,
 }
@@ -43,12 +43,18 @@ impl kAI {
     }
 
     /// Request AI-generated optimization suggestions for a circuit.
-    pub fn suggest_optimization(&self, _context: OptimizationContext) -> Result<OptimizationSuggestion, kAIError> {
+    pub fn suggest_optimization(
+        &self,
+        _context: OptimizationContext,
+    ) -> Result<OptimizationSuggestion, kAIError> {
         Err(kAIError::NotImplemented)
     }
 
     /// Validate an AI-generated suggestion before applying it to the design.
-    pub fn validate_suggestion(&self, _suggestion: &OptimizationSuggestion) -> Result<ValidationResult, kAIError> {
+    pub fn validate_suggestion(
+        &self,
+        _suggestion: &OptimizationSuggestion,
+    ) -> Result<ValidationResult, kAIError> {
         Err(kAIError::NotImplemented)
     }
 }
@@ -113,6 +119,8 @@ pub struct ValidationError {
 }
 
 /// kAI error types.
+// "kAI" is the product's brand name for the AI subsystem.
+#[allow(non_camel_case_types)]
 #[derive(Debug)]
 pub enum kAIError {
     NotImplemented,

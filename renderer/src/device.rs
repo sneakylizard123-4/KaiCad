@@ -1,11 +1,9 @@
 //! Vulkan device management.
 
-use ash::{Instance, Device};
-use ash::vk::{SurfaceKHR, Format, Extent2D, ShaderModule, PrimitiveTopology, PhysicalDevice};
-use ash::khr::swapchain;
+use ash::Device;
+use ash::vk::PhysicalDevice;
 
 /// Vulkan GPU device wrapper.
-
 pub struct VulkanDevice {
     pub physical: PhysicalDevice,
     pub logical: Device,

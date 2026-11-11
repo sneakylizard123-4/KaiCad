@@ -6,61 +6,41 @@ on:
   pull_request:
     branches: [ main ]
 
+# Single job: the workspace is small, so a matrix would only duplicate the
+# toolchain download and the dependency build.
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-      - name: Check compilation
-        run: cargo check --verbose
-      - name: Run Clippy
-        run: cargo clippy --verbose
-      - name: Run rustfmt
-        run: cargo fmt --check
-      - name: Run tests
-        run: cargo test --verbose
-      - name: Build debug binary
-        run: cargo build --verbose
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check compilation
+        run: cargo check --workspace --all-targets
+
+      # `-D warnings` is applied only to Clippy, not through a global
+      # RUSTFLAGS, because global flags also apply to dependencies and build
+      # scripts, where warnings are outside our control.
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: Run tests
-        run: cargo test --verbose
-      - name: Generate coverage report
-        run: cargo install cargo-llvm-cov
-        run: cargo llvm-cov run
+        run: cargo test --workspace
+
+      - name: Build release binaries
+        run: cargo build --workspace --release

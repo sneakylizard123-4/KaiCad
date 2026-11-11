@@ -1,8 +1,6 @@
 //! Vulkan swapchain management.
 
-use ash::{Instance, Device};
-use ash::vk::{SurfaceKHR, Format, Extent2D, ShaderModule, PrimitiveTopology, PhysicalDevice};
-use ash::khr::swapchain;
+use ash::vk::{Extent2D, Format};
 
 /// Vulkan swapchain for presentation.
 #[derive(Debug, Clone, Default)]

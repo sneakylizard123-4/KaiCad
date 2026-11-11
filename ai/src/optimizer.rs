@@ -1,7 +1,5 @@
 //! Circuit optimization algorithms.
 
-use serde::{Serialize, Deserialize};
-
 /// Circuit optimizer.
 #[derive(Debug, Clone, Default)]
 pub struct CircuitOptimizer {

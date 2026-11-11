@@ -1,7 +1,5 @@
 //! PCB routing algorithms.
 
-use serde::{Serialize, Deserialize};
-
 /// Router for generating copper traces.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Router {

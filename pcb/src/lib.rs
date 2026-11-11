@@ -4,9 +4,6 @@ pub mod footprint;
 pub mod layer;
 pub mod routing;
 
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
-
 /// Represents a complete PCB design.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PcbDesign {

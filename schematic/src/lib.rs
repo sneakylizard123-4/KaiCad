@@ -1,12 +1,10 @@
 //! KaiCad schematic engine — netlist generation, symbol management, ERC.
 
-pub mod netlist;
-pub mod graph;
 pub mod erc;
+pub mod graph;
+pub mod netlist;
 
-use core::{symbol::Symbol, net::Net};
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
+use core::{net::Net, symbol::Symbol};
 
 /// Represents a complete netlist extracted from a schematic.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

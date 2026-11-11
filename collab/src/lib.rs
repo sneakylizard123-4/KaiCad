@@ -4,9 +4,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub mod versioning;
-pub mod sync;
 pub mod sharing;
+pub mod sync;
+pub mod versioning;
 pub mod window;
 
 /// Collaboration session for sharing projects between users.
@@ -49,12 +49,15 @@ pub struct CollabManager {
     pub versions: Vec<VersionEntry>,
 }
 
+impl Default for CollabManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CollabManager {
     pub fn new() -> Self {
-        Self {
-            sessions: Vec::new(),
-            versions: Vec::new(),
-        }
+        Self { sessions: Vec::new(), versions: Vec::new() }
     }
 
     pub fn create_session(&mut self, _project_id: Uuid, _owner_id: Uuid) -> CollabSession {

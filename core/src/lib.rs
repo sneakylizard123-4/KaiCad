@@ -1,13 +1,13 @@
 //! KaiCad core library — shared types, enums, and traits used across all crates.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-pub mod project;
 pub mod component;
-pub mod symbol;
 pub mod net;
+pub mod project;
 pub mod sheet;
+pub mod symbol;
 
 /// Root project data structure containing all design data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +86,7 @@ pub struct Stackup {}
 pub mod pcb {
     //! PCB-specific core types.
 
-    use super::{Serialize, Deserialize};
+    use super::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct Footprint {}

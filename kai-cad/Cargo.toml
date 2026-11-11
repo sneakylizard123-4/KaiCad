@@ -17,3 +17,6 @@ pcb = { path = "../pcb" }
 renderer = { path = "../renderer" }
 ai = { path = "../ai" }
 collab = { path = "../collab" }
+
+[lints]
+workspace = true

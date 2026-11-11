@@ -146,6 +146,11 @@ $RECYCLE.BIN/
 target/
 Cargo.lock
 
+# Rust-specific (tooling / documentation output)
+/docs/book/
+*.profraw
+criterion/
+
 # IDE
 .idea/
 .vscode/

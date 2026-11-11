@@ -1,7 +1,5 @@
 //! Footprint definitions for PCB design.
 
-use serde::{Serialize, Deserialize};
-
 /// A PCB footprint representing a component's physical dimensions and properties.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Footprint {
@@ -49,11 +47,45 @@ impl Default for OutlineShape {
 }
 
 impl OutlineShape {
-    fn rectangle(x: f64, y: f64, width: f64, height: f64) -> Self {
+    /// Construct an axis-aligned rectangular outline.
+    pub fn rectangle(x: f64, y: f64, width: f64, height: f64) -> Self {
         Self::Rectangle { x, y, width, height }
     }
 
-    fn rounded_rectangle(x: f64, y: f64, width: f64, height: f64, radius: f64) -> Self {
+    /// Construct a rectangular outline with rounded corners of the given radius.
+    pub fn rounded_rectangle(x: f64, y: f64, width: f64, height: f64, radius: f64) -> Self {
         Self::RoundedRectangle { x, y, width, height, radius }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OutlineShape;
+
+    #[test]
+    fn rectangle_stores_dimensions() {
+        match OutlineShape::rectangle(1.0, 2.0, 3.0, 4.0) {
+            OutlineShape::Rectangle { x, y, width, height } => {
+                assert_eq!(x, 1.0);
+                assert_eq!(y, 2.0);
+                assert_eq!(width, 3.0);
+                assert_eq!(height, 4.0);
+            }
+            other => panic!("expected Rectangle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rounded_rectangle_stores_dimensions_and_radius() {
+        match OutlineShape::rounded_rectangle(1.0, 2.0, 3.0, 4.0, 0.5) {
+            OutlineShape::RoundedRectangle { x, y, width, height, radius } => {
+                assert_eq!(x, 1.0);
+                assert_eq!(y, 2.0);
+                assert_eq!(width, 3.0);
+                assert_eq!(height, 4.0);
+                assert_eq!(radius, 0.5);
+            }
+            other => panic!("expected RoundedRectangle, got {other:?}"),
+        }
     }
 }

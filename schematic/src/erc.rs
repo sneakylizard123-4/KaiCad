@@ -1,7 +1,5 @@
 //! Electrical rule checking for schematics.
 
-use serde::{Serialize, Deserialize};
-
 /// Electrical rule check result.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ERCResult {

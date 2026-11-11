@@ -1,7 +1,5 @@
 //! Netlist generation and management.
 
-use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 use core::symbol::Symbol;
 
 /// Netlist for a schematic design.
@@ -25,7 +23,8 @@ pub struct Net {
 /// Electrical net class.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub enum NetClass {
-    #[default] Default,
+    #[default]
+    Default,
     Power,
     Signal,
     HighSpeed,

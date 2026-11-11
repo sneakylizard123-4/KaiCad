@@ -2,15 +2,15 @@
 //!
 //! Provides GPU-accelerated 2D/3D visualization of schematics and PCBs.
 
-pub mod window;
 pub mod device;
-pub mod swapchain;
-pub mod render_pass;
 pub mod pipeline;
+pub mod render_pass;
+pub mod swapchain;
+pub mod window;
 
-use ash::{Instance, Device};
-use ash::vk::{SurfaceKHR, Format, Extent2D, ShaderModule, PrimitiveTopology, PhysicalDevice};
 use ash::khr::swapchain as ash_swapchain;
+use ash::vk::SurfaceKHR;
+use ash::{Device, Instance};
 
 /// Vulkan renderer configuration.
 #[derive(Debug, Clone)]
@@ -23,12 +23,7 @@ pub struct RendererConfig {
 
 impl Default for RendererConfig {
     fn default() -> Self {
-        Self {
-            width: 1920,
-            height: 1080,
-            fullscreen: false,
-            vsync: true,
-        }
+        Self { width: 1920, height: 1080, fullscreen: false, vsync: true }
     }
 }
 
