@@ -1,4 +1,5 @@
 [workspace]
+resolver = "3"
 
 members = [
     "core",
@@ -6,7 +7,8 @@ members = [
     "pcb",
     "renderer",
     "ai",
-    "collab"
+    "collab",
+    "kai-cad",
 ]
 
 [profile.dev]
@@ -22,7 +24,5 @@ incremental = true
 panic = "abort"
 opt-level = "z"
 codegen-units = 1
-parallel = false
 debug-assertions = false
 overflow-checks = false
-relocation-model = "pie"

@@ -11,9 +11,9 @@ name = "kai-cad"
 path = "src/main.rs"
 
 [dependencies]
-core = { path = "core" }
-schematic = { path = "schematic" }
-pcb = { path = "pcb" }
-renderer = { path = "renderer" }
-ai = { path = "ai" }
-collab = { path = "collab" }
+core = { path = "../core" }
+schematic = { path = "../schematic" }
+pcb = { path = "../pcb" }
+renderer = { path = "../renderer" }
+ai = { path = "../ai" }
+collab = { path = "../collab" }
