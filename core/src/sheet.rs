@@ -23,11 +23,7 @@ pub struct Wire {
 }
 
 /// A point on a wire.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct WirePoint {
-    pub x: f64,
-    pub y: f64,
-}
+pub type WirePoint = crate::geometry::Point;
 
 /// A label on a schematic sheet (net naming).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

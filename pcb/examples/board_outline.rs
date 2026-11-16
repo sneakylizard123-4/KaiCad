@@ -1,4 +1,4 @@
-//! Construct a board-outline shape and print a short summary.
+//! Construct a board outline and layer stack, then print a short summary.
 //!
 //! Run with:
 //!
@@ -6,27 +6,20 @@
 //! cargo run -p pcb --example board_outline
 //! ```
 
-use pcb::footprint::{Outline, OutlineShape};
-
-fn describe(shape: &OutlineShape) -> String {
-    match shape {
-        OutlineShape::Rectangle { x, y, width, height } => {
-            format!("rectangle at ({x}, {y}) sized {width} x {height} mm")
-        }
-        OutlineShape::RoundedRectangle { x, y, width, height, radius } => format!(
-            "rounded rectangle at ({x}, {y}) sized {width} x {height} mm, radius {radius} mm"
-        ),
-    }
-}
+use pcb::PcbDesign;
 
 fn main() {
-    // `OutlineShape` exposes `rectangle()` and `rounded_rectangle()`
-    // constructors; building the variants directly works just as well.
-    let outline = OutlineShape::rounded_rectangle(0.0, 0.0, 100.0, 80.0, 3.0);
-    let footprint_outline = Outline { shape: outline.clone(), copper: false };
+    let mut design =
+        PcbDesign { outline: core::PcbOutline::rectangle(100.0, 80.0), ..PcbDesign::default() };
+    design.layers.push(core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper));
+    design.stackup.layers.push(0);
 
     println!("KaiCad board outline example (pre-alpha)");
-    println!("  shape:  {}", describe(&outline));
-    println!("  copper: {}", footprint_outline.copper);
-    println!("  corners: 4 (2D footprint outline; no layer or stackup data yet)");
+    println!("  outline points:      {}", design.outline.points.len());
+    println!("  outline closed:      {}", design.outline.is_closed());
+    println!("  layers:              {}", design.layers.len());
+    println!("  copper layers:       {}", design.copper_layer_count());
+    for layer in &design.layers {
+        println!("    [{}] {} ({:?})", layer.id, layer.name, layer.kind);
+    }
 }

@@ -19,8 +19,8 @@ graph TD
     schematic["schematic<br/>netlist · graph · ERC"]
     pcb["pcb<br/>footprint · layer · routing"]
     renderer["renderer<br/>Vulkan via ash"]
-    ai["ai (kAI)<br/>suggest · optimize · validate"]
-    collab["collab<br/>sessions · versioning · sync"]
+    ai["ai (kAI)<br/>suggest · validate"]
+    collab["collab<br/>sessions · versioning · sharing"]
 
     app --> core
     app --> schematic
@@ -31,123 +31,201 @@ graph TD
 
     schematic --> core
     pcb --> core
-    pcb --> collab
-    renderer --> core
     ai --> core
     ai --> schematic
     collab --> core
 ```
 
 Arrows mean "depends on". `core` sits at the bottom of the graph and must not
-depend on any other workspace crate. The only cross-engine edge today is
-`pcb -> collab` (declared in `pcb/Cargo.toml`; not yet used by `pcb` code).
+depend on any other workspace crate. There are no cross-engine edges between
+`schematic` and `pcb`: both depend only on `core`. `renderer` has no workspace
+dependencies at all (only `ash` and `serde`); it is wired into the application
+binary, not into the data model.
 
 ## Application layering
 
 ```mermaid
 flowchart BT
     data["Data model<br/>core"]
-    engines["Engines<br/>schematic · pcb"]
+    schematic["Schematic engine<br/>schematic"]
+    pcb["PCB engine<br/>pcb"]
     render["Renderer<br/>renderer (Vulkan)"]
-    ui["UI / application shell<br/>kai-cad"]
     ai["AI subsystem<br/>ai (kAI)"]
     collab["Collaboration<br/>collab"]
+    ui["UI / application shell<br/>kai-cad"]
 
-    engines --> data
-    render --> data
-    ui --> engines
-    ui --> render
+    schematic --> data
+    pcb --> data
     ai --> data
-    ai --> engines
+    ai --> schematic
     collab --> data
+    ui --> data
+    ui --> schematic
+    ui --> pcb
+    ui --> render
+    ui --> ai
+    ui --> collab
 ```
 
-The UI layer is currently only a CLI stub (`kai-cad/src/main.rs` prints version
-information); a custom GUI is planned but not started. The AI and collaboration
-layers are optional: KaiCad must remain usable without AI, network access or
-external services (`PRD.md` §1.2, §1.3).
+The UI layer is currently only a CLI (`kai-cad/src/main.rs`): it prints a
+banner, supports `--help`/`--version`, and runs a deterministic self-check that
+calls every subsystem. A custom GUI is planned but not started. The AI and
+collaboration layers are optional: KaiCad must remain usable without AI,
+network access or external services (`PRD.md` §1.2, §1.3).
+
+## Core data model
+
+`core` is the single source of truth for design data. Dependencies: `serde`,
+`serde_json`, `uuid`, `chrono`. No workspace dependencies.
+
+| Module | Public types / functions | Purpose |
+|--------|--------------------------|---------|
+| `component` | `Component`, `ComponentProperty` | Instance linking a symbol to a footprint |
+| `geometry` | `Point` | 2D point in millimetres with `distance_to` |
+| `net` | `Net`, `NetClass` | Named connectivity and design-rule class |
+| `pcb` | `PcbOutline`, `PcbLayer`, `LayerKind`, `Stackup` | Board outline, layers and layer order |
+| `project` | `Project`, `SchematicData`, `PcbData`, `ProjectMetadata` | Root document and its sections |
+| `proposal` | `ChangeProposal` | Field-level change shared by `ai` and `collab` |
+| `serialization` | `Error`, `Result`, `to_json`, `to_json_pretty`, `from_json`, `save`, `load` | JSON encoding and file persistence |
+| `sheet` | `Sheet`, `Wire`, `Label` and position/type enums | Hierarchical sheets, wires, labels |
+| `symbol` | `Symbol`, `Pin` and direction/position/type enums | Schematic symbol and pins |
+
+All public types derive `serde::Serialize`/`Deserialize`.
+
+### Serialization API
+
+`core::serialization` provides generic helpers plus inherent methods on
+`Project`:
+
+```rust
+use core::Project;
+use core::serialization::{from_json, load, save, to_json, to_json_pretty};
+
+let project = Project::new("demo");
+let compact = to_json(&project)?;          // String
+let pretty = to_json_pretty(&project)?;    // indented String
+let decoded: Project = from_json(&pretty)?;
+save(&project, "out/demo.json")?;          // creates parent directories
+let loaded: Project = load("out/demo.json")?;
+
+// Equivalent convenience methods:
+let compact = project.to_json()?;
+let decoded = Project::from_json(&compact)?;
+project.save("out/demo.json")?;
+let loaded = Project::load("out/demo.json")?;
+```
+
+`save` creates missing parent directories and writes pretty JSON. `Error`
+distinguishes `Json` and `Io` failures and implements `std::error::Error`.
+
+### Consolidation
+
+The Week 1 cleanup removed the duplicated types that used to blur crate
+boundaries:
+
+- **One `Netlist`.** `schematic::netlist::Netlist` is the only definition;
+  `schematic::lib.rs` re-exports it. `generate_netlist` and `Graph` both use it.
+- **One `ChangeProposal`.** `core::ChangeProposal` is shared by `ai` and
+  `collab` (`ai` re-exports it; `collab::sync` re-exports it) instead of each
+  crate defining its own.
+- **One set of PCB primitives.** `core::pcb::{PcbOutline, PcbLayer, Stackup}`
+  and `core::Point` are used by `pcb::PcbDesign`, so the project document and
+  the PCB engine speak the same types.
+- **Versioning lives in `collab`.** The orphaned `pcb/src/versioning.rs` was
+  deleted; `collab::VersioningManager` owns version history.
+- **No copied modules.** `renderer` no longer contains a copy of the `collab`
+  module and declares no workspace dependencies.
 
 ## What each crate owns
 
-### `core` — shared data model
-
-The single source of truth for design data. Dependencies: `serde`,
-`serde_json`, `uuid`, `chrono`. No workspace dependencies.
-
-| Type | Location | Purpose |
-|------|----------|---------|
-| `Project` | `core/src/lib.rs` | Root document: `id`, `name`, `version`, `schematic`, `pcb`, `metadata` |
-| `SchematicData` | `core/src/lib.rs` | `sheets`, `symbols`, `nets` |
-| `PcbData` | `core/src/lib.rs` | `outline`, `layers`, `stackup`, `footprints` |
-| `ProjectMetadata` | `core/src/lib.rs` | Timestamps, author, description |
-| `Symbol`, `Pin` | `core/src/symbol.rs` | Schematic symbol, pin type/position/direction |
-| `Net`, `NetClass` | `core/src/net.rs` | Named connectivity and design-rule class |
-| `Sheet`, `Wire`, `Label` | `core/src/sheet.rs` | Hierarchical sheets, wires, labels |
-| `Component` | `core/src/component.rs` | Instance linking a symbol to a footprint |
-
-All public types derive `serde::Serialize`/`Deserialize`. `PcbOutline`,
-`PcbLayer`, `Stackup` and `core::pcb::Footprint` are empty placeholders.
-
 ### `schematic` — schematic engine
 
-Dependencies: `core`, `petgraph`, `serde`, `uuid`. Modules:
+Dependencies: `core`, `serde`, `uuid`. Modules:
 
-- `netlist` — `Netlist`, `Connection`, `PinRef`; `generate_netlist()` is a stub
-  that returns an empty netlist.
+- `netlist` — `Netlist`, `Connection`, `PinRef` and `generate_netlist`.
+  `generate_netlist` indexes every symbol pin by `Pin::id`, walks each net's
+  pins in order, and emits a `Connection` for every adjacent pair that resolves
+  to a known pin. Unknown pin ids are skipped.
 - `graph` — hand-rolled connectivity `Graph` of symbol/net `Node`s and `Edge`s.
-  (`petgraph` is declared as a dependency but not used yet.)
-- `erc` — `ERCResult`, `Violation`, `ViolationSeverity`; no rules implemented.
-
-`Netlist` is currently defined twice: once at the crate root (`lib.rs`, used by
-`generate_netlist`) and once in `netlist.rs`. Unifying them is future work.
+  `Graph::from_netlist` builds one node per symbol and per net, and one edge per
+  connection whose endpoints are known symbols; `node_count`/`edge_count`
+  report the sizes.
+- `erc` — `run_erc`, `ERCResult`, `Violation`, `ViolationSeverity`.
 
 ### `pcb` — PCB engine
 
-Dependencies: `core`, `collab`, `serde`, `uuid`, `chrono`. Modules:
+Dependencies: `core`, `serde`, `uuid`. Modules:
 
 - `footprint` — `Footprint`, `PadPosition`, `PadType`, `Outline`,
   `OutlineShape::{Rectangle, RoundedRectangle}`.
-- `layer` — `LayerDefinition`, `LayerType`.
+- `layer` — `LayerStack` (`new`, `push`, `len`, `is_empty`, `copper_layers`,
+  `find`) over `core::PcbLayer`.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
-  Hybrid}`, `OptimizationStrategy`.
+  Hybrid}`, `RoutingOptimization`.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
-  `tracks`, `vias`), `Track`, `Via`, and a private `geometry::Point` type.
+  `tracks`, `vias`) built on `core::PcbOutline`/`core::PcbLayer`/
+  `core::Stackup`/`core::Point`, plus `Track` and `Via`.
 
-No routing algorithm or board geometry computation is implemented yet.
+`PcbDesign::copper_layer_count` is implemented and honours the stackup. No
+routing algorithm or board geometry computation exists yet.
 
 ### `renderer` — Vulkan rendering engine
 
-Dependencies: `core`, `ash` (Vulkan bindings), `serde`, `serde_json`, `uuid`.
-Modules: `window`, `device`, `swapchain`, `render_pass`, `pipeline`.
-`Renderer::new()` and `Renderer::render()` return
-`Err(RendererError::NotImplemented)`. `ash` loads the Vulkan loader at runtime,
-so the workspace builds on machines without a Vulkan SDK.
+Dependencies: `ash` (Vulkan bindings) and `serde` only. Modules: `window`,
+`device`, `swapchain`, `render_pass`, `pipeline`.
+
+- `RendererConfig { window: WindowConfig, vsync }`.
+- `WindowConfig { title, width, height, resizable, fullscreen }` with
+  `aspect_ratio()`.
+- `Renderer::new()` and `Renderer::render()` return
+  `Err(RendererError::NotImplemented)`; **no Vulkan objects are created yet.**
+
+`ash` loads the Vulkan loader at runtime, so the workspace builds on machines
+without a Vulkan SDK.
 
 ### `ai` — kAI subsystem
 
 Dependencies: `core`, `schematic`, `serde`, `serde_json`, `uuid`. Modules:
-`optimizer`, `suggester`, `validator`. Defines `kAIConfig`, `kAI`,
-`OptimizationSuggestion`, `ChangeProposal`, `Constraint` and
-`ValidationResult`. The default endpoint is `http://localhost:11434` (a local
-model server) and `enable_deterministic_validation` defaults to `true`.
-All entry points are stubs.
+`optimizer`, `suggester`, `validator`.
+
+- `kAI`, `kAIConfig`, `kAIError` (the brand spelling is kept with
+  `#[allow(non_camel_case_types)]`).
+- `OptimizationContext { netlist: schematic::Netlist, current_design_hash,
+  constraints }`.
+- `SuggestionValidator::validate` implements the deterministic rules listed
+  below.
+- `kAI::suggest_optimization` still returns `NotImplemented`;
+  `kAI::validate_suggestion` runs the validator locally (no network, no model).
+
+The default endpoint is `http://localhost:11434` (a local model server) and
+`enable_deterministic_validation` defaults to `true`.
 
 ### `collab` — collaboration layer
 
 Dependencies: `core`, `serde`, `serde_json`, `uuid`, `chrono`. Modules:
-`versioning`, `sync`, `sharing`, `window`. Defines `CollabSession`,
-`Participant`, `ParticipantRole`, `VersionEntry`, `CollabManager` and the
-per-area managers. No transport or merge algorithm exists yet.
+`versioning`, `sync`, `sharing`, `window`.
+
+- `CollabManager::{new, create_session, session_count}`. `create_session` uses
+  the passed `project_id` and seeds an `Owner` participant.
+- `VersioningManager::{new, record, latest}`.
+- `SharingManager::{share, unshare}`.
+- `Window::new`.
+
+No transport, merge algorithm or real-time sync exists yet.
 
 ### `kai-cad` — application binary
 
-Depends on every library crate. `src/main.rs` only prints the product name,
-version and license. This is the future home of the GUI and application
-lifecycle.
+Depends on every library crate. `src/main.rs` prints a banner, supports
+`--help`/`--version`, and with no arguments runs a deterministic self-check:
+it serializes a `Project`, generates and ERC-checks a netlist, builds a PCB
+design, and reads the default renderer, AI and collaboration configuration.
+Integration tests live in `kai-cad/tests/smoke.rs`; the workspace root is a
+virtual manifest, so a root `tests/` directory would not be built.
 
 ## Data flow: schematic netlist to PCB
 
-The intended pipeline (only the type definitions exist today):
+The intended pipeline (steps 2 and 3 have real implementations; the rest are
+planned):
 
 ```mermaid
 flowchart LR
@@ -157,37 +235,76 @@ flowchart LR
     end
 
     netlist["schematic::Netlist<br/>nets · symbols · connections"]
+    graph["schematic::Graph<br/>symbol/net nodes"]
     components["core::Component<br/>symbol_id ↔ footprint_id"]
     pcb["pcb::PcbDesign<br/>footprints · tracks · vias"]
-    rules["ERC / DRC<br/>(planned)"]
+    erc["ERC<br/>deterministic rules"]
     render["renderer<br/>(planned)"]
 
     sheets --> netlist
     symbols --> netlist
+    netlist --> graph
     netlist --> components
     components --> pcb
-    pcb --> rules
-    netlist --> rules
+    netlist --> erc
     pcb --> render
 ```
 
 1. **Capture.** The user places symbols, wires and labels on sheets. These live
    in `Project.schematic` (`sheets`, `symbols`, `nets`).
 2. **Netlist extraction.** `schematic::generate_netlist(&symbols, &nets)`
-   produces a `Netlist` of nets and pin-to-pin `Connection`s. Today it returns
-   `Netlist::default()`; the connectivity algorithm is not written.
-3. **Symbol ↔ footprint binding.** Each `core::Component` references a
+   produces a `Netlist` of nets and pin-to-pin `Connection`s. This is
+   implemented: adjacent resolvable pins within each net become connections.
+3. **Graph construction.** `Graph::from_netlist(&netlist)` builds the
+   symbol/net connectivity graph. This is implemented.
+4. **Symbol ↔ footprint binding.** Each `core::Component` references a
    `symbol_id` and a `footprint_id`, which is how schematic instances are
-   matched to physical footprints.
-4. **Board construction.** The PCB engine takes the netlist plus footprint
+   matched to physical footprints. Binding logic is not written yet.
+5. **Board construction.** The PCB engine takes the netlist plus footprint
    assignments and populates `PcbDesign` (`footprints`, `tracks`, `vias`).
    Tracks reference their net by `net_id`; vias record the layers they span.
-5. **Validation.** ERC runs on the schematic graph; DRC runs on PCB geometry.
-   Both are intended to be deterministic and incremental.
-6. **Cross-probing and rendering.** The renderer draws schematic/PCB data, and
-   selections are intended to synchronise between views.
+   Only the data types exist today.
+6. **Validation.** ERC runs on the schematic netlist with deterministic rules
+   (see below). DRC on PCB geometry is planned.
+7. **Cross-probing and rendering.** The renderer draws schematic/PCB data, and
+   selections are intended to synchronise between views. Not implemented.
 
-There is no code path yet that executes steps 2–6 end to end.
+There is no code path yet that executes steps 4–7 end to end.
+
+## Deterministic validation surfaces
+
+### Electrical rule check (ERC)
+
+`schematic::run_erc(&netlist)` is deterministic and independent of iteration
+order. It reports:
+
+| Rule id | Severity | Trigger |
+|---------|----------|---------|
+| `net-single-pin` | Warning | A net has fewer than two pins |
+| `duplicate-net-name` | Error | Two nets share the same non-empty name |
+| `self-connection` | Error | A connection's source and target pin are identical |
+
+`ERCResult::valid` is true only when there are no `Error` or `Critical`
+violations. `ERCResult::is_valid()` is the accessor.
+
+### AI suggestion validation
+
+`SuggestionValidator::validate(&suggestion, &constraints)` performs no network
+access and no model invocation. It reports:
+
+| Check | Field | Outcome |
+|-------|-------|---------|
+| `confidence_score` outside `0.0..=1.0` | `confidence_score` | Error |
+| Empty `changes` list | `changes` | Error |
+| `old_value == new_value` | `changes[<index>]` | Error (no-op) |
+| Constraint with a negative `value` | constraint name | Warning |
+
+`ValidationResult::valid` is true iff no errors were found.
+`kAI::validate_suggestion` wraps this validator.
+
+**AI output must pass these deterministic checks before it is applied to a
+design.** This is a PRD requirement (`PRD.md` §1.3.12): kAI may propose
+changes, but a human or downstream engine applies them only after validation.
 
 ## Key design rules
 
@@ -201,8 +318,8 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
    network services are optional; the application must remain useful offline
    (`PRD.md` §1.2, §1.3.11).
 3. **AI output must pass deterministic validation.** kAI may propose changes,
-   but nothing is applied until `kAI::validate_suggestion` (and later ERC/DRC)
-   accepts it (`PRD.md` §1.3.12, `ai/src/lib.rs`).
+   but nothing is applied until `SuggestionValidator::validate` (and later
+   ERC/DRC) accepts it (`PRD.md` §1.3.12, `ai/src/validator.rs`).
 4. **Deterministic engineering operations.** No unseeded randomness in geometry,
    routing, netlisting or rule checks (`PLAN.md` §5.1).
 5. **No silent data loss.** Unknown or unsupported data encountered on import

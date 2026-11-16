@@ -1,6 +1,9 @@
 //! KaiCad Vulkan-based rendering engine.
 //!
 //! Provides GPU-accelerated 2D/3D visualization of schematics and PCBs.
+//!
+//! Only window and surface *configuration* exists today: no Vulkan objects are
+//! created yet, and [`Renderer::new`] returns [`RendererError::NotImplemented`].
 
 pub mod device;
 pub mod pipeline;
@@ -12,18 +15,25 @@ use ash::khr::swapchain as ash_swapchain;
 use ash::vk::SurfaceKHR;
 use ash::{Device, Instance};
 
+pub use window::WindowConfig;
+
 /// Vulkan renderer configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RendererConfig {
-    pub width: u32,
-    pub height: u32,
-    pub fullscreen: bool,
+    pub window: WindowConfig,
     pub vsync: bool,
 }
 
 impl Default for RendererConfig {
     fn default() -> Self {
-        Self { width: 1920, height: 1080, fullscreen: false, vsync: true }
+        Self { window: WindowConfig::default(), vsync: true }
+    }
+}
+
+impl RendererConfig {
+    /// Create a renderer configuration for the given window.
+    pub fn new(window: WindowConfig) -> Self {
+        Self { window, vsync: true }
     }
 }
 
@@ -67,3 +77,16 @@ impl std::fmt::Display for RendererError {
 }
 
 impl std::error::Error for RendererError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_uses_1080p_window_and_vsync() {
+        let config = RendererConfig::default();
+        assert_eq!(config.window.width, 1920);
+        assert_eq!(config.window.height, 1080);
+        assert!(config.vsync);
+    }
+}

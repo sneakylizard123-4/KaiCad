@@ -74,11 +74,20 @@ loader plus an ICD (Mesa, NVIDIA, AMD or MoltenVK) and verify with
 | `rust-toolchain.toml` | `channel = "stable"`, components `rustfmt`, `clippy` |
 | `rustfmt.toml` | edition 2024, max width 100, 4 spaces, Unix newlines |
 | `clippy.toml` | `msrv = "1.85"` |
-| root `Cargo.toml` | `resolver = "3"`, workspace lints, dev/release profiles |
+| root `Cargo.toml` | `resolver = "3"`, `rust-version = "1.85"`, workspace lints, dev/release profiles |
 
-**MSRV:** edition 2024 requires Rust **1.85** or newer; `clippy.toml` records
-`msrv = "1.85"` so lints do not suggest newer APIs. Distro-packaged Rust is
-often too old — use rustup.
+**MSRV:** edition 2024 requires Rust **1.85** or newer; `[workspace.package]
+rust-version = "1.85"` records this for the whole workspace and `clippy.toml`
+sets `msrv = "1.85"` so lints do not suggest newer APIs. Distro-packaged Rust
+is often too old — use rustup.
+
+**Lockfile:** `Cargo.lock` is committed to version control. The workspace
+ships binaries, so the lockfile is part of the reproducible build. Do not add
+it to `.gitignore`.
+
+**Packaging:** `cargo package` refuses to run on a dirty working tree. When
+checking packaging locally, use `cargo package --allow-dirty` (or commit
+first).
 
 ## Commands
 
@@ -93,11 +102,60 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Lint and fail on warnings (what CI does) | `cargo clippy --workspace --all-targets -- -D warnings` |
 | Format | `cargo fmt --all` |
 | Verify formatting without writing | `cargo fmt --all -- --check` |
-| Run the application | `cargo run -p kai-cad` |
+| Build API documentation | `cargo doc --workspace --no-deps` |
+| Run the application (banner + self-check) | `cargo run -p kai-cad` |
+| Print usage | `cargo run -p kai-cad -- --help` |
+| Print the version | `cargo run -p kai-cad -- --version` |
 | Build a release binary | `cargo build --workspace --release` |
 
 Note that `--all-targets` is required to lint/check tests, examples and
 benchmarks; a bare `cargo check` misses them.
+
+## Tests
+
+`cargo test --workspace` currently runs **71 tests**, all passing:
+
+| Suite | Tests |
+|-------|------:|
+| `ai` (`src/lib.rs`) | 8 |
+| `collab` (`src/lib.rs`) | 9 |
+| `core` (`src/tests.rs`) | 15 |
+| `pcb` (`src/lib.rs` and modules) | 13 |
+| `renderer` (`src/lib.rs` and modules) | 5 |
+| `schematic` (`src/lib.rs` and modules) | 15 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 6 |
+
+Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
+`src/tests.rs` for `core`). Cross-crate integration tests live in
+`kai-cad/tests/smoke.rs`: the workspace root is a virtual manifest, so a root
+`tests/` directory would not be built.
+
+## Running the binary
+
+With no arguments, `kai-cad` prints a banner and runs a deterministic
+self-check that calls every subsystem:
+
+```bash
+cargo run -p kai-cad
+```
+
+```text
+KaiCad — Modern EDA Application in Rust
+Version: 0.1.0 (pre-alpha)
+License: GPL-3.0-or-later
+
+subsystem self-check:
+  core: project JSON round trip ok (… bytes)
+  schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s)
+  pcb: outline 4 points, 1 layer(s), 1 copper layer(s)
+  renderer: window 1920x1080, vsync=true
+  ai: endpoint=http://localhost:11434, deterministic validation=true
+  collab: 1 session(s)
+self-check: ok
+```
+
+`--help`/`-h` prints usage and exits; `--version`/`-V` prints `kai-cad
+<version>` and exits. Both return exit code 0 without running the self-check.
 
 ## Examples
 
@@ -153,8 +211,9 @@ browser after a run.
 4. `cargo fmt --all -- --check`
 5. `cargo check --workspace --all-targets`
 6. `cargo clippy --workspace --all-targets -- -D warnings`
-7. `cargo test --workspace`
-8. `cargo build --workspace --release`
+7. `cargo doc --workspace --no-deps` ("Build docs")
+8. `cargo test --workspace`
+9. `cargo build --workspace --release`
 
 `CARGO_TERM_COLOR` is set to `always` for readable logs. `-D warnings` is
 passed to Clippy only, not through a global `RUSTFLAGS`, because global flags

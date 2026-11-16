@@ -8,6 +8,9 @@ pub mod optimizer;
 pub mod suggester;
 pub mod validator;
 
+pub use core::proposal::ChangeProposal;
+pub use validator::SuggestionValidator;
+
 /// kAI assistant configuration.
 // "kAI" is the product's brand name for the AI subsystem.
 #[allow(non_camel_case_types)]
@@ -43,6 +46,9 @@ impl kAI {
     }
 
     /// Request AI-generated optimization suggestions for a circuit.
+    ///
+    /// The model backend is not wired up yet, so this always returns
+    /// [`kAIError::NotImplemented`].
     pub fn suggest_optimization(
         &self,
         _context: OptimizationContext,
@@ -51,18 +57,23 @@ impl kAI {
     }
 
     /// Validate an AI-generated suggestion before applying it to the design.
+    ///
+    /// Runs the deterministic checks in [`SuggestionValidator::validate`] only:
+    /// no network access and no model invocation.
     pub fn validate_suggestion(
         &self,
-        _suggestion: &OptimizationSuggestion,
+        suggestion: &OptimizationSuggestion,
     ) -> Result<ValidationResult, kAIError> {
-        Err(kAIError::NotImplemented)
+        let validator =
+            SuggestionValidator { deterministic_mode: self.config.enable_deterministic_validation };
+        Ok(validator.validate(suggestion, &[]))
     }
 }
 
 /// Context provided to kAI for optimization requests.
 #[derive(Debug, Clone)]
 pub struct OptimizationContext {
-    pub netlist_id: uuid::Uuid,
+    pub netlist: schematic::Netlist,
     pub current_design_hash: String,
     pub constraints: Vec<Constraint>,
 }
@@ -76,13 +87,11 @@ pub struct OptimizationSuggestion {
     pub confidence_score: f32,
 }
 
-/// A proposed change from an AI suggestion.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ChangeProposal {
-    pub target: String,
-    pub field: String,
-    pub old_value: serde_json::Value,
-    pub new_value: serde_json::Value,
+impl OptimizationSuggestion {
+    /// A suggestion is applicable when it has changes and a confidence in 0.0..=1.0.
+    pub fn is_applicable(&self) -> bool {
+        !self.changes.is_empty() && (0.0..=1.0).contains(&self.confidence_score)
+    }
 }
 
 /// A constraint that must be respected in any AI suggestion.
@@ -141,3 +150,108 @@ impl std::fmt::Display for kAIError {
 }
 
 impl std::error::Error for kAIError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn suggestion(changes: Vec<ChangeProposal>, confidence_score: f32) -> OptimizationSuggestion {
+        OptimizationSuggestion {
+            id: uuid::Uuid::new_v4(),
+            description: "test suggestion".to_string(),
+            changes,
+            confidence_score,
+        }
+    }
+
+    fn change(old_value: serde_json::Value, new_value: serde_json::Value) -> ChangeProposal {
+        ChangeProposal::new("R1", "value", old_value, new_value)
+    }
+
+    fn constraint(name: &str, value: f64) -> Constraint {
+        Constraint { name: name.to_string(), constraint_type: ConstraintType::Clearance, value }
+    }
+
+    #[test]
+    fn default_config_enables_validation() {
+        assert!(kAIConfig::default().enable_deterministic_validation);
+    }
+
+    #[test]
+    fn is_applicable_boundaries() {
+        let low = suggestion(vec![change(json!(1), json!(2))], 0.0);
+        let high = suggestion(vec![change(json!(1), json!(2))], 1.0);
+        let below = suggestion(vec![change(json!(1), json!(2))], -0.01);
+        let above = suggestion(vec![change(json!(1), json!(2))], 1.01);
+        let empty = suggestion(Vec::new(), 0.5);
+
+        assert!(low.is_applicable());
+        assert!(high.is_applicable());
+        assert!(!below.is_applicable());
+        assert!(!above.is_applicable());
+        assert!(!empty.is_applicable());
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_confidence() {
+        let validator = SuggestionValidator::default();
+        let result = validator.validate(&suggestion(vec![change(json!(1), json!(2))], 1.5), &[]);
+
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| error.field == "confidence_score"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_changes() {
+        let validator = SuggestionValidator::default();
+        let result = validator.validate(&suggestion(Vec::new(), 0.5), &[]);
+
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| error.field == "changes"));
+    }
+
+    #[test]
+    fn validate_rejects_no_op_change() {
+        let validator = SuggestionValidator::default();
+        let result =
+            validator.validate(&suggestion(vec![change(json!(100), json!(100))], 0.9), &[]);
+
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| error.field == "changes[0]"));
+    }
+
+    #[test]
+    fn validate_accepts_good_suggestion() {
+        let validator = SuggestionValidator::default();
+        let result =
+            validator.validate(&suggestion(vec![change(json!(100), json!(220))], 0.9), &[]);
+
+        assert!(result.valid);
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_warns_on_negative_constraint() {
+        let validator = SuggestionValidator::default();
+        let result = validator.validate(
+            &suggestion(vec![change(json!(1), json!(2))], 0.9),
+            &[constraint("min_clearance", -1.0)],
+        );
+
+        assert!(result.valid);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("min_clearance"));
+    }
+
+    #[test]
+    fn kai_validate_suggestion_returns_ok_for_valid_suggestion() {
+        let kai = kAI::new(kAIConfig::default());
+        let result = kai
+            .validate_suggestion(&suggestion(vec![change(json!(1), json!(2))], 0.5))
+            .expect("deterministic validation should not fail");
+
+        assert!(result.valid);
+    }
+}

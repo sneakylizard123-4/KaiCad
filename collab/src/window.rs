@@ -12,3 +12,10 @@ pub struct Window {
     pub participants: Vec<Participant>,
     pub version: u64,
 }
+
+impl Window {
+    /// Create an empty collaboration window with `title`.
+    pub fn new(title: impl Into<String>) -> Self {
+        Self { id: Uuid::new_v4(), title: title.into(), participants: Vec::new(), version: 0 }
+    }
+}

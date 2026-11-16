@@ -63,6 +63,16 @@
 - **Beta release** — Internal testing with target users
 - **Final QA** — Compatibility with KiCad 9/10, bug fixes
 
+### Implementation status
+
+**Week 1 is complete and verified.** The Cargo workspace, CI pipeline, toolchain
+configuration and initial shared data model are in place. As of commit `ecfbf17`
+the workspace has **71 passing tests**, clean `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --all -- --check`, a successful
+release build, and a green CI run
+([43071969392](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43071969392)).
+Weeks 2–4 remain in progress; see [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for evidence.
+
 ## 4. Key Milestones
 
 | Milestone | Target | Deliverable |

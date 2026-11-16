@@ -39,6 +39,9 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Build docs
+        run: cargo doc --workspace --no-deps
+
       - name: Run tests
         run: cargo test --workspace
 

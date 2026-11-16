@@ -28,7 +28,7 @@ Set up the foundational project structure, tooling, and initial development envi
   - `cargo test` - run tests (will be empty initially)
   - `cargo clippy` - linting
 - **Deliverable:** Working CI pipeline that runs on every push
-- **Verification:** PR shows "All checks passed" status
+- **Verification:** ✅ CI run succeeded on GitHub Actions (see status below)
 
 ### Task 1.3: Set Up Rust Toolchain Configuration
 - Create `rust-toolchain.toml` specifying stable Rust version
@@ -67,18 +67,20 @@ Verification was run locally on Linux with `rustc 1.99.1` / `cargo 1.99.1`
 | Command | Result |
 |---------|--------|
 | `cargo build --workspace --all-targets` | **pass** — no warnings |
-| `cargo test --workspace` | **pass** — 8 tests, 0 failed |
+| `cargo build --workspace --release` | **pass** — release binaries built, no warnings |
+| `cargo test --workspace` | **pass** — 71 tests, 0 failed |
+| `cargo run -q -p kai-cad` | **pass** — banner + self-check: `self-check: ok` |
+| `cargo run -q -p kai-cad -- --help` / `--version` | **pass** — usage and version printed, exit code 0 |
 | `cargo run -q -p core --example project_roundtrip` | **pass** — JSON round trip printed, id/name/version asserted equal |
 | `cargo run -q -p pcb --example board_outline` | **pass** — rounded-rectangle outline summary printed |
 | `cargo bench -p core --no-run` | **pass** — Criterion 0.5.1, bench target `serialization` compiled |
 | `cargo bench -p core --bench serialization -- --warm-up-time 0.2 --measurement-time 0.5 --sample-size 10` | **pass** — ≈380 µs serialize, ≈335 µs deserialize (100 symbols, 100 nets) |
 | `cargo fmt --all -- --check` | **pass** — clean, no configuration warnings |
 | `cargo clippy --workspace --all-targets -- -D warnings` | **pass** — no warnings across libs, bins, tests, examples and benches |
+| GitHub Actions CI (commit `ecfbf17`) | **success** — [run 43071969392](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43071969392), `completed / success`, 1m24s |
 
-During verification the concurrent warning-cleanup work briefly produced
-formatting diffs and compiler warnings in `ai/` and other crates; the final
-run above is clean. The unused `use_field_shorthand` key was removed from
-`rustfmt.toml` (it is nightly-only), so formatting checks are now silent.
+Test suite breakdown (71 total): `ai` 8, `collab` 9, `core` 15, `pcb` 13,
+`renderer` 5, `schematic` 15, `kai-cad/tests/smoke.rs` 6.
 
 Deliverables for Task 1.5:
 
@@ -86,7 +88,30 @@ Deliverables for Task 1.5:
 - `core/examples/project_roundtrip.rs`, `pcb/examples/board_outline.rs`
 - `core/benches/serialization.rs` (Criterion, `harness = false`)
 
-**Task 1.2 caveat:** the workflow `.github/workflows/ci.yml` is configured with
-the full job list, but the verification criterion "PR shows *All checks
-passed*" cannot be checked locally. It is **pending the first push** to GitHub;
-until then only the individual commands above have been exercised.
+**Task 1.2:** verified. The workflow `.github/workflows/ci.yml` runs
+formatting, compilation, Clippy with `-D warnings`, tests, docs and a release
+build; the run linked above completed successfully.
+
+## Post-review fixes
+
+After the first Week 1 review the following issues were fixed:
+
+- **Consolidated duplicate types** — a single `schematic::netlist::Netlist`,
+  `core::ChangeProposal` shared by `ai`/`collab`, and `core` PCB primitives
+  (`PcbOutline`, `PcbLayer`, `Stackup`, `Point`) used by `pcb`.
+- **Removed unused dependencies** — dropped `petgraph` from `schematic`, and
+  `chrono`/`collab` from `pcb`, and `core`/`serde_json`/`uuid` from
+  `renderer` (which now has no workspace dependencies).
+- **Deleted orphaned code** — removed `pcb/src/versioning.rs` (versioning lives
+  in `collab`) and a corrupted tracked file left by a bad write.
+- **Fixed `CollabManager::create_session`** — it now uses the passed
+  `project_id` and seeds an `Owner` participant.
+- **Replaced the copied `collab` module in `renderer`** — `renderer` no longer
+  depends on any workspace crate.
+- **Added a real serialization API** — `core::serialization` with
+  `to_json`/`to_json_pretty`/`from_json`/`save`/`load` and `Project` helpers.
+- **Added `--help`, `--version` and a subsystem self-check** to the `kai-cad`
+  binary, plus `kai-cad/tests/smoke.rs` for cross-crate integration.
+- **Committed `Cargo.lock`** — it was previously ignored.
+- **Added workspace package metadata** — shared `version`, `edition`,
+  `rust-version = "1.85"`, `license`, `repository` and `publish = false`.

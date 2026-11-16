@@ -8,16 +8,14 @@
 
 use core::Project;
 use core::net::{Net, NetClass};
+use core::serialization::{from_json, to_json_pretty};
 use core::symbol::{Pin, PinDirection, PinPosition, PinType, Symbol};
 use uuid::Uuid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Start from the default project and give it a name/version.
-    let mut project = Project {
-        name: "Roundtrip Demo".to_string(),
-        version: "0.1.0".to_string(),
-        ..Project::default()
-    };
+    // Start from a named project and give it a version.
+    let mut project = Project::new("Roundtrip Demo");
+    project.version = "0.1.0".to_string();
 
     // Add a single passive symbol (one pin) to the schematic.
     let pin = Pin {
@@ -47,11 +45,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     project.schematic.nets.push(net);
 
     // Serialize the whole project to pretty JSON.
-    let json = serde_json::to_string_pretty(&project)?;
+    let json = to_json_pretty(&project)?;
     println!("{json}");
 
     // Deserialize it again and confirm the identity survived the round trip.
-    let decoded: Project = serde_json::from_str(&json)?;
+    let decoded: Project = from_json(&json)?;
     assert_eq!(decoded.id, project.id, "project id changed during round trip");
     assert_eq!(decoded.name, project.name, "project name changed");
     assert_eq!(decoded.version, project.version, "project version changed");

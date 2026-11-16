@@ -65,7 +65,9 @@ Refs: #123
 
 The workspace denies Clippy correctness lints and warns on `clippy::all` and
 `unsafe_code` (see `[workspace.lints]` in the root `Cargo.toml`). CI turns all
-warnings into errors. Before opening a pull request, run:
+warnings into errors: it runs `cargo clippy --workspace --all-targets -- -D
+warnings`, so a warning that passes locally without the flag will still fail
+the build. Before opening a pull request, run:
 
 ```bash
 cargo fmt --all -- --check
@@ -87,10 +89,10 @@ Rules:
 
 | Kind | Location | Notes |
 |------|----------|-------|
-| Unit tests | `<crate>/src/tests.rs` or inline `#[cfg(test)] mod tests` | `core` keeps its tests in `src/tests.rs`; other crates use inline test modules. |
-| Integration tests | `<crate>/tests/*.rs` | Per-package integration tests. The root manifest is virtual, so there is no workspace-level `tests/` target; add integration tests inside the relevant crate. |
-| Benchmarks | `<crate>/benches/*.rs` | Criterion, `harness = false`, registered with `[[bench]]` in that crate's `Cargo.toml`. |
-| Examples | `<crate>/examples/*.rs` | Each example needs a `//!` header with the command used to run it. |
+| Unit tests | `<crate>/src/tests.rs` or inline `#[cfg(test)] mod tests` | `core` keeps its tests in `src/tests.rs`; the other crates use inline test modules. |
+| Integration tests | `kai-cad/tests/smoke.rs` | Cross-crate smoke tests that exercise the public API of every library together. The root manifest is virtual, so there is no workspace-level `tests/` target; per-crate integration tests may be added under `<crate>/tests/`. |
+| Benchmarks | `core/benches/*.rs` | Criterion, `harness = false`, registered with `[[bench]]` in `core/Cargo.toml`. |
+| Examples | `core/examples/*.rs`, `pcb/examples/*.rs` | Each example needs a `//!` header with the command used to run it. |
 
 Examples must run and benchmarks must at least compile in CI:
 

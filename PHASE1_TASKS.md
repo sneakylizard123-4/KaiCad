@@ -111,14 +111,14 @@
 
 ## Phase 1 Completion Criteria
 
-- [ ] `cargo check` passes across all workspace crates
-- [ ] `cargo clippy` passes with no warnings
+- [x] `cargo check` passes across all workspace crates
+- [x] `cargo clippy` passes with no warnings
 - [ ] Basic project CRUD operations work (create, load, save)
 - [ ] Basic schematic symbol management works
 - [ ] Netlist generation/export works for simple circuits
 - [ ] ERC catches basic rule violations
-- [ ] Unit and integration test infrastructure in place
-- [ ] CI/CD pipeline running on GitHub Actions
+- [x] Unit and integration test infrastructure in place
+- [x] CI/CD pipeline running on GitHub Actions
 
 ## Week-by-Week Breakdown
 
@@ -128,3 +128,13 @@
 | **2** | Engineering database | Schema design, Project model, basic CRUD |
 | **3** | Symbol management | Symbol data structures, library loading |
 | **4** | Schematic engine | Netlist generation, graph operations, basic ERC |
+
+## Status note
+
+Week 1 (project scaffolding) is complete and verified: the workspace, CI
+pipeline and toolchain configuration are in place, `cargo check`/`cargo clippy`
+pass cleanly, and unit plus cross-crate integration test infrastructure exists.
+Only the Week 1 infrastructure criteria above are ticked; later-week
+deliverables (full CRUD, symbol libraries, KiCad netlist export, ERC sign-off)
+remain open. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for the full command-by-command
+evidence, test breakdown and CI run link.

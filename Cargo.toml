@@ -11,6 +11,14 @@ members = [
     "kai-cad",
 ]
 
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/sneakylizard123-4/KaiCad"
+publish = false
+
 [workspace.lints.rust]
 unsafe_code = "warn"
 

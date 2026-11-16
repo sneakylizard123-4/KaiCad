@@ -1,10 +1,12 @@
 # KaiCad
 
+[![CI](https://github.com/sneakylizard123-4/KaiCad/actions/workflows/ci.yml/badge.svg)](https://github.com/sneakylizard123-4/KaiCad/actions/workflows/ci.yml)
+
 **KaiCad** is a complete, high-performance, open-source electronic design automation (EDA) application written in Rust.
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Pending (pre-alpha scaffold)
+- **Implementation:** Week 1 scaffold complete (pre-alpha)
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -44,11 +46,15 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests
+# Run tests (71 tests across the workspace)
 cargo test --workspace
 
-# Run the application (currently just prints version info)
+# Run the application (banner + subsystem self-check)
 cargo run -p kai-cad
+
+# Print usage or the version without running the self-check
+cargo run -p kai-cad -- --help
+cargo run -p kai-cad -- --version
 ```
 
 ### Examples and benchmarks
@@ -67,8 +73,8 @@ cargo bench -p core --no-run
 - Follow the conventional Rust workflow with `cargo check`, `cargo test`, and `cargo fmt`
 - All code must pass `cargo clippy --workspace --all-targets -- -D warnings`
 - Unit tests live in `src/tests.rs` or inline `#[cfg(test)] mod tests` blocks
-- Integration tests belong in `<crate>/tests/`; the workspace root is a virtual
-  manifest and has no test target of its own
+- Cross-crate integration tests live in `kai-cad/tests/smoke.rs`; the workspace
+  root is a virtual manifest and has no test target of its own
 - Benchmarks live in `<crate>/benches/`, examples in `<crate>/examples/`
 
 ## Project Layout
@@ -76,6 +82,7 @@ cargo bench -p core --no-run
 ```text
 KaiCad/
 ├── Cargo.toml                  # virtual workspace manifest (no [package])
+├── Cargo.lock                  # committed lockfile (workspace binaries are shipped)
 ├── rust-toolchain.toml         # stable channel + rustfmt/clippy
 ├── clippy.toml                 # Clippy behaviour (msrv = 1.85)
 ├── rustfmt.toml                # formatting rules (edition 2024, width 100)
@@ -98,6 +105,10 @@ KaiCad/
 ├── ai/                         # kAI subsystem
 ├── collab/                     # collaboration layer
 ├── kai-cad/                    # application binary (kai-cad)
+│   ├── src/
+│   │   └── main.rs
+│   └── tests/
+│       └── smoke.rs            # cross-crate integration smoke tests
 ├── PRD.md                      # product requirements
 ├── PLAN.md                     # implementation plan
 ├── PHASE1_TASKS.md             # Phase 1 task breakdown
@@ -106,7 +117,7 @@ KaiCad/
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, schematic-to-PCB data flow and design rules
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
 - [`PRD.md`](PRD.md) — master product requirements document
@@ -115,16 +126,35 @@ KaiCad/
 - [`WEEK1_TASKS.md`](WEEK1_TASKS.md) — Week 1 deliverables and verification status
 
 ## Current State
-This is a pre-alpha implementation focused on establishing the foundational architecture:
-- ✅ Workspace structure with 7 crates (core, schematic, pcb, renderer, ai, collab, kai-cad)
-- ✅ Successful compilation with `cargo check --workspace --all-targets`
-- ✅ Basic unit tests for core data structures
-- ✅ CI/CD pipeline configured via GitHub Actions
-- ✅ Architecture, development and contribution docs
-- ✅ Example programs and a serialization benchmark
-- 🚧 Schematic and PCB engines in early development
-- 🚧 Vulkan renderer skeleton implemented
-- 🚧 kAI and collaboration subsystems outlined
+
+Week 1 scaffolding is complete and verified: **71 tests pass**, `cargo clippy
+--workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
+clean, and CI is green
+([run 43071969392](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43071969392),
+commit `ecfbf17`).
+
+What each crate provides today:
+
+- ✅ **core** — `Project`/`SchematicData`/`PcbData`/`ProjectMetadata`, symbols,
+  nets, sheets, components, PCB outline/layer/stackup types, `Point`, and the
+  shared `ChangeProposal`. Real JSON serialization: `to_json`, `to_json_pretty`,
+  `from_json`, `save`, `load` plus `Project::{to_json, from_json, save, load}`.
+- ✅ **schematic** — real netlist generation (`generate_netlist` maps pin ids to
+  `PinRef`s and emits connections for adjacent pins), a connectivity `Graph`,
+  and deterministic ERC with three rules: `net-single-pin` (warning),
+  `duplicate-net-name` (error) and `self-connection` (error).
+- 🚧 **pcb** — `PcbDesign` built on `core` types, `LayerStack`, `Router`
+  configuration and `Footprint`/`OutlineShape` types. No routing or geometry
+  computation yet.
+- 🚧 **renderer** — `RendererConfig` and `WindowConfig` only. `Renderer::new`
+  and `Renderer::render` return `NotImplemented`; no Vulkan objects are created.
+- 🚧 **ai (kAI)** — configuration plus deterministic suggestion validation
+  (confidence range, empty changes, no-op changes, negative constraints).
+  `kAI::suggest_optimization` returns `NotImplemented`.
+- 🚧 **collab** — `CollabManager` session creation, `VersioningManager`,
+  `SharingManager` and `Window`. No transport, merge or real-time sync.
+- ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
+  deterministic self-check that calls every subsystem.
 
 ## License
 GPL-3.0-or-later
