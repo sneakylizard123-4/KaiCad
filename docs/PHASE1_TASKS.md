@@ -1,9 +1,9 @@
 # KaiCad Phase 1 — Foundation Tasks (Weeks 1-4)
 
 > **Status legend:** ✅ complete · 🚧 partial (some acceptance criteria met) ·
-> ⬜ not started. Week 1 is complete and verified at commit `c864fbb`; see
-> [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for command-by-command evidence and
-> [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the Week 2 brief.
+> ⬜ not started. Weeks 1 and 2 are complete and verified; see
+> [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
+> [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the Week 3 brief.
 
 ## Project Setup & Infrastructure
 
@@ -41,28 +41,31 @@
 
 ## Core Engineering Database
 
-### Task 1.4: Design Database Schema — ⬜ not started
+### Task 1.4: Design Database Schema — ✅ complete
 - **Owner:** Lead Architect
 - **Deliverable:** SQL schema or ORM model definition
 - **Dependencies:** None
 - **Acceptance Criteria:**
-  - Schema defines: projects, components, symbols, nets, sheets, footprints
-  - Schema supports KiCad 9/10 bidirectional compatibility
-  - Migration scripts for schema evolution
-- **Note:** the Week 2 brief proposes the initial schema; see
-  [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
+  - ✅ Schema defines: projects, components, symbols, nets, sheets, footprints
+  - ✅ Migration scripts for schema evolution
+  - Schema supports KiCad 9/10 bidirectional compatibility (deferred to import/export work)
+- **Done:** `store/migrations/0001_initial.sql` creates `projects`, `sheets`,
+  `symbols`, `components`, `nets`, `footprints` and `schema_migrations` tables.
+  Foreign-key cascades keep projections in sync with project deletion.
 
-### Task 1.5: Implement Project Model — 🚧 partial
+### Task 1.5: Implement Project Model — ✅ complete
 - **Owner:** Lead Developer
 - **Deliverable:** Rust structs + persistence layer (SQLite recommended)
 - **Dependencies:** Task 1.4
 - **Acceptance Criteria:**
-  - `Project` struct with: id, name, version, schematic, PCB, metadata
-  - Basic CRUD operations working
-  - Can serialize/deserialize project to/from KiCad .kicad_sch and .kicad_pcb format (initial basic import/export)
-- **Done:** the `Project` struct and JSON persistence (`core::serialization`) exist
-  with round-trip tests.
-- **Remaining:** SQLite-backed CRUD, migrations and KiCad file import/export.
+  - ✅ `Project` struct with: id, name, version, schematic, PCB, metadata
+  - ✅ Basic CRUD operations working
+  - Can serialize/deserialize project to/from KiCad .kicad_sch and .kicad_pcb format (deferred)
+- **Done:** the `Project` struct and JSON persistence (`core::serialization`) keep
+  working. The new `store` crate provides synchronous SQLite-backed CRUD
+  (`Store::open`, `open_in_memory`, `create_project`, `load_project`,
+  `list_projects`, `update_project`, `delete_project`) with idempotent
+  migrations and projection tables rebuilt in the same transaction.
 
 ### Task 1.6: Basic Symbol Management — 🚧 partial
 - **Owner:** Schematic Lead
@@ -145,8 +148,7 @@
 
 - [x] `cargo check` passes across all workspace crates
 - [x] `cargo clippy` passes with no warnings
-- [ ] Basic project CRUD operations work (create, load, save) — JSON only;
-      SQLite CRUD is Week 2
+- [x] Basic project CRUD operations work (create, load, save) — JSON and SQLite
 - [ ] Basic schematic symbol management works — data types only
 - [ ] Netlist generation/export works for simple circuits — generation works;
       KiCad export does not
@@ -165,13 +167,12 @@
 
 ## Status note
 
-Week 1 (project scaffolding) is complete and verified at commit `c864fbb`: the
-workspace, CI pipeline and toolchain configuration are in place, `cargo
-check`/`cargo clippy` pass cleanly, 71 tests pass, and unit plus cross-crate
-integration test infrastructure exists. Only the Week 1 infrastructure criteria
-above are ticked; later-week deliverables (SQLite CRUD, symbol libraries, KiCad
-netlist export, broader ERC) remain open. See
-[`WEEK1_TASKS.md`](WEEK1_TASKS.md) for the full command-by-command evidence,
-test breakdown and CI run link, and
-[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the Week 2 work
-order.
+Week 1 (project scaffolding) and Week 2 (SQLite engineering database) are
+complete and verified. The workspace now contains a `store` crate with
+migrations, `Store` CRUD, 13 new unit tests and one new cross-crate integration
+test, bringing the total from 71 to **85 passing tests**. `cargo check`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
+--check`, `cargo doc --workspace --no-deps` and `cargo build --workspace
+--release` all succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
+evidence and [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the
+Week 3 (symbol management) work order.

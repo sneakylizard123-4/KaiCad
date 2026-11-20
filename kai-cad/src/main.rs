@@ -69,6 +69,7 @@ fn self_check() -> Result<(), String> {
     check_renderer()?;
     check_ai()?;
     check_collab()?;
+    check_store()?;
     Ok(())
 }
 
@@ -198,5 +199,45 @@ fn check_collab() -> Result<(), String> {
     ensure(manager.session_count() == 1, "collab: expected exactly one session")?;
 
     println!("  collab: {} session(s)", manager.session_count());
+    Ok(())
+}
+
+fn check_store() -> Result<(), String> {
+    let mut store = store::Store::open_in_memory()
+        .map_err(|error| format!("store: failed to open in-memory database: {error}"))?;
+
+    let mut project = core::Project::new("store-self-check");
+    project.schematic.nets.push(core::Net {
+        id: Uuid::new_v4(),
+        name: "N1".to_string(),
+        pins: Vec::new(),
+        netclass: core::NetClass::Signal,
+    });
+
+    store
+        .create_project(&project)
+        .map_err(|error| format!("store: failed to create project: {error}"))?;
+
+    let loaded = store
+        .load_project(project.id)
+        .map_err(|error| format!("store: failed to load project: {error}"))?
+        .ok_or("store: created project disappeared")?;
+
+    ensure(loaded.id == project.id, "store: project id changed across a database round trip")?;
+    ensure(
+        loaded.name == project.name,
+        "store: project name changed across a database round trip",
+    )?;
+
+    let deleted = store
+        .delete_project(project.id)
+        .map_err(|error| format!("store: failed to delete project: {error}"))?;
+    ensure(deleted, "store: project was not deleted")?;
+
+    let version = store
+        .schema_version()
+        .map_err(|error| format!("store: failed to read schema version: {error}"))?;
+
+    println!("  store: created, loaded and deleted 1 project (schema v{version})");
     Ok(())
 }

@@ -146,3 +146,33 @@ fn collab_session_creation_tracks_sessions() {
     manager.create_session(Uuid::new_v4(), Uuid::new_v4());
     assert_eq!(manager.session_count(), 2);
 }
+
+#[test]
+fn store_project_crud_round_trip_in_memory() {
+    let mut store = store::Store::open_in_memory().expect("open in-memory store");
+
+    let mut project = core::Project::new("smoke-crud");
+    project.schematic.nets.push(core::Net {
+        id: Uuid::new_v4(),
+        name: "N_SMOKE".to_string(),
+        pins: Vec::new(),
+        netclass: core::NetClass::Signal,
+    });
+
+    store.create_project(&project).expect("create project");
+
+    let loaded = store.load_project(project.id).expect("load project").expect("project exists");
+    assert_eq!(loaded.name, "smoke-crud");
+    assert_eq!(loaded.schematic.nets.len(), 1);
+
+    let mut updated = loaded.clone();
+    updated.name = "smoke-crud-renamed".to_string();
+    assert!(store.update_project(&updated).expect("update project"));
+
+    let reloaded =
+        store.load_project(project.id).expect("reload project").expect("project still exists");
+    assert_eq!(reloaded.name, "smoke-crud-renamed");
+
+    assert!(store.delete_project(project.id).expect("delete project"));
+    assert!(store.load_project(project.id).expect("final load").is_none());
+}

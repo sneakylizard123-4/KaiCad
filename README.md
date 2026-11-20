@@ -6,13 +6,14 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 1 scaffold complete (pre-alpha); Week 2 (SQLite persistence) is next
-- **Week 1 commit:** `c864fbb` — Week 1 deliverables finalized
+- **Implementation:** Week 2 engineering database complete (pre-alpha); Week 3 (symbol management) is next
+- **Latest commit:** `c864fbb` — Week 1 deliverables finalized
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
-model, engine skeletons, CI configuration, documentation, one example per
-engine package and a Criterion benchmark. It is **not** a usable EDA tool yet.
+model, a SQLite engineering database, engine skeletons, CI configuration,
+documentation, examples and a Criterion benchmark. It is **not** a usable EDA
+tool yet.
 
 ## Features
 - Custom GUI
@@ -47,7 +48,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (71 tests across the workspace)
+# Run tests (85 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -65,6 +66,9 @@ cargo run -p core --example project_roundtrip
 
 # Construct a PCB outline shape and print a summary
 cargo run -p pcb --example board_outline
+
+# Create, list, load, update and delete a project in a SQLite database
+cargo run -p store --example project_crud
 
 # Compile the serialization benchmark without running it
 cargo bench -p core --no-run
@@ -106,15 +110,22 @@ KaiCad/
 ├── renderer/                   # Vulkan renderer skeleton (ash)
 ├── ai/                         # kAI subsystem
 ├── collab/                     # collaboration layer
+├── store/                      # SQLite engineering database + project CRUD
+│   ├── src/
+│   │   └── lib.rs
+│   ├── migrations/
+│   │   └── 0001_initial.sql
+│   └── examples/
+│       └── project_crud.rs
 ├── kai-cad/                    # application binary (kai-cad)
 │   ├── src/
 │   │   └── main.rs
 │   └── tests/
 │       └── smoke.rs            # cross-crate integration smoke tests
 ├── PRD.md                      # product requirements
-├── PLAN.md                     # implementation plan
-├── PHASE1_TASKS.md             # Phase 1 task breakdown
-└── WEEK1_TASKS.md              # Week 1 deliverables and status
+├── docs/PLAN.md                # implementation plan
+├── docs/PHASE1_TASKS.md        # Phase 1 task breakdown
+└── docs/WEEK1_TASKS.md         # Week 1 deliverables and status
 ```
 
 ## Documentation
@@ -122,23 +133,20 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 2)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 3)
 - [`PRD.md`](PRD.md) — master product requirements document
-- [`PLAN.md`](PLAN.md) — implementation roadmap and technical approach
-- [`PHASE1_TASKS.md`](PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
-- [`WEEK1_TASKS.md`](WEEK1_TASKS.md) — Week 1 deliverables and verification status
+- [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
+- [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
+- [`docs/WEEK1_TASKS.md`](docs/WEEK1_TASKS.md) — Week 1 deliverables and verification status
 
 ## Current State
 
-Week 1 scaffolding is complete and verified: **71 tests pass**, `cargo clippy
---workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and CI is green
-([run 43965323831](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43965323831),
-commit `c864fbb`).
+Week 1 scaffolding and Week 2 engineering database are complete and verified:
+**85 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings` and
+`cargo fmt --all -- --check` are clean, and the release build succeeds.
 
-The next milestone is **Week 2 — engineering database**: a SQLite-backed store
-with migrations and project CRUD, while keeping the existing JSON persistence API
-working. The full brief is in
+The next milestone is **Week 3 — symbol management**: KiCad symbol library
+loading and internal symbol-library handling. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -161,6 +169,8 @@ What each crate provides today:
   `kAI::suggest_optimization` returns `NotImplemented`.
 - 🚧 **collab** — `CollabManager` session creation, `VersioningManager`,
   `SharingManager` and `Window`. No transport, merge or real-time sync.
+- ✅ **store** — SQLite engineering database with versioned migrations and
+  project CRUD (`create`, `load`, `list`, `update`, `delete`).
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem.
 
@@ -168,7 +178,7 @@ What each crate provides today:
 
 | Phase | Weeks | Focus | Status |
 |-------|-------|-------|--------|
-| 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | 🚧 Week 1 complete |
+| 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | 🚧 Week 2 complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ⬜ Not started |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | ⬜ Not started |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |

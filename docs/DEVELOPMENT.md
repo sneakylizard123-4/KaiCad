@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Week 1 is complete at commit `c864fbb` (71 tests, CI
-> green). Week 2 — the SQLite engineering database — has not started; its work
-> order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1 and 2 are complete (85 tests, clippy/fmt/doc/release
+> all clean). Week 3 — symbol management and KiCad symbol library loading — is
+> next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -111,13 +111,14 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Print usage | `cargo run -p kai-cad -- --help` |
 | Print the version | `cargo run -p kai-cad -- --version` |
 | Build a release binary | `cargo build --workspace --release` |
+| Run the store CRUD example | `cargo run -p store --example project_crud` |
 
 Note that `--all-targets` is required to lint/check tests, examples and
 benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **71 tests**, all passing:
+`cargo test --workspace` currently runs **85 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -127,7 +128,8 @@ benchmarks; a bare `cargo check` misses them.
 | `pcb` (`src/lib.rs` and modules) | 13 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 15 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 6 |
+| `store` (`src/tests.rs`) | 13 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 7 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -155,6 +157,7 @@ subsystem self-check:
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=true
   collab: 1 session(s)
+  store: created, loaded and deleted 1 project (schema v1)
 self-check: ok
 ```
 
@@ -173,6 +176,9 @@ cargo run -p core --example project_roundtrip
 
 # Construct an OutlineShape and print a summary
 cargo run -p pcb --example board_outline
+
+# Create, list, load, update and delete a project in a SQLite database
+cargo run -p store --example project_crud
 ```
 
 List the examples of a package with:
@@ -226,11 +232,11 @@ fix.
 
 ## Working on the next milestone
 
-Week 1 is finished; Week 2 adds the engineering database. Before starting, read
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the schema
-requirements, acceptance criteria and verification commands. The existing JSON
-persistence in `core::serialization` must keep working while the SQLite store is
-added.
+Weeks 1 and 2 are finished; Week 3 adds symbol management and KiCad symbol
+library loading. Before starting, read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md),
+which contains the schema requirements, acceptance criteria and verification
+commands. The existing JSON persistence in `core::serialization` must keep
+working while new persistence layers are added.
 
 When a milestone changes the crate graph, commands or task status, update
 `docs/ARCHITECTURE.md`, this guide, `PLAN.md` and `PHASE1_TASKS.md` in the same
@@ -276,6 +282,14 @@ Consequences:
   `#[should_panic]` tests to work.
 - Release builds (`lto = true`, `opt-level = "z"`, `codegen-units = 1`) are
   slow to link; use dev builds while iterating.
+
+### SQLite `bundled` build is slow the first time
+
+`store` depends on `rusqlite` with the `bundled` feature, which compiles SQLite
+from source. The first `cargo check -p store` or `cargo build --workspace` can
+take a minute or two while `libsqlite3-sys` builds; later builds are
+incremental. This feature avoids requiring a system `libsqlite3` and keeps CI
+and Windows/macOS builds self-contained.
 
 ### Build is slow the first time
 

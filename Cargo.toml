@@ -9,6 +9,7 @@ members = [
     "ai",
     "collab",
     "kai-cad",
+    "store",
 ]
 
 [workspace.package]

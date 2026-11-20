@@ -21,6 +21,10 @@ database — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 - **Deterministic operations.** Do not introduce unseeded randomness into
   geometry, netlisting, routing or rule checks.
 - **No silent data loss.** Report or preserve data you cannot represent.
+- **Never edit an applied migration.** Migrations live in
+  `store/migrations/<version>_<name>.sql` and are embedded with `include_str!`.
+  Once a migration has been applied, add a new numbered file rather than
+  changing an existing one.
 
 ## Branches
 

@@ -5,8 +5,8 @@
 > skeletons whose functions return `NotImplemented` or empty values. Do not
 > read this as a description of working EDA functionality.
 >
-> Week 1 (workspace, core data model, CI) is complete at commit `c864fbb` with
-> 71 passing tests. Week 2 (SQLite engineering database) has not started.
+> Weeks 1 (workspace, core data model, CI) and 2 (SQLite engineering database)
+> are complete. The workspace has 85 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -24,6 +24,7 @@ graph TD
     renderer["renderer<br/>Vulkan via ash"]
     ai["ai (kAI)<br/>suggest · validate"]
     collab["collab<br/>sessions · versioning · sharing"]
+    store["store<br/>SQLite persistence"]
 
     app --> core
     app --> schematic
@@ -31,12 +32,14 @@ graph TD
     app --> renderer
     app --> ai
     app --> collab
+    app --> store
 
     schematic --> core
     pcb --> core
     ai --> core
     ai --> schematic
     collab --> core
+    store --> core
 ```
 
 Arrows mean "depends on". `core` sits at the bottom of the graph and must not
@@ -55,6 +58,7 @@ flowchart BT
     render["Renderer<br/>renderer (Vulkan)"]
     ai["AI subsystem<br/>ai (kAI)"]
     collab["Collaboration<br/>collab"]
+    store["Engineering database<br/>store"]
     ui["UI / application shell<br/>kai-cad"]
 
     schematic --> data
@@ -62,12 +66,14 @@ flowchart BT
     ai --> data
     ai --> schematic
     collab --> data
+    store --> data
     ui --> data
     ui --> schematic
     ui --> pcb
     ui --> render
     ui --> ai
     ui --> collab
+    ui --> store
 ```
 
 The UI layer is currently only a CLI (`kai-cad/src/main.rs`): it prints a
@@ -216,14 +222,38 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`, `chrono`. Modules:
 
 No transport, merge algorithm or real-time sync exists yet.
 
+### `store` — engineering database
+
+Dependencies: `core`, `rusqlite` (with the `bundled` feature), `serde_json`,
+`uuid`, `chrono`. Modules: `lib.rs` plus embedded `migrations/`.
+
+- `Store` wraps a `rusqlite::Connection`, enables `PRAGMA foreign_keys = ON`,
+  and applies migrations automatically on open.
+- `Store::{open, open_in_memory}` create file-backed or in-memory databases.
+- `Store::{create_project, load_project, list_projects, update_project,
+  delete_project}` implement project CRUD.
+- `ProjectSummary` is returned by `list_projects` and ordered by
+  `modified_at DESC, name ASC`.
+- `StoreError` covers SQLite, JSON, I/O, `NotFound`, `Duplicate` and migration
+  failures.
+
+**Schema rule:** the canonical record is `projects.document`, a complete JSON
+serialization of `core::Project`. The tables `sheets`, `symbols`, `components`,
+`nets` and `footprints` are queryable projections rebuilt from the document
+inside the same transaction on every create/update. They must never be edited
+independently of the authoritative document. Migrations are numbered SQL files
+embedded with `include_str!`; once applied they are immutable — add a new
+numbered file rather than editing an old one.
+
 ### `kai-cad` — application binary
 
 Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, and with no arguments runs a deterministic self-check:
 it serializes a `Project`, generates and ERC-checks a netlist, builds a PCB
-design, and reads the default renderer, AI and collaboration configuration.
-Integration tests live in `kai-cad/tests/smoke.rs`; the workspace root is a
-virtual manifest, so a root `tests/` directory would not be built.
+design, reads the default renderer, AI and collaboration configuration, and
+exercises the SQLite store with an in-memory database. Integration tests live
+in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
+root `tests/` directory would not be built.
 
 ## Data flow: schematic netlist to PCB
 
@@ -343,20 +373,20 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Week 1, commit `c864fbb`):** workspace and crate graph, shared
-`core` data model with JSON persistence, deterministic netlist generation and
-three-rule ERC, PCB data types and layer stack helper, renderer/AI/collab
-configuration types, `kai-cad` self-check binary, CI, and documentation.
+**Complete (Weeks 1–2, starting from commit `c864fbb`):** workspace and crate
+graph, shared `core` data model with JSON persistence, SQLite engineering
+database (`store`) with migrations and project CRUD, deterministic netlist
+generation and three-rule ERC, PCB data types and layer stack helper,
+renderer/AI/collab configuration types, `kai-cad` self-check binary, CI, and
+documentation.
 
-**Next (Week 2):** an engineering database. Today persistence is JSON files
-only — there is no SQLite dependency, schema, migration or query layer. The
+**Next (Week 3):** symbol management and KiCad symbol library loading. The
 planned work is:
 
-1. A SQL schema for projects, sheets, symbols, components, nets and footprints,
-   with versioned migrations.
-2. A repository/store layer that creates, reads, updates and deletes projects
-   without breaking `core::serialization`.
-3. Round-trip tests proving a project survives save → load unchanged.
+1. Internal symbol-library data structures and persistence through the store.
+2. A parser for KiCad `.kicad_sym` symbol library files.
+3. Tests proving symbols can be loaded from KiCad libraries and round-trip
+   through the project document.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
