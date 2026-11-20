@@ -5,6 +5,10 @@ Practical instructions for building, testing and hacking on KaiCad.
 > KaiCad is a **pre-alpha scaffold**. Crates compile and the data model is
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
+>
+> **Current state:** Week 1 is complete at commit `c864fbb` (71 tests, CI
+> green). Week 2 — the SQLite engineering database — has not started; its work
+> order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -219,6 +223,18 @@ browser after a run.
 passed to Clippy only, not through a global `RUSTFLAGS`, because global flags
 also apply to dependencies and build scripts where warnings are not ours to
 fix.
+
+## Working on the next milestone
+
+Week 1 is finished; Week 2 adds the engineering database. Before starting, read
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the schema
+requirements, acceptance criteria and verification commands. The existing JSON
+persistence in `core::serialization` must keep working while the SQLite store is
+added.
+
+When a milestone changes the crate graph, commands or task status, update
+`docs/ARCHITECTURE.md`, this guide, `PLAN.md` and `PHASE1_TASKS.md` in the same
+change.
 
 ## Troubleshooting
 

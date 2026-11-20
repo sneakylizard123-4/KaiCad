@@ -11,7 +11,7 @@
 **Primary EDA compatibility:** KiCad 10  
 **Secondary EDA compatibility:** KiCad 9  
 **Rendering:** Vulkan  
-**Status:** Architecture decisions finalized; implementation pending
+**Status:** Architecture decisions finalized; Week 1 scaffold implemented; pre-alpha
 
 ---
 
@@ -141,4 +141,24 @@ KaiCad must ultimately support:
 - Board annotations.
 - PCB measurements.
 - 3D board visualization.
-- Mechanical
+- Mechanical layers and documentation layers.
+- Mounting holes and board cutouts.
+- 3D component models and enclosure export.
+- Manufacturing outputs: Gerber, drill files, pick-and-place and BOM.
+
+## 3.2 Document scope
+
+This revision covers the product vision, target users and the functional scope
+that every later design decision must serve. Detailed subsystem design,
+milestones and task breakdowns are maintained separately:
+
+- [`PLAN.md`](PLAN.md) — architecture, 16-week roadmap and success criteria.
+- [`PHASE1_TASKS.md`](PHASE1_TASKS.md) — Weeks 1–4 task breakdown and status.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, data model and
+  design rules as implemented.
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — the current
+  implementation brief.
+
+Implementation status: Week 1 (scaffolding, shared data model, CI) is complete;
+Week 2 (engineering database) is next. KaiCad is pre-alpha and does not yet
+provide usable schematic or PCB editing.

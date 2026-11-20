@@ -7,7 +7,8 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions.
+instructions. The current implementation brief — Week 2, the SQLite engineering
+database — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
 
@@ -117,6 +118,8 @@ Author and reviewer should both confirm:
 - [ ] `docs/ARCHITECTURE.md` is updated if the crate graph, module layout or
       data flow changed.
 - [ ] `docs/DEVELOPMENT.md` is updated if commands, toolchain or CI changed.
+- [ ] `PLAN.md`, `PHASE1_TASKS.md` and `WEEK1_TASKS.md` reflect any change in
+      milestone status; do not leave a completed task marked open.
 - [ ] No new dependency without a justification (prefer the standard library
       and existing crates).
 - [ ] Determinism, local-first operation and AI validation rules are respected.

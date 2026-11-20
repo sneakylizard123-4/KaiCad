@@ -6,7 +6,8 @@ Set up the foundational project structure, tooling, and initial development envi
 ## Tasks
 
 ### Task 1.1: Initialize Cargo Workspace
-- Create a new Cargo workspace named `kaicas`
+- Create a Cargo workspace for KaiCad (the binary is `kai-cad`; the root
+  manifest is virtual and has no `[package]` section)
 - Structure:
   - Root directory with `Cargo.toml` (workspace)
   - `core/` crate (shared types, enums, traits)
@@ -77,7 +78,8 @@ Verification was run locally on Linux with `rustc 1.99.1` / `cargo 1.99.1`
 | `cargo bench -p core --bench serialization -- --warm-up-time 0.2 --measurement-time 0.5 --sample-size 10` | **pass** — ≈380 µs serialize, ≈335 µs deserialize (100 symbols, 100 nets) |
 | `cargo fmt --all -- --check` | **pass** — clean, no configuration warnings |
 | `cargo clippy --workspace --all-targets -- -D warnings` | **pass** — no warnings across libs, bins, tests, examples and benches |
-| GitHub Actions CI (commit `ecfbf17`) | **success** — [run 43071969392](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43071969392), `completed / success`, 1m24s |
+| `cargo doc --workspace --no-deps` | **pass** — documentation builds with no warnings |
+| GitHub Actions CI (commit `c864fbb`) | **success** — [run 43965323831](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43965323831), `completed / success`, 1m35s (the earlier `ecfbf17` run 43071969392 also passed) |
 
 Test suite breakdown (71 total): `ai` 8, `collab` 9, `core` 15, `pcb` 13,
 `renderer` 5, `schematic` 15, `kai-cad/tests/smoke.rs` 6.
@@ -89,8 +91,21 @@ Deliverables for Task 1.5:
 - `core/benches/serialization.rs` (Criterion, `harness = false`)
 
 **Task 1.2:** verified. The workflow `.github/workflows/ci.yml` runs
-formatting, compilation, Clippy with `-D warnings`, tests, docs and a release
-build; the run linked above completed successfully.
+formatting, compilation, Clippy with `-D warnings`, documentation, tests and a
+release build; the run linked above completed successfully.
+
+## Final commit
+
+Week 1 was committed as **`c864fbb` — `feat(workspace): finalize Week 1
+deliverables`**. The working tree was clean after the commit and CI passed on
+that commit.
+
+## Next step
+
+Week 2 (engineering database) has not started. The work order — schema,
+migrations, SQLite-backed project CRUD and acceptance criteria — is in
+[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md). Week 1's JSON
+persistence API must keep working.
 
 ## Post-review fixes
 

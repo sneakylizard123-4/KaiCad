@@ -66,12 +66,25 @@
 ### Implementation status
 
 **Week 1 is complete and verified.** The Cargo workspace, CI pipeline, toolchain
-configuration and initial shared data model are in place. As of commit `ecfbf17`
+configuration and initial shared data model are in place. As of commit `c864fbb`
 the workspace has **71 passing tests**, clean `cargo clippy --workspace
---all-targets -- -D warnings` and `cargo fmt --all -- --check`, a successful
+--all-targets -- -D warnings`, `cargo fmt --all -- --check`, a successful
 release build, and a green CI run
-([43071969392](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43071969392)).
-Weeks 2–4 remain in progress; see [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for evidence.
+([43965323831](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43965323831)).
+See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for command-by-command evidence.
+
+Phase 1 progress:
+
+| Week | Focus | Status |
+|------|-------|--------|
+| 1 | Project scaffolding: workspace, CI, toolchain, core data model | ✅ Complete |
+| 2 | Engineering database: schema, migrations, SQLite-backed project CRUD | ⬜ Next |
+| 3 | Symbol management: symbol libraries and KiCad symbol loading | ⬜ Not started |
+| 4 | Schematic engine: netlist export, graph operations, broader ERC | ⬜ Not started |
+
+The detailed brief for the next implementation pass — including schema
+requirements, acceptance criteria and verification commands — is in
+[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 ## 4. Key Milestones
 

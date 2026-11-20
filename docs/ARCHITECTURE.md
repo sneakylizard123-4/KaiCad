@@ -4,6 +4,9 @@
 > architecture and the code that exists today. Most engines are type-level
 > skeletons whose functions return `NotImplemented` or empty values. Do not
 > read this as a description of working EDA functionality.
+>
+> Week 1 (workspace, core data model, CI) is complete at commit `c864fbb` with
+> 71 passing tests. Week 2 (SQLite engineering database) has not started.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -337,6 +340,25 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 - **Secondary:** KiCad 9 project files.
 - Compatibility work has not started; no parser or writer exists in the
   workspace yet.
+
+## Current milestone and next steps
+
+**Complete (Week 1, commit `c864fbb`):** workspace and crate graph, shared
+`core` data model with JSON persistence, deterministic netlist generation and
+three-rule ERC, PCB data types and layer stack helper, renderer/AI/collab
+configuration types, `kai-cad` self-check binary, CI, and documentation.
+
+**Next (Week 2):** an engineering database. Today persistence is JSON files
+only — there is no SQLite dependency, schema, migration or query layer. The
+planned work is:
+
+1. A SQL schema for projects, sheets, symbols, components, nets and footprints,
+   with versioned migrations.
+2. A repository/store layer that creates, reads, updates and deletes projects
+   without breaking `core::serialization`.
+3. Round-trip tests proving a project survives save → load unchanged.
+
+The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Licensing
 

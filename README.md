@@ -6,7 +6,8 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 1 scaffold complete (pre-alpha)
+- **Implementation:** Week 1 scaffold complete (pre-alpha); Week 2 (SQLite persistence) is next
+- **Week 1 commit:** `c864fbb` — Week 1 deliverables finalized
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -90,7 +91,8 @@ KaiCad/
 ├── docs/
 │   ├── ARCHITECTURE.md         # crate graph, layering, data flow, design rules
 │   ├── DEVELOPMENT.md          # setup, commands, examples, benchmarks, CI
-│   └── CONTRIBUTING.md         # branches, commits, review checklist, license
+│   ├── CONTRIBUTING.md         # branches, commits, review checklist, license
+│   └── NEXT_AGENT_PROMPT.md    # self-contained brief for the next implementation pass
 ├── core/                       # shared data model (Project, Symbol, Net, Sheet)
 │   ├── src/
 │   ├── examples/
@@ -120,6 +122,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 2)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`PLAN.md`](PLAN.md) — implementation roadmap and technical approach
 - [`PHASE1_TASKS.md`](PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -130,8 +133,13 @@ KaiCad/
 Week 1 scaffolding is complete and verified: **71 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
 clean, and CI is green
-([run 43071969392](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43071969392),
-commit `ecfbf17`).
+([run 43965323831](https://github.com/sneakylizard123-4/KaiCad/actions/runs/43965323831),
+commit `c864fbb`).
+
+The next milestone is **Week 2 — engineering database**: a SQLite-backed store
+with migrations and project CRUD, while keeping the existing JSON persistence API
+working. The full brief is in
+[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
 
@@ -155,6 +163,18 @@ What each crate provides today:
   `SharingManager` and `Window`. No transport, merge or real-time sync.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem.
+
+## Roadmap
+
+| Phase | Weeks | Focus | Status |
+|-------|-------|-------|--------|
+| 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | 🚧 Week 1 complete |
+| 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ⬜ Not started |
+| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | ⬜ Not started |
+| 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
+
+See [`PLAN.md`](PLAN.md) for the full roadmap and [`PHASE1_TASKS.md`](PHASE1_TASKS.md)
+for the Phase 1 breakdown.
 
 ## License
 GPL-3.0-or-later
