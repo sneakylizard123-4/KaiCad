@@ -6,7 +6,7 @@
 > read this as a description of working EDA functionality.
 >
 > Weeks 1 (workspace, core data model, CI) and 2 (SQLite engineering database)
-> are complete. The workspace has 85 passing tests.
+> are complete. The workspace has 89 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -241,7 +241,10 @@ Dependencies: `core`, `rusqlite` (with the `bundled` feature), `serde_json`,
 serialization of `core::Project`. The tables `sheets`, `symbols`, `components`,
 `nets` and `footprints` are queryable projections rebuilt from the document
 inside the same transaction on every create/update. They must never be edited
-independently of the authoritative document. Migrations are numbered SQL files
+independently of the authoritative document. Their primary key is
+`(project_id, id)`: entity ids are unique within a project rather than
+globally, so a duplicated project may reuse the same entity ids. Migrations are
+numbered SQL files
 embedded with `include_str!`; once applied they are immutable — add a new
 numbered file rather than editing an old one.
 

@@ -16,7 +16,7 @@ This document is self-contained. Read it fully before writing code.
 - **Repository tip:** see `git log -1` (this brief predates the Week 2 close-out
   commit `af3d0a7`)
 - **Working tree:** clean at the time this brief was written
-- **Tests:** 85 passing, 0 failing
+- **Tests:** 89 passing, 0 failing
 - **Toolchain:** `stable` channel; edition 2024; MSRV/`rust-version` **1.85**
 - **License:** GPL-3.0-or-later
 
@@ -183,7 +183,7 @@ impl Store {
 }
 ```
 
-Schema additions (migration `0002_symbol_libraries.sql`):
+Schema additions (migration `0003_symbol_libraries.sql`):
 
 ```sql
 CREATE TABLE symbol_libraries (
@@ -265,7 +265,7 @@ All of the following must be true:
       1.85.
 - [ ] A minimal KiCad `.kicad_sym` parser loads at least name, pins and
       electrical types deterministically.
-- [ ] `store` migration `0002_symbol_libraries.sql` applied automatically and
+- [ ] `store` migration `0003_symbol_libraries.sql` applied automatically and
       idempotently.
 - [ ] `store` symbol-library CRUD is implemented and tested.
 - [ ] No public API of `core`, `schematic`, `pcb`, `renderer`, `ai`, `collab`
@@ -273,7 +273,7 @@ All of the following must be true:
 - [ ] `kai-cad` self-check includes the kicad-parser line and still ends
       `self-check: ok`.
 - [ ] `kicad-parser/examples/parse_library.rs` runs successfully.
-- [ ] Test count rises from 85 to at least 95, all passing.
+- [ ] Test count rises from 89 to at least 95, all passing.
 - [ ] Clippy, fmt and rustdoc are warning-free.
 - [ ] Documentation updated (§7).
 
@@ -304,7 +304,7 @@ cargo build --workspace --release
    `cargo check -p kicad-parser`.
 3. Implement the S-expression tokenizer and parser with unit tests.
 4. Implement `parse_symbol_library` and map KiCad symbols/pins to `core::Symbol`.
-5. Add `store` migration `0002_symbol_libraries.sql` and symbol-library CRUD.
+5. Add `store` migration `0003_symbol_libraries.sql` and symbol-library CRUD.
 6. Add the parser example and wire `kai-cad` self-check + smoke test.
 7. Run the full verification suite; fix warnings before moving on.
 8. Update documentation and commit with a Conventional Commit message such as
