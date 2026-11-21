@@ -1,0 +1,19 @@
+[package]
+name = "kicad-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "KiCad file-format parser for KaiCad import/export"
+
+[dependencies]
+core = { path = "../core" }
+uuid = { version = "1", features = ["v5"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

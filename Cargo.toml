@@ -10,6 +10,7 @@ members = [
     "collab",
     "kai-cad",
     "store",
+    "kicad-parser",
 ]
 
 [workspace.package]

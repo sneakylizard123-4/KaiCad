@@ -104,10 +104,29 @@ fn fixture_project_with_namespace(namespace: &str) -> core::Project {
     project
 }
 
+fn fixture_symbol_library(namespace: &str, name: &str) -> core::SymbolLibrary {
+    core::SymbolLibrary {
+        id: fixed_uuid(&format!("{namespace}:library")),
+        name: name.to_string(),
+        source: core::SymbolLibrarySource::KiCad { path: "/libs/Device.kicad_sym".to_string() },
+        symbols: vec![core::Symbol {
+            id: fixed_uuid(&format!("{namespace}:library-symbol")),
+            name: "Device:R".to_string(),
+            pins: vec![core::Pin {
+                id: fixed_uuid(&format!("{namespace}:library-pin")),
+                number: "1".to_string(),
+                name: "~".to_string(),
+                ..core::Pin::default()
+            }],
+            library: name.to_string(),
+        }],
+    }
+}
+
 #[test]
 fn open_in_memory_applies_initial_migration() {
     let store = Store::open_in_memory().expect("open in-memory store");
-    assert_eq!(store.schema_version().expect("schema version"), 2);
+    assert_eq!(store.schema_version().expect("schema version"), 3);
 }
 
 #[test]
@@ -117,11 +136,11 @@ fn migrations_are_idempotent() {
 
     {
         let store = Store::open(&path).expect("first open");
-        assert_eq!(store.schema_version().expect("schema version"), 2);
+        assert_eq!(store.schema_version().expect("schema version"), 3);
     }
     {
         let store = Store::open(&path).expect("second open");
-        assert_eq!(store.schema_version().expect("schema version"), 2);
+        assert_eq!(store.schema_version().expect("schema version"), 3);
     }
 }
 
@@ -355,6 +374,92 @@ fn list_project_summary_parses_metadata() {
     assert_eq!(summary.name, project.name);
     assert_eq!(summary.version, project.version);
     assert_eq!(summary.modified_at, project.metadata.modified_at);
+}
+
+#[test]
+fn symbol_library_round_trip() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let library = fixture_symbol_library("round-trip", "Device");
+
+    store.create_symbol_library(&library).expect("create library");
+    let loaded =
+        store.load_symbol_library(library.id).expect("load library").expect("library exists");
+
+    assert_eq!(loaded.id, library.id);
+    assert_eq!(loaded.name, library.name);
+    assert_eq!(loaded.source, library.source);
+    assert_eq!(loaded.symbols.len(), 1);
+    assert_eq!(loaded.symbols[0].id, library.symbols[0].id);
+    assert_eq!(loaded.symbols[0].pins[0].number, "1");
+}
+
+#[test]
+fn duplicate_symbol_library_id_returns_error() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let library = fixture_symbol_library("duplicate", "Device");
+
+    store.create_symbol_library(&library).expect("first create");
+
+    let result = store.create_symbol_library(&library);
+    match result {
+        Err(StoreError::Duplicate(id)) => assert_eq!(id, library.id),
+        other => panic!("expected Duplicate error, got {other:?}"),
+    }
+
+    assert!(store.load_symbol_library(library.id).expect("load library").is_some());
+}
+
+#[test]
+fn list_symbol_libraries_is_ordered_by_name() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let zeta = fixture_symbol_library("zeta", "zeta");
+    let alpha = fixture_symbol_library("alpha", "alpha");
+    let mid = fixture_symbol_library("mid", "mid");
+
+    store.create_symbol_library(&zeta).expect("create zeta");
+    store.create_symbol_library(&alpha).expect("create alpha");
+    store.create_symbol_library(&mid).expect("create mid");
+
+    let libraries = store.list_symbol_libraries().expect("list libraries");
+    let names: Vec<&str> = libraries.iter().map(|(_, name)| name.as_str()).collect();
+
+    assert_eq!(names, vec!["alpha", "mid", "zeta"]);
+}
+
+#[test]
+fn update_symbol_library_persists_changes() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let mut library = fixture_symbol_library("update", "Device");
+
+    store.create_symbol_library(&library).expect("create library");
+
+    library.name = "Device-renamed".to_string();
+    library.source = core::SymbolLibrarySource::Internal;
+    library.symbols[0].pins.clear();
+
+    assert!(store.update_symbol_library(&library).expect("update library"));
+
+    let loaded =
+        store.load_symbol_library(library.id).expect("load library").expect("library exists");
+    assert_eq!(loaded.name, "Device-renamed");
+    assert_eq!(loaded.source, core::SymbolLibrarySource::Internal);
+    assert!(loaded.symbols[0].pins.is_empty());
+
+    let mut missing = fixture_symbol_library("missing", "Missing");
+    missing.id = fixed_uuid("missing:library");
+    assert!(!store.update_symbol_library(&missing).expect("update missing"));
+}
+
+#[test]
+fn delete_symbol_library_returns_true_once_then_false() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let library = fixture_symbol_library("delete", "Device");
+
+    store.create_symbol_library(&library).expect("create library");
+
+    assert!(store.delete_symbol_library(library.id).expect("delete first"));
+    assert!(!store.delete_symbol_library(library.id).expect("delete second"));
+    assert!(store.load_symbol_library(library.id).expect("load").is_none());
 }
 
 struct ProjectionCounts {

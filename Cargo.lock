@@ -443,11 +443,21 @@ dependencies = [
  "ai",
  "collab",
  "core",
+ "kicad-parser",
  "pcb",
  "renderer",
  "schematic",
  "serde_json",
  "store",
+ "uuid",
+]
+
+[[package]]
+name = "kicad-parser"
+version = "0.1.0"
+dependencies = [
+ "core",
+ "tempfile",
  "uuid",
 ]
 

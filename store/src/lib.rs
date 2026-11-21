@@ -19,13 +19,14 @@ use rusqlite::{Connection, OptionalExtension, Transaction};
 mod tests;
 
 /// Highest migration version shipped by this crate.
-const CURRENT_SCHEMA_VERSION: u32 = 2;
+const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Migrations are numbered SQL files embedded with `include_str!`.  Never edit
 /// an applied migration; add a new numbered entry at the end.
 const MIGRATIONS: &[(u32, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
     (2, include_str!("../migrations/0002_projection_primary_keys.sql")),
+    (3, include_str!("../migrations/0003_symbol_libraries.sql")),
 ];
 
 /// A synchronous SQLite-backed engineering database.
@@ -247,6 +248,90 @@ impl Store {
         Ok(rows_changed > 0)
     }
 
+    /// Persist a new symbol library.
+    ///
+    /// Returns [`StoreError::Duplicate`] if a library with the same id exists.
+    pub fn create_symbol_library(&mut self, library: &core::SymbolLibrary) -> Result<()> {
+        let data = serde_json::to_string_pretty(library)?;
+        let result = self.connection.execute(
+            "INSERT INTO symbol_libraries (id, name, source, data) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                library.id.to_string(),
+                library.name,
+                symbol_library_source_text(&library.source),
+                data,
+            ],
+        );
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) => Err(map_constraint_violation(error, library.id)),
+        }
+    }
+
+    /// Load a symbol library by id; returns `Ok(None)` when it does not exist.
+    pub fn load_symbol_library(&self, id: uuid::Uuid) -> Result<Option<core::SymbolLibrary>> {
+        let mut statement =
+            self.connection.prepare("SELECT data FROM symbol_libraries WHERE id = ?1")?;
+        let mut rows = statement.query([id.to_string()])?;
+
+        match rows.next()? {
+            Some(row) => {
+                let data: String = row.get(0)?;
+                Ok(Some(serde_json::from_str(&data)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// List symbol libraries as `(id, name)` pairs, ordered by name ASC.
+    pub fn list_symbol_libraries(&self) -> Result<Vec<(uuid::Uuid, String)>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name FROM symbol_libraries ORDER BY name ASC, id ASC")?;
+
+        let rows = statement.query_map([], |row| {
+            let id_text: String = row.get(0)?;
+            let id = uuid::Uuid::parse_str(&id_text).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok((id, row.get(1)?))
+        })?;
+
+        let mut libraries = Vec::new();
+        for row in rows {
+            libraries.push(row?);
+        }
+        Ok(libraries)
+    }
+
+    /// Update an existing symbol library; returns `false` if the id is absent.
+    pub fn update_symbol_library(&mut self, library: &core::SymbolLibrary) -> Result<bool> {
+        let data = serde_json::to_string_pretty(library)?;
+        let rows_changed = self.connection.execute(
+            "UPDATE symbol_libraries SET name = ?2, source = ?3, data = ?4 WHERE id = ?1",
+            rusqlite::params![
+                library.id.to_string(),
+                library.name,
+                symbol_library_source_text(&library.source),
+                data,
+            ],
+        )?;
+        Ok(rows_changed > 0)
+    }
+
+    /// Delete a symbol library; returns `false` if the id is absent.
+    pub fn delete_symbol_library(&mut self, id: uuid::Uuid) -> Result<bool> {
+        let rows_changed = self
+            .connection
+            .execute("DELETE FROM symbol_libraries WHERE id = ?1", [id.to_string()])?;
+        Ok(rows_changed > 0)
+    }
+
     fn configure(connection: &Connection) -> Result<()> {
         connection.execute_batch("PRAGMA foreign_keys = ON;")?;
         Ok(())
@@ -295,6 +380,13 @@ impl Store {
         }
 
         Ok(())
+    }
+}
+
+fn symbol_library_source_text(source: &core::SymbolLibrarySource) -> String {
+    match source {
+        core::SymbolLibrarySource::Internal => "Internal".to_string(),
+        core::SymbolLibrarySource::KiCad { path } => format!("KiCad:{path}"),
     }
 }
 

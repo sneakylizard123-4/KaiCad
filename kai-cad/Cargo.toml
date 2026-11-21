@@ -20,6 +20,7 @@ renderer = { path = "../renderer" }
 ai = { path = "../ai" }
 collab = { path = "../collab" }
 store = { path = "../store" }
+kicad-parser = { path = "../kicad-parser" }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

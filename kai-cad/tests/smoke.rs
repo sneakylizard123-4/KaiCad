@@ -176,3 +176,35 @@ fn store_project_crud_round_trip_in_memory() {
     assert!(store.delete_project(project.id).expect("delete project"));
     assert!(store.load_project(project.id).expect("final load").is_none());
 }
+
+#[test]
+fn kicad_symbol_library_parses_and_persists() {
+    let source = r#"(kicad_symbol_lib
+      (version 20231120)
+      (symbol "Device:R"
+        (symbol "R_1_1"
+          (pin passive line (name "~") (number "1"))
+          (pin passive line (name "~") (number "2"))
+        )
+      )
+    )"#;
+    let dir = std::env::temp_dir().join(format!("kaicad-smoke-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("Device.kicad_sym");
+    std::fs::write(&path, source).expect("write fixture");
+
+    let library = kicad_parser::parse_symbol_library(&path).expect("parse library");
+    assert_eq!(library.name, "Device");
+    assert_eq!(library.symbols.len(), 1);
+    assert_eq!(library.symbols[0].pins.len(), 2);
+
+    let mut store = store::Store::open_in_memory().expect("open in-memory store");
+    store.create_symbol_library(&library).expect("persist library");
+    let loaded =
+        store.load_symbol_library(library.id).expect("load library").expect("library exists");
+
+    assert_eq!(loaded.name, "Device");
+    assert_eq!(loaded.symbols.len(), 1);
+
+    std::fs::remove_dir_all(&dir).expect("clean up temp dir");
+}

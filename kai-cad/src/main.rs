@@ -70,6 +70,7 @@ fn self_check() -> Result<(), String> {
     check_ai()?;
     check_collab()?;
     check_store()?;
+    check_kicad_parser()?;
     Ok(())
 }
 
@@ -233,5 +234,35 @@ fn check_store() -> Result<(), String> {
         .map_err(|error| format!("store: failed to read schema version: {error}"))?;
 
     println!("  store: created, loaded and deleted 1 project (schema v{version})");
+    Ok(())
+}
+
+fn check_kicad_parser() -> Result<(), String> {
+    const FIXTURE: &str = r#"(kicad_symbol_lib
+      (version 20231120)
+      (generator kicad_symbol_editor)
+      (symbol "Device:R"
+        (symbol "R_1_1"
+          (pin passive line (name "~") (number "1"))
+          (pin passive line (name "~") (number "2"))
+        )
+      )
+    )"#;
+
+    let path = std::env::temp_dir().join(format!("kaicad-self-check-{}.kicad_sym", Uuid::new_v4()));
+    std::fs::write(&path, FIXTURE)
+        .map_err(|error| format!("kicad-parser: failed to write fixture: {error}"))?;
+
+    let parsed = kicad_parser::parse_symbol_library(&path);
+    let _ = std::fs::remove_file(&path);
+    let library = parsed.map_err(|error| format!("kicad-parser: {error}"))?;
+
+    ensure(!library.symbols.is_empty(), "kicad-parser: expected at least one parsed symbol")?;
+    ensure(
+        library.symbols[0].pins.len() == 2,
+        "kicad-parser: expected two pins on the fixture symbol",
+    )?;
+
+    println!("  kicad-parser: loaded {} symbol(s) from {}", library.symbols.len(), path.display());
     Ok(())
 }
