@@ -7,8 +7,9 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 2, the SQLite engineering
-database — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+instructions. The current implementation brief — Week 3, symbol management and
+KiCad symbol library loading — is in
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
 

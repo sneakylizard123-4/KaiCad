@@ -102,10 +102,11 @@ that commit.
 
 ## Next step
 
-Week 2 (engineering database) has not started. The work order — schema,
-migrations, SQLite-backed project CRUD and acceptance criteria — is in
-[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md). Week 1's JSON
-persistence API must keep working.
+Week 2 (engineering database) is complete and verified; Week 3 (symbol
+management) is next. The Week 3 work order — symbol-library data structures,
+KiCad `.kicad_sym` loading and store persistence — is in
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). Week 1's JSON persistence API
+must keep working.
 
 ## Post-review fixes
 

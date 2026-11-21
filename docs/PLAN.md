@@ -70,7 +70,7 @@ toolchain configuration, shared data model and SQLite engineering database are i
 place. The workspace has **85 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the Week 3 brief.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 3 brief.
 
 Phase 1 progress:
 
@@ -83,7 +83,7 @@ Phase 1 progress:
 
 The detailed brief for the next implementation pass — including schema
 requirements, acceptance criteria and verification commands — is in
-[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## 4. Key Milestones
 

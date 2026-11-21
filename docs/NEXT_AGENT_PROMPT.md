@@ -13,7 +13,8 @@ This document is self-contained. Read it fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Latest commit:** `c864fbb` — `feat(workspace): finalize Week 1 deliverables`
+- **Repository tip:** see `git log -1` (this brief predates the Week 2 close-out
+  commit `af3d0a7`)
 - **Working tree:** clean at the time this brief was written
 - **Tests:** 85 passing, 0 failing
 - **Toolchain:** `stable` channel; edition 2024; MSRV/`rust-version` **1.85**
