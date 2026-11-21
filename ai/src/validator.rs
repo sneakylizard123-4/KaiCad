@@ -3,10 +3,11 @@
 use crate::{Constraint, OptimizationSuggestion, ValidationError, ValidationResult};
 
 /// Validator for AI suggestions.
+///
+/// Validation is always deterministic — no network access and no model calls.
+/// There is deliberately no mode switch, because AI output is untrusted.
 #[derive(Debug, Clone, Default)]
-pub struct SuggestionValidator {
-    pub deterministic_mode: bool,
-}
+pub struct SuggestionValidator;
 
 impl SuggestionValidator {
     /// Deterministic checks only: no network, no model. Returns every problem found.

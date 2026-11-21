@@ -28,9 +28,25 @@ impl PcbOutline {
         ])
     }
 
-    /// Whether the outline has enough points to enclose an area.
+    /// Whether the outline encloses a non-zero area.
+    ///
+    /// The points are the corners in order, and the edge from the last point
+    /// back to the first is implicit, so a rectangle need not repeat its
+    /// starting corner. Repeated or collinear corners enclose no area and are
+    /// therefore rejected.
     pub fn is_closed(&self) -> bool {
-        self.points.len() >= 3
+        if self.points.len() < 3 {
+            return false;
+        }
+
+        let doubled_area: f64 = self
+            .points
+            .iter()
+            .zip(self.points.iter().cycle().skip(1))
+            .map(|(point, next)| point.x * next.y - next.x * point.y)
+            .sum();
+
+        doubled_area.abs() > f64::EPSILON
     }
 }
 
@@ -78,7 +94,8 @@ pub struct Stackup {
 
 #[cfg(test)]
 mod tests {
-    use super::{LayerKind, PcbLayer, Stackup};
+    use super::{LayerKind, PcbLayer, PcbOutline, Stackup};
+    use crate::geometry::Point;
 
     #[test]
     fn copper_layers_are_recognised() {
@@ -94,5 +111,33 @@ mod tests {
         let stackup = Stackup::default();
 
         assert!(stackup.layers.is_empty());
+    }
+
+    #[test]
+    fn degenerate_outlines_do_not_enclose_area() {
+        let point = Point::new(0.0, 0.0);
+
+        assert!(!PcbOutline::default().is_closed());
+        assert!(!PcbOutline::new(vec![point, point, point]).is_closed());
+        assert!(
+            !PcbOutline::new(vec![
+                Point::new(0.0, 0.0),
+                Point::new(1.0, 1.0),
+                Point::new(2.0, 2.0),
+            ])
+            .is_closed()
+        );
+    }
+
+    #[test]
+    fn explicitly_closed_outline_encloses_area() {
+        let outline = PcbOutline::new(vec![
+            Point::new(0.0, 0.0),
+            Point::new(10.0, 0.0),
+            Point::new(0.0, 10.0),
+            Point::new(0.0, 0.0),
+        ]);
+
+        assert!(outline.is_closed());
     }
 }

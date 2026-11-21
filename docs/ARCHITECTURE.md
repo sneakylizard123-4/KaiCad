@@ -6,7 +6,7 @@
 > read this as a description of working EDA functionality.
 >
 > Weeks 1 (workspace, core data model, CI) and 2 (SQLite engineering database)
-> are complete. The workspace has 89 passing tests.
+> are complete. The workspace has 90 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -206,8 +206,9 @@ Dependencies: `core`, `schematic`, `serde`, `serde_json`, `uuid`. Modules:
 - `kAI::suggest_optimization` still returns `NotImplemented`;
   `kAI::validate_suggestion` runs the validator locally (no network, no model).
 
-The default endpoint is `http://localhost:11434` (a local model server) and
-`enable_deterministic_validation` defaults to `true`.
+The default endpoint is `http://localhost:11434` (a local model server).
+Deterministic validation is mandatory and always on; `kAIConfig` exposes no
+switch to disable it.
 
 ### `collab` — collaboration layer
 
@@ -234,8 +235,7 @@ Dependencies: `core`, `rusqlite` (with the `bundled` feature), `serde_json`,
   delete_project}` implement project CRUD.
 - `ProjectSummary` is returned by `list_projects` and ordered by
   `modified_at DESC, name ASC`.
-- `StoreError` covers SQLite, JSON, I/O, `NotFound`, `Duplicate` and migration
-  failures.
+- `StoreError` covers SQLite, JSON, I/O, `Duplicate` and migration failures.
 
 **Schema rule:** the canonical record is `projects.document`, a complete JSON
 serialization of `core::Project`. The tables `sheets`, `symbols`, `components`,

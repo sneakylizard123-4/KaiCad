@@ -52,8 +52,6 @@ pub enum StoreError {
     Json(serde_json::Error),
     /// An I/O error while creating the database directory or file.
     Io(std::io::Error),
-    /// A requested project id was not found.
-    NotFound(uuid::Uuid),
     /// A project with the same id already exists.
     Duplicate(uuid::Uuid),
     /// The migration runner failed.
@@ -66,7 +64,6 @@ impl fmt::Display for StoreError {
             Self::Sqlite(error) => write!(f, "sqlite error: {error}"),
             Self::Json(error) => write!(f, "json error: {error}"),
             Self::Io(error) => write!(f, "io error: {error}"),
-            Self::NotFound(id) => write!(f, "project not found: {id}"),
             Self::Duplicate(id) => write!(f, "project already exists: {id}"),
             Self::MigrationFailed(message) => write!(f, "migration failed: {message}"),
         }
@@ -79,7 +76,7 @@ impl std::error::Error for StoreError {
             Self::Sqlite(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io(error) => Some(error),
-            Self::NotFound(_) | Self::Duplicate(_) | Self::MigrationFailed(_) => None,
+            Self::Duplicate(_) | Self::MigrationFailed(_) => None,
         }
     }
 }

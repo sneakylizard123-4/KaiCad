@@ -16,7 +16,7 @@ This document is self-contained. Read it fully before writing code.
 - **Repository tip:** see `git log -1` (this brief predates the Week 2 close-out
   commit `af3d0a7`)
 - **Working tree:** clean at the time this brief was written
-- **Tests:** 89 passing, 0 failing
+- **Tests:** 90 passing, 0 failing
 - **Toolchain:** `stable` channel; edition 2024; MSRV/`rust-version` **1.85**
 - **License:** GPL-3.0-or-later
 
@@ -273,7 +273,7 @@ All of the following must be true:
 - [ ] `kai-cad` self-check includes the kicad-parser line and still ends
       `self-check: ok`.
 - [ ] `kicad-parser/examples/parse_library.rs` runs successfully.
-- [ ] Test count rises from 89 to at least 95, all passing.
+- [ ] Test count rises from 90 to at least 95, all passing.
 - [ ] Clippy, fmt and rustdoc are warning-free.
 - [ ] Documentation updated (§7).
 

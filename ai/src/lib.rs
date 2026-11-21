@@ -19,7 +19,6 @@ pub struct kAIConfig {
     pub model_endpoint: String,
     pub temperature: f32,
     pub max_tokens: u32,
-    pub enable_deterministic_validation: bool,
 }
 
 impl Default for kAIConfig {
@@ -28,7 +27,6 @@ impl Default for kAIConfig {
             model_endpoint: "http://localhost:11434".to_string(),
             temperature: 0.7,
             max_tokens: 2048,
-            enable_deterministic_validation: true,
         }
     }
 }
@@ -64,9 +62,7 @@ impl kAI {
         &self,
         suggestion: &OptimizationSuggestion,
     ) -> Result<ValidationResult, kAIError> {
-        let validator =
-            SuggestionValidator { deterministic_mode: self.config.enable_deterministic_validation };
-        Ok(validator.validate(suggestion, &[]))
+        Ok(SuggestionValidator.validate(suggestion, &[]))
     }
 }
 
@@ -174,11 +170,6 @@ mod tests {
     }
 
     #[test]
-    fn default_config_enables_validation() {
-        assert!(kAIConfig::default().enable_deterministic_validation);
-    }
-
-    #[test]
     fn is_applicable_boundaries() {
         let low = suggestion(vec![change(json!(1), json!(2))], 0.0);
         let high = suggestion(vec![change(json!(1), json!(2))], 1.0);
@@ -195,7 +186,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_out_of_range_confidence() {
-        let validator = SuggestionValidator::default();
+        let validator = SuggestionValidator;
         let result = validator.validate(&suggestion(vec![change(json!(1), json!(2))], 1.5), &[]);
 
         assert!(!result.valid);
@@ -204,7 +195,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_changes() {
-        let validator = SuggestionValidator::default();
+        let validator = SuggestionValidator;
         let result = validator.validate(&suggestion(Vec::new(), 0.5), &[]);
 
         assert!(!result.valid);
@@ -213,7 +204,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_no_op_change() {
-        let validator = SuggestionValidator::default();
+        let validator = SuggestionValidator;
         let result =
             validator.validate(&suggestion(vec![change(json!(100), json!(100))], 0.9), &[]);
 
@@ -223,7 +214,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_good_suggestion() {
-        let validator = SuggestionValidator::default();
+        let validator = SuggestionValidator;
         let result =
             validator.validate(&suggestion(vec![change(json!(100), json!(220))], 0.9), &[]);
 
@@ -234,7 +225,7 @@ mod tests {
 
     #[test]
     fn validate_warns_on_negative_constraint() {
-        let validator = SuggestionValidator::default();
+        let validator = SuggestionValidator;
         let result = validator.validate(
             &suggestion(vec![change(json!(1), json!(2))], 0.9),
             &[constraint("min_clearance", -1.0)],

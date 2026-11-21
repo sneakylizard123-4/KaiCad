@@ -6,7 +6,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1 and 2 are complete (89 tests, clippy/fmt/doc/release
+> **Current state:** Weeks 1 and 2 are complete (90 tests, clippy/fmt/doc/release
 > all clean). Week 3 — symbol management and KiCad symbol library loading — is
 > next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
@@ -118,13 +118,13 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **89 tests**, all passing:
+`cargo test --workspace` currently runs **90 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
-| `ai` (`src/lib.rs`) | 8 |
+| `ai` (`src/lib.rs`) | 7 |
 | `collab` (`src/lib.rs`) | 9 |
-| `core` (`src/tests.rs`) | 15 |
+| `core` (`src/tests.rs`) | 17 |
 | `pcb` (`src/lib.rs` and modules) | 13 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 18 |
@@ -155,7 +155,7 @@ subsystem self-check:
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s)
   pcb: outline 4 points, 1 layer(s), 1 copper layer(s)
   renderer: window 1920x1080, vsync=true
-  ai: endpoint=http://localhost:11434, deterministic validation=true
+  ai: endpoint=http://localhost:11434, deterministic validation=always
   collab: 1 session(s)
   store: created, loaded and deleted 1 project (schema v2)
 self-check: ok

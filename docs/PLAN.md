@@ -67,7 +67,7 @@
 
 **Weeks 1 and 2 are complete and verified.** The Cargo workspace, CI pipeline,
 toolchain configuration, shared data model and SQLite engineering database are in
-place. The workspace has **89 passing tests**, clean `cargo clippy --workspace
+place. The workspace has **90 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 3 brief.

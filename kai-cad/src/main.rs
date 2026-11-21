@@ -180,15 +180,9 @@ fn check_renderer() -> Result<(), String> {
 fn check_ai() -> Result<(), String> {
     let config = ai::kAIConfig::default();
 
-    ensure(
-        config.enable_deterministic_validation,
-        "ai: deterministic validation must be enabled by default",
-    )?;
+    ensure(!config.model_endpoint.is_empty(), "ai: default model endpoint must be configured")?;
 
-    println!(
-        "  ai: endpoint={}, deterministic validation={}",
-        config.model_endpoint, config.enable_deterministic_validation
-    );
+    println!("  ai: endpoint={}, deterministic validation=always", config.model_endpoint);
     Ok(())
 }
 

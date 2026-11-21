@@ -15,7 +15,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
-serde_test = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
