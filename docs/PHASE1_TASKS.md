@@ -1,9 +1,9 @@
 # KaiCad Phase 1 — Foundation Tasks (Weeks 1-4)
 
 > **Status legend:** ✅ complete · 🚧 partial (some acceptance criteria met) ·
-> ⬜ not started. Weeks 1 and 2 are complete and verified; see
+> ⬜ not started. Weeks 1–3 are complete and verified; see
 > [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 3 brief.
+> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 4 brief.
 
 ## Project Setup & Infrastructure
 
@@ -12,8 +12,9 @@
 - **Deliverable:** `Cargo.toml` workspace root with workspace members
 - **Dependencies:** None
 - **Acceptance Criteria:**
-  - The workspace root `Cargo.toml` declares the seven members: `core`,
-    `schematic`, `pcb`, `renderer`, `ai`, `collab` and the `kai-cad` binary
+  - The workspace root `Cargo.toml` declares the nine members: `core`,
+    `schematic`, `pcb`, `renderer`, `ai`, `collab`, `store`, `kicad-parser`
+    and the `kai-cad` binary
   - `cargo check` passes with no warnings
   - `cargo test` runs (initially no tests, but infrastructure in place)
 
@@ -50,8 +51,10 @@
   - ✅ Migration scripts for schema evolution
   - Schema supports KiCad 9/10 bidirectional compatibility (deferred to import/export work)
 - **Done:** `store/migrations/0001_initial.sql` creates `projects`, `sheets`,
-  `symbols`, `components`, `nets`, `footprints` and `schema_migrations` tables.
-  Foreign-key cascades keep projections in sync with project deletion.
+  `symbols`, `components`, `nets`, `footprints` and `schema_migrations` tables;
+  `0002` scopes projection keys per project and `0003` adds
+  `symbol_libraries`. Foreign-key cascades keep projections in sync with
+  project deletion.
 
 ### Task 1.5: Implement Project Model — ✅ complete
 - **Owner:** Lead Developer
@@ -67,17 +70,22 @@
   `list_projects`, `update_project`, `delete_project`) with idempotent
   migrations and projection tables rebuilt in the same transaction.
 
-### Task 1.6: Basic Symbol Management — 🚧 partial
+### Task 1.6: Basic Symbol Management — ✅ complete
 - **Owner:** Schematic Lead
 - **Deliverable:** Symbol data structures, library loading
 - **Dependencies:** Task 1.5
 - **Acceptance Criteria:**
-  - Symbol struct with: reference designator, pins, footprint association
-  - Can load basic KiCad symbol library format
-  - Can create/save symbols in internal format
-- **Done:** `core::symbol::{Symbol, Pin, ...}` and JSON serialization exist.
-- **Remaining:** reference-designator/footprint association rules, KiCad symbol
-  library parsing and an internal symbol library format.
+  - ✅ Symbol struct with pins; reference designator and footprint association
+    live on `core::Component`
+  - ✅ Can load basic KiCad symbol library format
+  - ✅ Can create/save symbols in internal format
+- **Done:** `core::symbol_library::{SymbolLibrary, SymbolLibrarySource}` define
+  internal libraries; the `kicad-parser` crate parses `.kicad_sym` files into
+  symbols and pins with deterministic UUIDv5 ids; `store` persists libraries
+  through migration `0003` and `create/load/list/update/delete`
+  `symbol_library` methods. Pin positions and directions are not yet imported;
+  unknown electrical types map to `PinType::Unspecified` rather than being
+  dropped.
 
 ## Basic Schematic Engine
 
@@ -129,7 +137,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 90 tests pass across the workspace. Coverage reporting is not wired
+- **Note:** 107 tests pass across the workspace. Coverage reporting is not wired
   up yet; that remains a CI follow-up.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -149,7 +157,7 @@
 - [x] `cargo check` passes across all workspace crates
 - [x] `cargo clippy` passes with no warnings
 - [x] Basic project CRUD operations work (create, load, save) — JSON and SQLite
-- [ ] Basic schematic symbol management works — data types only
+- [x] Basic schematic symbol management works — libraries parse and persist
 - [ ] Netlist generation/export works for simple circuits — generation works;
       KiCad export does not
 - [ ] ERC catches basic rule violations — three starter rules only
@@ -167,12 +175,11 @@
 
 ## Status note
 
-Week 1 (project scaffolding) and Week 2 (SQLite engineering database) are
-complete and verified. The workspace now contains a `store` crate with
-migrations, `Store` CRUD, 13 new unit tests and one new cross-crate integration
-test, bringing the total from 71 to **90 passing tests**. `cargo check`,
-`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
---check`, `cargo doc --workspace --no-deps` and `cargo build --workspace
---release` all succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
-evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
-Week 3 (symbol management) work order.
+Weeks 1–3 are complete and verified. Week 3 added named symbol libraries, the
+`kicad-parser` crate, schema v3 `symbol_libraries` storage and 17 new tests,
+bringing the total from 90 to **107 passing tests**. `cargo check`, `cargo
+clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`,
+`cargo doc --workspace --no-deps` and `cargo build --workspace --release` all
+succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 4 (schematic
+engine) work order.

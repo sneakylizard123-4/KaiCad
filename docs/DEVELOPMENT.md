@@ -6,8 +6,8 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1 and 2 are complete (90 tests, clippy/fmt/doc/release
-> all clean). Week 3 — symbol management and KiCad symbol library loading — is
+> **Current state:** Weeks 1–3 are complete (107 tests, clippy/fmt/doc/release
+> all clean). Week 4 — netlist export, graph operations and broader ERC — is
 > next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
@@ -112,24 +112,26 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Print the version | `cargo run -p kai-cad -- --version` |
 | Build a release binary | `cargo build --workspace --release` |
 | Run the store CRUD example | `cargo run -p store --example project_crud` |
+| Parse a KiCad symbol library | `cargo run -p kicad-parser --example parse_library` |
 
 Note that `--all-targets` is required to lint/check tests, examples and
 benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **90 tests**, all passing:
+`cargo test --workspace` currently runs **107 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 7 |
 | `collab` (`src/lib.rs`) | 9 |
-| `core` (`src/tests.rs`) | 17 |
+| `core` (`src/tests.rs` and inline modules) | 19 |
+| `kicad-parser` (`src/lib.rs` and inline modules) | 9 |
 | `pcb` (`src/lib.rs` and modules) | 13 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 18 |
-| `store` (`src/tests.rs`) | 14 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 7 |
+| `store` (`src/tests.rs`) | 19 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 8 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -157,7 +159,8 @@ subsystem self-check:
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always
   collab: 1 session(s)
-  store: created, loaded and deleted 1 project (schema v2)
+  store: created, loaded and deleted 1 project (schema v3)
+  kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym
 self-check: ok
 ```
 
@@ -179,6 +182,9 @@ cargo run -p pcb --example board_outline
 
 # Create, list, load, update and delete a project in a SQLite database
 cargo run -p store --example project_crud
+
+# Parse a KiCad symbol library and print a summary
+cargo run -p kicad-parser --example parse_library
 ```
 
 List the examples of a package with:
@@ -232,9 +238,9 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1 and 2 are finished; Week 3 adds symbol management and KiCad symbol
-library loading. Before starting, read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md),
-which contains the schema requirements, acceptance criteria and verification
+Weeks 1–3 are finished; Week 4 adds KiCad netlist export, graph operations and
+broader ERC. Before starting, read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md),
+which contains the API requirements, acceptance criteria and verification
 commands. The existing JSON persistence in `core::serialization` must keep
 working while new persistence layers are added.
 
@@ -290,6 +296,22 @@ from source. The first `cargo check -p store` or `cargo build --workspace` can
 take a minute or two while `libsqlite3-sys` builds; later builds are
 incremental. This feature avoids requiring a system `libsqlite3` and keeps CI
 and Windows/macOS builds self-contained.
+
+### KiCad symbol parsing looks wrong
+
+`kicad-parser` reads only `.kicad_sym` symbol libraries, not `.kicad_sch`
+schematics or `.kicad_pcb` boards. Known limits of the Week 3 import:
+
+- The library name is the file stem; KiCad files do not record a library name.
+- Pin positions and directions default to zero/`In`; only name, number and
+  electrical type are mapped today.
+- Unknown KiCad electrical types map to `PinType::Unspecified` rather than
+  failing, so a pin is never silently dropped.
+- Symbol and pin ids are UUIDv5 derivations, so re-parsing the same library
+  yields the same ids. If ids differ, check that the file content changed.
+
+Malformed S-expressions return `ParseError::Syntax`; unreadable files return
+`ParseError::Io`. Neither path panics.
 
 ### Build is slow the first time
 

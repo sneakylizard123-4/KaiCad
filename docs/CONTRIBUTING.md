@@ -7,14 +7,15 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 3, symbol management and
-KiCad symbol library loading — is in
+instructions. The current implementation brief — Week 4, netlist export, graph
+operations and broader ERC — is in
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
 
 - **No KiCad wrapping.** KaiCad implements its own engines. KiCad file formats
-  are an import/export target only.
+  are an import/export target only: `kicad-parser` maps `.kicad_sym` input into
+  `core` types, and those types remain the internal representation.
 - **Local-first.** No change may make a network connection, cloud service or
   AI model mandatory for normal editing.
 - **AI output is untrusted.** Any AI-proposed change must pass deterministic
@@ -98,13 +99,15 @@ Rules:
 | Unit tests | `<crate>/src/tests.rs` or inline `#[cfg(test)] mod tests` | `core` keeps its tests in `src/tests.rs`; the other crates use inline test modules. |
 | Integration tests | `kai-cad/tests/smoke.rs` | Cross-crate smoke tests that exercise the public API of every library together. The root manifest is virtual, so there is no workspace-level `tests/` target; per-crate integration tests may be added under `<crate>/tests/`. |
 | Benchmarks | `core/benches/*.rs` | Criterion, `harness = false`, registered with `[[bench]]` in `core/Cargo.toml`. |
-| Examples | `core/examples/*.rs`, `pcb/examples/*.rs` | Each example needs a `//!` header with the command used to run it. |
+| Examples | `core/examples/*.rs`, `pcb/examples/*.rs`, `store/examples/*.rs`, `kicad-parser/examples/*.rs` | Each example needs a `//!` header with the command used to run it. |
 
 Examples must run and benchmarks must at least compile in CI:
 
 ```bash
 cargo run -p core --example project_roundtrip
 cargo run -p pcb --example board_outline
+cargo run -p store --example project_crud
+cargo run -p kicad-parser --example parse_library
 cargo bench -p core --no-run
 ```
 

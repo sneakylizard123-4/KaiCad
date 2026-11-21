@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 2 engineering database complete (pre-alpha); Week 3 (symbol management) is next
+- **Implementation:** Week 3 symbol management complete (pre-alpha); Week 4 (schematic engine) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (90 tests across the workspace)
+# Run tests (107 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -68,6 +68,9 @@ cargo run -p pcb --example board_outline
 
 # Create, list, load, update and delete a project in a SQLite database
 cargo run -p store --example project_crud
+
+# Parse a KiCad symbol library and print a summary
+cargo run -p kicad-parser --example parse_library
 
 # Compile the serialization benchmark without running it
 cargo bench -p core --no-run
@@ -113,9 +116,15 @@ KaiCad/
 │   ├── src/
 │   │   └── lib.rs
 │   ├── migrations/
-│   │   └── 0001_initial.sql
+│   │   ├── 0001_initial.sql
+│   │   ├── 0002_projection_primary_keys.sql
+│   │   └── 0003_symbol_libraries.sql
 │   └── examples/
 │       └── project_crud.rs
+├── kicad-parser/               # KiCad symbol-library import (S-expression)
+│   ├── src/
+│   └── examples/
+│       └── parse_library.rs
 ├── kai-cad/                    # application binary (kai-cad)
 │   ├── src/
 │   │   └── main.rs
@@ -132,7 +141,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 3)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 4)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -140,19 +149,20 @@ KaiCad/
 
 ## Current State
 
-Week 1 scaffolding and Week 2 engineering database are complete and verified:
-**90 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings` and
-`cargo fmt --all -- --check` are clean, and the release build succeeds.
+Weeks 1–3 are complete and verified: **107 tests pass**, `cargo clippy
+--workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
+clean, and the release build succeeds. Week 3 added named symbol libraries, a
+deterministic KiCad `.kicad_sym` parser and SQLite persistence for libraries.
 
-The next milestone is **Week 3 — symbol management**: KiCad symbol library
-loading and internal symbol-library handling. The full brief is in
+The next milestone is **Week 4 — schematic engine**: KiCad netlist export,
+graph operations and broader ERC. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
 
 - ✅ **core** — `Project`/`SchematicData`/`PcbData`/`ProjectMetadata`, symbols,
   nets, sheets, components, PCB outline/layer/stackup types, `Point`, and the
-  shared `ChangeProposal`. Real JSON serialization: `to_json`, `to_json_pretty`,
+  shared `ChangeProposal`, and named symbol libraries. Real JSON serialization: `to_json`, `to_json_pretty`,
   `from_json`, `save`, `load` plus `Project::{to_json, from_json, save, load}`.
 - ✅ **schematic** — real netlist generation (`generate_netlist` maps pin ids to
   `PinRef`s and emits connections for adjacent pins), a connectivity `Graph`,
@@ -168,8 +178,11 @@ What each crate provides today:
   `kAI::suggest_optimization` returns `NotImplemented`.
 - 🚧 **collab** — `CollabManager` session creation, `VersioningManager`,
   `SharingManager` and `Window`. No transport, merge or real-time sync.
-- ✅ **store** — SQLite engineering database with versioned migrations and
-  project CRUD (`create`, `load`, `list`, `update`, `delete`).
+- ✅ **store** — SQLite engineering database with versioned migrations,
+  project CRUD (`create`, `load`, `list`, `update`, `delete`) and
+  symbol-library CRUD.
+- ✅ **kicad-parser** — deterministic S-expression reader and `.kicad_sym`
+  loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem.
 
@@ -177,7 +190,7 @@ What each crate provides today:
 
 | Phase | Weeks | Focus | Status |
 |-------|-------|-------|--------|
-| 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | 🚧 Week 2 complete |
+| 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | 🚧 Week 3 complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ⬜ Not started |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | ⬜ Not started |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |

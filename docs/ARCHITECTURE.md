@@ -5,8 +5,9 @@
 > skeletons whose functions return `NotImplemented` or empty values. Do not
 > read this as a description of working EDA functionality.
 >
-> Weeks 1 (workspace, core data model, CI) and 2 (SQLite engineering database)
-> are complete. The workspace has 90 passing tests.
+> Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database) and
+> 3 (symbol libraries and KiCad `.kicad_sym` import) are complete. The workspace
+> has 107 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -25,6 +26,7 @@ graph TD
     ai["ai (kAI)<br/>suggest · validate"]
     collab["collab<br/>sessions · versioning · sharing"]
     store["store<br/>SQLite persistence"]
+    kicad_parser["kicad-parser<br/>KiCad symbol import"]
 
     app --> core
     app --> schematic
@@ -33,7 +35,9 @@ graph TD
     app --> ai
     app --> collab
     app --> store
+    app --> kicad_parser
 
+    kicad_parser --> core
     schematic --> core
     pcb --> core
     ai --> core
@@ -98,6 +102,7 @@ network access or external services (`PRD.md` §1.2, §1.3).
 | `serialization` | `Error`, `Result`, `to_json`, `to_json_pretty`, `from_json`, `save`, `load` | JSON encoding and file persistence |
 | `sheet` | `Sheet`, `Wire`, `Label` and position/type enums | Hierarchical sheets, wires, labels |
 | `symbol` | `Symbol`, `Pin` and direction/position/type enums | Schematic symbol and pins |
+| `symbol_library` | `SymbolLibrary`, `SymbolLibrarySource` | Named, project-independent symbol collection and provenance |
 
 All public types derive `serde::Serialize`/`Deserialize`.
 
@@ -233,6 +238,9 @@ Dependencies: `core`, `rusqlite` (with the `bundled` feature), `serde_json`,
 - `Store::{open, open_in_memory}` create file-backed or in-memory databases.
 - `Store::{create_project, load_project, list_projects, update_project,
   delete_project}` implement project CRUD.
+- `Store::{create_symbol_library, load_symbol_library, list_symbol_libraries,
+  update_symbol_library, delete_symbol_library}` implement symbol-library CRUD;
+  listing is ordered by `name ASC`.
 - `ProjectSummary` is returned by `list_projects` and ordered by
   `modified_at DESC, name ASC`.
 - `StoreError` covers SQLite, JSON, I/O, `Duplicate` and migration failures.
@@ -243,18 +251,38 @@ serialization of `core::Project`. The tables `sheets`, `symbols`, `components`,
 inside the same transaction on every create/update. They must never be edited
 independently of the authoritative document. Their primary key is
 `(project_id, id)`: entity ids are unique within a project rather than
-globally, so a duplicated project may reuse the same entity ids. Migrations are
-numbered SQL files
+globally, so a duplicated project may reuse the same entity ids. Symbol
+libraries use the same pattern in `symbol_libraries`: canonical `data` JSON with
+queryable `name` and `source` projections. Migrations are numbered SQL files
 embedded with `include_str!`; once applied they are immutable — add a new
 numbered file rather than editing an old one.
+
+### `kicad-parser` — KiCad symbol import
+
+Dependencies: `core`, `uuid` (with the `v5` feature). The crate is import-only;
+KiCad's file format never becomes the internal representation.
+
+- `parse_symbol_library(path) -> Result<core::SymbolLibrary, ParseError>` reads
+a `.kicad_sym` file and maps each top-level `(symbol ...)` to
+  `core::Symbol`, including pins nested inside unit sub-symbols.
+- `ParseError::{Io, Syntax, Unsupported}` implements `Display` and
+  `std::error::Error`; malformed input never panics.
+- The parser implements a minimal deterministic S-expression tokenizer/parser
+  (atoms, quoted strings, nested lists). No generic expression crate is used.
+- Library and symbol names become UUIDv5 ids with `Uuid::NAMESPACE_OID`, so
+  parsing the same content twice yields identical ids. The library name is the
+  file stem because KiCad libraries do not record one.
+- Pins map name, number and electrical type; unknown electrical types become
+  `PinType::Unspecified`. Positions and directions are not imported yet.
 
 ### `kai-cad` — application binary
 
 Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, and with no arguments runs a deterministic self-check:
 it serializes a `Project`, generates and ERC-checks a netlist, builds a PCB
-design, reads the default renderer, AI and collaboration configuration, and
-exercises the SQLite store with an in-memory database. Integration tests live
+design, reads the default renderer, AI and collaboration configuration,
+exercises the SQLite store with an in-memory database, and parses a hermetic
+`.kicad_sym` fixture with `kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
 
@@ -371,25 +399,26 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 - **Primary:** KiCad 10 project files.
 - **Secondary:** KiCad 9 project files.
-- Compatibility work has not started; no parser or writer exists in the
-  workspace yet.
+- `kicad-parser` imports `.kicad_sym` symbol libraries. No `.kicad_sch` or
+  `.kicad_pcb` parser or writer exists yet, and nothing is exported.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–2, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–3, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
-database (`store`) with migrations and project CRUD, deterministic netlist
-generation and three-rule ERC, PCB data types and layer stack helper,
-renderer/AI/collab configuration types, `kai-cad` self-check binary, CI, and
-documentation.
+database (`store`, schema v3) with migrations plus project and symbol-library
+CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
+(`kicad-parser`), deterministic netlist generation and three-rule ERC, PCB data
+types and layer stack helper, renderer/AI/collab configuration types, `kai-cad`
+self-check binary, CI, and documentation.
 
-**Next (Week 3):** symbol management and KiCad symbol library loading. The
-planned work is:
+**Next (Week 4):** schematic engine. The planned work is:
 
-1. Internal symbol-library data structures and persistence through the store.
-2. A parser for KiCad `.kicad_sym` symbol library files.
-3. Tests proving symbols can be loaded from KiCad libraries and round-trip
-   through the project document.
+1. Deterministic KiCad netlist export from `schematic::Netlist`.
+2. Graph operations: neighbour lookup, connectivity tests and components.
+3. Broader ERC: unconnected pins and duplicate symbol names.
+
+The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
