@@ -1,6 +1,8 @@
 //! Electrical rule checking for schematics.
 
 use crate::netlist::Netlist;
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// Electrical rule check result.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -49,6 +51,11 @@ pub enum ViolationSeverity {
 ///    [`ViolationSeverity::Error`].
 /// 3. `self-connection` — a connection whose source and target pin are the same is an
 ///    [`ViolationSeverity::Error`].
+/// 4. `unconnected-pin` — a symbol pin whose id appears in no net is a
+///    [`ViolationSeverity::Warning`], one violation per orphaned pin.
+/// 5. `duplicate-symbol-name` — two or more symbols sharing a non-empty `name`
+///    are an [`ViolationSeverity::Error`], one violation per duplicated name,
+///    reported against the second symbol carrying it.
 ///
 /// A result is valid when it contains no [`ViolationSeverity::Error`] or
 /// [`ViolationSeverity::Critical`] violations.
@@ -100,6 +107,51 @@ pub fn run_erc(netlist: &Netlist) -> ERCResult {
         }
     }
 
+    let connected_pins: HashSet<Uuid> =
+        netlist.nets.iter().flat_map(|net| net.pins.iter().copied()).collect();
+    for symbol in &netlist.symbols {
+        for pin in &symbol.pins {
+            if connected_pins.contains(&pin.id) {
+                continue;
+            }
+            violations.push(Violation {
+                rule_id: "unconnected-pin".into(),
+                description: format!(
+                    "pin {} of symbol \"{}\" appears in no net",
+                    pin.number, symbol.name
+                ),
+                location: pin.id.to_string(),
+                severity: ViolationSeverity::Warning,
+            });
+        }
+    }
+
+    let mut seen_names: HashMap<&str, Uuid> = HashMap::new();
+    let mut reported_names: HashSet<&str> = HashSet::new();
+    for symbol in &netlist.symbols {
+        if symbol.name.is_empty() {
+            continue;
+        }
+        match seen_names.get(symbol.name.as_str()) {
+            Some(first_id) => {
+                if reported_names.insert(symbol.name.as_str()) {
+                    violations.push(Violation {
+                        rule_id: "duplicate-symbol-name".into(),
+                        description: format!(
+                            "multiple symbols are named \"{}\" (first seen as {})",
+                            symbol.name, first_id
+                        ),
+                        location: symbol.id.to_string(),
+                        severity: ViolationSeverity::Error,
+                    });
+                }
+            }
+            None => {
+                seen_names.insert(symbol.name.as_str(), symbol.id);
+            }
+        }
+    }
+
     let valid = !violations
         .iter()
         .any(|v| matches!(v.severity, ViolationSeverity::Error | ViolationSeverity::Critical));
@@ -114,6 +166,10 @@ mod tests {
     use core::net::Net;
     use core::symbol::{Pin, Symbol};
     use uuid::Uuid;
+
+    fn named_symbol(name: &str, pin_ids: &[Uuid]) -> Symbol {
+        Symbol { name: name.into(), ..symbol(pin_ids) }
+    }
 
     fn symbol(pin_ids: &[Uuid]) -> Symbol {
         Symbol {
@@ -252,5 +308,58 @@ mod tests {
         assert_eq!(result.violations.len(), 2);
         assert_eq!(result.violations[0].rule_id, "net-single-pin");
         assert_eq!(result.violations[1].rule_id, "duplicate-net-name");
+    }
+
+    #[test]
+    fn unconnected_pins_are_reported_once_each_as_warnings() {
+        let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let net = Net { id: Uuid::new_v4(), name: "N1".into(), pins: vec![a], ..Net::default() };
+        let netlist = generate_netlist(&[symbol(&[a, b, c])], &[net]);
+
+        let result = run_erc(&netlist);
+
+        let unconnected: Vec<_> =
+            result.violations.iter().filter(|v| v.rule_id == "unconnected-pin").collect();
+        assert_eq!(unconnected.len(), 2);
+        assert!(unconnected.iter().all(|v| v.severity == ViolationSeverity::Warning));
+        assert!(unconnected.iter().any(|v| v.description.contains("pin 2")));
+        assert_eq!(unconnected[0].location, b.to_string());
+        assert_eq!(unconnected[1].location, c.to_string());
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn fully_connected_schematic_has_no_new_warnings() {
+        let pins: Vec<Uuid> = (0..4).map(|_| Uuid::new_v4()).collect();
+        let first = named_symbol("R1", &pins[0..2]);
+        let second = named_symbol("R2", &pins[2..4]);
+        let net =
+            Net { id: Uuid::new_v4(), name: "N1".into(), pins: pins.clone(), ..Net::default() };
+
+        let result = run_erc(&generate_netlist(&[first, second], &[net]));
+
+        assert!(result.is_valid());
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn duplicate_symbol_names_are_reported_once_per_name() {
+        let pins: Vec<Uuid> = (0..6).map(|_| Uuid::new_v4()).collect();
+        let first = named_symbol("R1", &pins[0..2]);
+        let second = named_symbol("R1", &pins[2..4]);
+        let third = named_symbol("R1", &pins[4..6]);
+        let net =
+            Net { id: Uuid::new_v4(), name: "N1".into(), pins: pins.clone(), ..Net::default() };
+
+        let result = run_erc(&generate_netlist(&[first, second.clone(), third], &[net]));
+
+        assert!(!result.is_valid());
+        let duplicates: Vec<_> =
+            result.violations.iter().filter(|v| v.rule_id == "duplicate-symbol-name").collect();
+        assert_eq!(duplicates.len(), 1);
+        assert_eq!(duplicates[0].severity, ViolationSeverity::Error);
+        assert_eq!(duplicates[0].location, second.id.to_string());
+        assert!(duplicates[0].description.contains("R1"));
+        assert!(result.violations.iter().all(|v| v.rule_id != "unconnected-pin"));
     }
 }

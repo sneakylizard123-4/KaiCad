@@ -71,6 +71,21 @@ fn netlist_generation_and_erc_accept_a_clean_schematic() {
 }
 
 #[test]
+fn kicad_netlist_export_contains_references_and_nets() {
+    let (symbol, net) = two_pin_symbol_and_net();
+
+    let netlist =
+        schematic::generate_netlist(std::slice::from_ref(&symbol), std::slice::from_ref(&net));
+    let document = schematic::to_kicad_netlist(&netlist);
+
+    assert!(document.starts_with("(export"));
+    assert!(document.contains("(comp (ref \"R1\")"));
+    assert!(document.contains("(name \"N1\")"));
+    assert!(document.contains("(node (ref \"R1\") (pin \"1\"))"));
+    assert!(document.ends_with("\n"));
+}
+
+#[test]
 fn erc_rejects_duplicate_net_names() {
     let (symbol, net) = two_pin_symbol_and_net();
     let duplicate = core::Net { id: Uuid::new_v4(), ..net.clone() };

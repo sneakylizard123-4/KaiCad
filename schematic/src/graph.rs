@@ -1,7 +1,8 @@
 //! Graph-based schematic operations.
 
 use crate::netlist::Netlist;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 /// Graph representation for schematic connectivity.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -111,6 +112,117 @@ impl Graph {
     pub fn edge_count(&self) -> usize {
         self.edges.len()
     }
+
+    /// Edges attached to `node_id`, in graph order.
+    ///
+    /// An edge is attached when it starts or ends at the node. Unknown ids
+    /// produce an empty list.
+    pub fn edges_for(&self, node_id: Uuid) -> Vec<&Edge> {
+        self.edges.iter().filter(|edge| edge.source == node_id || edge.target == node_id).collect()
+    }
+
+    /// Node ids adjacent to `node_id` through at least one edge.
+    ///
+    /// The result is sorted and deduplicated, never contains `node_id` itself,
+    /// and only contains ids that are nodes in this graph. Unknown ids produce
+    /// an empty list.
+    pub fn neighbours(&self, node_id: Uuid) -> Vec<Uuid> {
+        self.adjacency().get(&node_id).cloned().unwrap_or_default()
+    }
+
+    /// Whether two node ids are in the same connected component (BFS).
+    ///
+    /// A node is always connected to itself. Unknown ids are never connected
+    /// to anything, including to themselves.
+    pub fn is_connected(&self, a: Uuid, b: Uuid) -> bool {
+        let adjacency = self.adjacency();
+        if !adjacency.contains_key(&a) || !adjacency.contains_key(&b) {
+            return false;
+        }
+        if a == b {
+            return true;
+        }
+
+        let mut visited = HashSet::from([a]);
+        let mut stack = vec![a];
+        while let Some(current) = stack.pop() {
+            let Some(neighbours) = adjacency.get(&current) else {
+                continue;
+            };
+            for neighbour in neighbours {
+                if !visited.insert(*neighbour) {
+                    continue;
+                }
+                if *neighbour == b {
+                    return true;
+                }
+                stack.push(*neighbour);
+            }
+        }
+        false
+    }
+
+    /// Connected components as sorted node-id lists, themselves sorted by their
+    /// first node id.
+    ///
+    /// Nodes without edges form their own single-node component. The result is
+    /// deterministic for a given graph.
+    pub fn connected_components(&self) -> Vec<Vec<Uuid>> {
+        let adjacency = self.adjacency();
+        let mut ids: Vec<Uuid> = adjacency.keys().copied().collect();
+        ids.sort_unstable();
+
+        let mut visited = HashSet::new();
+        let mut components = Vec::new();
+        for id in ids {
+            if !visited.insert(id) {
+                continue;
+            }
+            let mut component = vec![id];
+            let mut stack = vec![id];
+            while let Some(current) = stack.pop() {
+                let Some(neighbours) = adjacency.get(&current) else {
+                    continue;
+                };
+                for neighbour in neighbours {
+                    if visited.insert(*neighbour) {
+                        component.push(*neighbour);
+                        stack.push(*neighbour);
+                    }
+                }
+            }
+            component.sort_unstable();
+            components.push(component);
+        }
+        components
+    }
+
+    /// Undirected adjacency list restricted to known node ids.
+    ///
+    /// Self-loops and edges touching unknown nodes are ignored, and every
+    /// neighbour list is sorted and deduplicated.
+    fn adjacency(&self) -> HashMap<Uuid, Vec<Uuid>> {
+        let known: HashSet<Uuid> = self.nodes.iter().map(|node| node.id).collect();
+        let mut adjacency: HashMap<Uuid, Vec<Uuid>> =
+            known.iter().map(|id| (*id, Vec::new())).collect();
+
+        for edge in &self.edges {
+            if edge.source == edge.target
+                || !known.contains(&edge.source)
+                || !known.contains(&edge.target)
+            {
+                continue;
+            }
+            adjacency.entry(edge.source).or_default().push(edge.target);
+            adjacency.entry(edge.target).or_default().push(edge.source);
+        }
+
+        for neighbours in adjacency.values_mut() {
+            neighbours.sort_unstable();
+            neighbours.dedup();
+        }
+        adjacency
+    }
 }
 
 #[cfg(test)]
@@ -206,5 +318,118 @@ mod tests {
 
         assert_eq!(graph.node_count(), 1);
         assert_eq!(graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn edges_for_returns_attached_edges_only() {
+        let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let first = symbol("R1", &[a]);
+        let second = symbol("R2", &[b]);
+        let isolated = symbol("R3", &[c]);
+        let net = Net { id: Uuid::new_v4(), name: "N1".into(), pins: vec![a, b], ..Net::default() };
+        let graph = Graph::from_netlist(&generate_netlist(
+            &[first.clone(), second, isolated.clone()],
+            &[net],
+        ));
+
+        let edges = graph.edges_for(first.id);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].source, first.id);
+
+        assert!(graph.edges_for(isolated.id).is_empty());
+        assert!(graph.edges_for(Uuid::new_v4()).is_empty());
+    }
+
+    #[test]
+    fn neighbours_are_distinct_and_exclude_the_node_itself() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let first = symbol("R1", &[a]);
+        let second = symbol("R2", &[b]);
+        // Two adjacent pin pairs create two edges between the same symbols.
+        let net =
+            Net { id: Uuid::new_v4(), name: "N1".into(), pins: vec![a, b, a], ..Net::default() };
+        let graph =
+            Graph::from_netlist(&generate_netlist(&[first.clone(), second.clone()], &[net]));
+
+        assert_eq!(graph.edges_for(first.id).len(), 2);
+        assert_eq!(graph.neighbours(first.id), vec![second.id]);
+        assert_eq!(graph.neighbours(second.id), vec![first.id]);
+        assert!(graph.neighbours(Uuid::new_v4()).is_empty());
+    }
+
+    #[test]
+    fn is_connected_walks_transitively_and_handles_unknown_ids() {
+        let pins: Vec<Uuid> = (0..5).map(|_| Uuid::new_v4()).collect();
+        let first = symbol("R1", &[pins[0]]);
+        let second = symbol("R2", &[pins[1], pins[2]]);
+        let third = symbol("R3", &[pins[3]]);
+        let isolated = symbol("R4", &[pins[4]]);
+        let first_net = Net {
+            id: Uuid::new_v4(),
+            name: "N1".into(),
+            pins: vec![pins[0], pins[1]],
+            ..Net::default()
+        };
+        let second_net = Net {
+            id: Uuid::new_v4(),
+            name: "N2".into(),
+            pins: vec![pins[2], pins[3]],
+            ..Net::default()
+        };
+        let graph = Graph::from_netlist(&generate_netlist(
+            &[first.clone(), second, third.clone(), isolated.clone()],
+            &[first_net, second_net],
+        ));
+
+        assert!(graph.is_connected(first.id, third.id));
+        assert!(graph.is_connected(first.id, first.id));
+        assert!(!graph.is_connected(first.id, isolated.id));
+        assert!(!graph.is_connected(first.id, Uuid::new_v4()));
+
+        let unknown = Uuid::new_v4();
+        assert!(!graph.is_connected(unknown, unknown));
+    }
+
+    #[test]
+    fn connected_components_are_sorted_and_grouped() {
+        let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let first = symbol("R1", &[a]);
+        let second = symbol("R2", &[b]);
+        let isolated = symbol("R3", &[c]);
+        let net = Net { id: Uuid::new_v4(), name: "N1".into(), pins: vec![a, b], ..Net::default() };
+        let graph = Graph::from_netlist(&generate_netlist(
+            &[first.clone(), second.clone(), isolated.clone()],
+            &[net],
+        ));
+
+        let components = graph.connected_components();
+
+        // The joined symbols, the isolated symbol and the net node.
+        assert_eq!(components.len(), 3);
+        for component in &components {
+            assert!(component.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+        assert!(components.windows(2).all(|pair| pair[0][0] < pair[1][0]));
+
+        let joined = components.iter().find(|component| component.contains(&first.id));
+        let mut expected = vec![first.id, second.id];
+        expected.sort_unstable();
+        assert_eq!(joined, Some(&expected));
+
+        let single: Vec<_> =
+            components.iter().filter(|component| component.contains(&isolated.id)).collect();
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0], &vec![isolated.id]);
+    }
+
+    #[test]
+    fn empty_graph_has_no_components_edges_or_neighbours() {
+        let graph = Graph::default();
+        let id = Uuid::new_v4();
+
+        assert!(graph.connected_components().is_empty());
+        assert!(graph.neighbours(id).is_empty());
+        assert!(graph.edges_for(id).is_empty());
+        assert!(!graph.is_connected(id, id));
     }
 }

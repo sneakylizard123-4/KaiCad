@@ -2,6 +2,7 @@
 
 use core::net::Net;
 use core::symbol::Symbol;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Derive the id of a generated netlist from the design content it describes.
@@ -44,6 +45,112 @@ impl Default for Netlist {
     fn default() -> Self {
         Self { id: Uuid::new_v4(), nets: Vec::new(), symbols: Vec::new(), connections: Vec::new() }
     }
+}
+
+/// Escape a string for use inside a quoted S-expression token.
+///
+/// Backslashes and quotes are escaped, and line breaks or tabs are replaced by
+/// their escaped forms so a quoted value never contains a raw newline.
+fn escape_token(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
+/// Render the netlist as a KiCad-compatible S-expression netlist document.
+///
+/// This is export only: the [`Netlist`] remains KaiCad's internal
+/// representation and nothing here is parsed back into it.
+///
+/// - Components come from [`Netlist::symbols`], sorted by `(name, id)`. The
+///   `value` and `footprint` fields are empty because a netlist carries no
+///   component properties yet.
+/// - Nets come from [`Netlist::nets`], sorted by `(name, id)`, and are assigned
+///   codes starting at `1` in emission order.
+/// - Each net lists the pins in [`Net::pins`](core::net::Net::pins) that resolve
+///   to a known symbol pin, sorted by `(reference, pin number, pin id)`. A net
+///   with no resolvable node is still emitted, without nodes.
+/// - Quotes, backslashes and line breaks in names and pin numbers are escaped.
+///
+/// The output is deterministic, pretty-printed with two-space indentation, uses
+/// `\n` line endings and ends with exactly one trailing newline.
+pub fn to_kicad_netlist(netlist: &Netlist) -> String {
+    let mut symbols: Vec<&Symbol> = netlist.symbols.iter().collect();
+    symbols.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+
+    let mut nets: Vec<&Net> = netlist.nets.iter().collect();
+    nets.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+
+    let mut pin_owners: HashMap<Uuid, (Uuid, &str)> = HashMap::new();
+    for symbol in &netlist.symbols {
+        for pin in &symbol.pins {
+            pin_owners.insert(pin.id, (symbol.id, pin.number.as_str()));
+        }
+    }
+    let symbol_names: HashMap<Uuid, &str> =
+        netlist.symbols.iter().map(|symbol| (symbol.id, symbol.name.as_str())).collect();
+
+    let mut document = String::new();
+    document.push_str("(export (version \"E\")\n");
+
+    if symbols.is_empty() {
+        document.push_str("  (components)\n");
+    } else {
+        document.push_str("  (components\n");
+        for symbol in &symbols {
+            document.push_str(&format!(
+                "    (comp (ref \"{}\") (value \"\") (footprint \"\"))\n",
+                escape_token(&symbol.name)
+            ));
+        }
+        document.push_str("  )\n");
+    }
+
+    if nets.is_empty() {
+        document.push_str("  (nets)\n");
+    } else {
+        document.push_str("  (nets\n");
+        for (index, net) in nets.iter().enumerate() {
+            document.push_str(&format!(
+                "    (net (code \"{}\") (name \"{}\")\n",
+                index + 1,
+                escape_token(&net.name)
+            ));
+
+            let mut nodes: Vec<(&str, &str, Uuid)> = net
+                .pins
+                .iter()
+                .filter_map(|pin_id| {
+                    let (symbol_id, number) = pin_owners.get(pin_id)?;
+                    let reference = symbol_names.get(symbol_id)?;
+                    Some((*reference, *number, *pin_id))
+                })
+                .collect();
+            nodes.sort_unstable();
+
+            for (reference, number, _) in nodes {
+                document.push_str(&format!(
+                    "      (node (ref \"{}\") (pin \"{}\"))\n",
+                    escape_token(reference),
+                    escape_token(number)
+                ));
+            }
+            document.push_str("    )\n");
+        }
+        document.push_str("  )\n");
+    }
+
+    document.push_str(")\n");
+    document
 }
 
 /// A single connection between two pins in the schematic.
@@ -106,7 +213,7 @@ pub fn generate_netlist(symbols: &[Symbol], nets: &[Net]) -> Netlist {
 
 #[cfg(test)]
 mod tests {
-    use super::{PinRef, generate_netlist};
+    use super::{Netlist, PinRef, generate_netlist, to_kicad_netlist};
     use core::net::Net;
     use core::symbol::{Pin, Symbol};
     use uuid::Uuid;
@@ -229,5 +336,136 @@ mod tests {
         assert_eq!(netlist.connections.len(), 1);
         assert_eq!(netlist.connections[0].source_pin.symbol_id, first.id);
         assert_eq!(netlist.connections[0].target_pin.symbol_id, second.id);
+    }
+
+    fn symbol_named(name: &str, pins: &[(Uuid, &str)]) -> Symbol {
+        Symbol {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            pins: pins
+                .iter()
+                .map(|(id, number)| Pin {
+                    id: *id,
+                    number: (*number).to_string(),
+                    ..Pin::default()
+                })
+                .collect(),
+            library: "test".into(),
+        }
+    }
+
+    /// Two components joined by two nets: N1 links pin 1s, N2 links pin 2s.
+    fn two_symbol_fixture(
+        component_names: [&str; 2],
+        net_names: [&str; 2],
+    ) -> (Vec<Symbol>, Vec<Net>) {
+        let (a1, a2, b1, b2) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let first = symbol_named(component_names[0], &[(a1, "1"), (a2, "2")]);
+        let second = symbol_named(component_names[1], &[(b1, "1"), (b2, "2")]);
+        let first_net = Net {
+            id: Uuid::new_v4(),
+            name: net_names[0].into(),
+            pins: vec![a1, b1],
+            ..Net::default()
+        };
+        let second_net = Net {
+            id: Uuid::new_v4(),
+            name: net_names[1].into(),
+            pins: vec![a2, b2],
+            ..Net::default()
+        };
+        (vec![first, second], vec![first_net, second_net])
+    }
+
+    #[test]
+    fn kicad_export_contains_components_and_nets() {
+        let (symbols, nets) = two_symbol_fixture(["R1", "R2"], ["N1", "N2"]);
+
+        let document = to_kicad_netlist(&generate_netlist(&symbols, &nets));
+
+        assert!(document.starts_with("(export (version \"E\")\n"));
+        assert!(document.contains("    (comp (ref \"R1\") (value \"\") (footprint \"\"))"));
+        assert!(document.contains("    (comp (ref \"R2\") (value \"\") (footprint \"\"))"));
+        assert!(document.contains("    (net (code \"1\") (name \"N1\")"));
+        assert!(document.contains("    (net (code \"2\") (name \"N2\")"));
+        assert!(document.contains("      (node (ref \"R1\") (pin \"1\"))"));
+        assert!(document.contains("      (node (ref \"R2\") (pin \"2\"))"));
+    }
+
+    #[test]
+    fn kicad_export_is_byte_identical_across_calls() {
+        let (symbols, nets) = two_symbol_fixture(["R1", "R2"], ["N1", "N2"]);
+        let netlist = generate_netlist(&symbols, &nets);
+
+        let first = to_kicad_netlist(&netlist);
+        let second = to_kicad_netlist(&netlist);
+        let rebuilt = to_kicad_netlist(&generate_netlist(&symbols, &nets));
+
+        assert_eq!(first, second);
+        assert_eq!(first, rebuilt);
+    }
+
+    #[test]
+    fn kicad_export_sorts_components_and_nets() {
+        let (symbols, nets) = two_symbol_fixture(["R2", "R1"], ["NB", "NA"]);
+
+        let document = to_kicad_netlist(&generate_netlist(&symbols, &nets));
+
+        let first_component = document.find("(ref \"R1\")").expect("R1 is exported");
+        let second_component = document.find("(ref \"R2\")").expect("R2 is exported");
+        assert!(first_component < second_component);
+
+        // Codes are assigned in the sorted order, not the input order.
+        assert!(document.contains("    (net (code \"1\") (name \"NA\")"));
+        assert!(document.contains("    (net (code \"2\") (name \"NB\")"));
+    }
+
+    #[test]
+    fn kicad_export_escapes_quotes_and_backslashes() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        let symbol = symbol_named("R\"1\\2", &[(a, "1"), (b, "2")]);
+        let net =
+            Net { id: Uuid::new_v4(), name: "N\"1\\2".into(), pins: vec![a, b], ..Net::default() };
+
+        let document = to_kicad_netlist(&generate_netlist(&[symbol], &[net]));
+
+        assert!(document.contains("(ref \"R\\\"1\\\\2\")"));
+        assert!(document.contains("(name \"N\\\"1\\\\2\")"));
+    }
+
+    #[test]
+    fn kicad_export_ends_with_exactly_one_newline() {
+        let (symbols, nets) = two_symbol_fixture(["R1", "R2"], ["N1", "N2"]);
+
+        let document = to_kicad_netlist(&generate_netlist(&symbols, &nets));
+
+        assert!(document.ends_with(")\n"));
+        assert!(!document.ends_with("\n\n"));
+        assert!(!document.contains("\r"));
+    }
+
+    #[test]
+    fn kicad_export_keeps_nets_without_resolvable_nodes() {
+        let symbol = symbol_named("R1", &[(Uuid::new_v4(), "1")]);
+        let net = Net {
+            id: Uuid::new_v4(),
+            name: "ORPHAN".into(),
+            pins: vec![Uuid::new_v4()],
+            ..Net::default()
+        };
+
+        let document = to_kicad_netlist(&generate_netlist(&[symbol], &[net]));
+
+        assert!(document.contains("(name \"ORPHAN\")"));
+        assert!(!document.contains("(node "));
+    }
+
+    #[test]
+    fn kicad_export_of_empty_netlist_has_empty_sections() {
+        let document = to_kicad_netlist(&Netlist::default());
+
+        assert!(document.contains("  (components)\n"));
+        assert!(document.contains("  (nets)\n"));
+        assert!(document.ends_with(")\n"));
     }
 }

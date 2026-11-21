@@ -131,12 +131,19 @@ fn check_schematic() -> Result<(), String> {
     let erc = schematic::run_erc(&netlist);
     ensure(erc.valid, "schematic: ERC rejected the self-check netlist")?;
 
+    let exported = schematic::to_kicad_netlist(&netlist);
+    ensure(
+        exported.starts_with("(export"),
+        "schematic: exported netlist is not a KiCad export document",
+    )?;
+
     println!(
-        "  schematic: {} net(s), {} connection(s), ERC valid={}, {} violation(s)",
+        "  schematic: {} net(s), {} connection(s), ERC valid={}, {} violation(s), export {} bytes",
         netlist.nets.len(),
         netlist.connections.len(),
         erc.valid,
-        erc.violations.len()
+        erc.violations.len(),
+        exported.len()
     );
     Ok(())
 }
