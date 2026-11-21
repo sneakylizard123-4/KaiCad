@@ -3,7 +3,7 @@
 > **Status legend:** ✅ complete · 🚧 partial (some acceptance criteria met) ·
 > ⬜ not started. Weeks 1 and 2 are complete and verified; see
 > [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-> [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the Week 3 brief.
+> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 3 brief.
 
 ## Project Setup & Infrastructure
 
@@ -129,7 +129,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 71 tests pass across the workspace. Coverage reporting is not wired
+- **Note:** 85 tests pass across the workspace. Coverage reporting is not wired
   up yet; that remains a CI follow-up.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -174,5 +174,5 @@ test, bringing the total from 71 to **85 passing tests**. `cargo check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
 --check`, `cargo doc --workspace --no-deps` and `cargo build --workspace
 --release` all succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
-evidence and [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the
+evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
 Week 3 (symbol management) work order.

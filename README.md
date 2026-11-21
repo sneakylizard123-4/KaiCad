@@ -7,7 +7,6 @@
 ## Status
 - **Architecture:** Decided
 - **Implementation:** Week 2 engineering database complete (pre-alpha); Week 3 (symbol management) is next
-- **Latest commit:** `c864fbb` — Week 1 deliverables finalized
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -183,8 +182,8 @@ What each crate provides today:
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | ⬜ Not started |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
 
-See [`PLAN.md`](PLAN.md) for the full roadmap and [`PHASE1_TASKS.md`](PHASE1_TASKS.md)
-for the Phase 1 breakdown.
+See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and
+[`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) for the Phase 1 breakdown.
 
 ## License
 GPL-3.0-or-later

@@ -152,13 +152,13 @@ This revision covers the product vision, target users and the functional scope
 that every later design decision must serve. Detailed subsystem design,
 milestones and task breakdowns are maintained separately:
 
-- [`PLAN.md`](PLAN.md) — architecture, 16-week roadmap and success criteria.
-- [`PHASE1_TASKS.md`](PHASE1_TASKS.md) — Weeks 1–4 task breakdown and status.
+- [`docs/PLAN.md`](docs/PLAN.md) — architecture, 16-week roadmap and success criteria.
+- [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Weeks 1–4 task breakdown and status.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, data model and
   design rules as implemented.
 - [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — the current
   implementation brief.
 
-Implementation status: Week 1 (scaffolding, shared data model, CI) is complete;
-Week 2 (engineering database) is next. KaiCad is pre-alpha and does not yet
-provide usable schematic or PCB editing.
+Implementation status: Weeks 1 (scaffolding, shared data model, CI) and 2 (SQLite
+engineering database) are complete; Week 3 (symbol management) is next. KaiCad
+is pre-alpha and does not yet provide usable schematic or PCB editing.
