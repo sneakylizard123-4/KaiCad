@@ -68,7 +68,7 @@
 **Weeks 1–3 are complete and verified.** The Cargo workspace, CI pipeline,
 toolchain configuration, shared data model, SQLite engineering database, named
 symbol libraries and KiCad `.kicad_sym` import are in place. The workspace has
-**107 passing tests**, clean `cargo clippy --workspace --all-targets -- -D
+**110 passing tests**, clean `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo fmt --all -- --check`, and a successful release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 4 brief.

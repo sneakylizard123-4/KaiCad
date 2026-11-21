@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (107 tests across the workspace)
+# Run tests (110 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -149,7 +149,7 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–3 are complete and verified: **107 tests pass**, `cargo clippy
+Weeks 1–3 are complete and verified: **110 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
 clean, and the release build succeeds. Week 3 added named symbol libraries, a
 deterministic KiCad `.kicad_sym` parser and SQLite persistence for libraries.

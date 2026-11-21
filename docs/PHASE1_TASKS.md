@@ -83,9 +83,9 @@
   internal libraries; the `kicad-parser` crate parses `.kicad_sym` files into
   symbols and pins with deterministic UUIDv5 ids; `store` persists libraries
   through migration `0003` and `create/load/list/update/delete`
-  `symbol_library` methods. Pin positions and directions are not yet imported;
-  unknown electrical types map to `PinType::Unspecified` rather than being
-  dropped.
+  `symbol_library` methods. Pin positions, angles and directions are imported;
+  known KiCad types map exactly (including `free` and `no_connect`) and only
+  unknown types become `PinType::Unspecified` rather than being dropped.
 
 ## Basic Schematic Engine
 
@@ -137,7 +137,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 107 tests pass across the workspace. Coverage reporting is not wired
+- **Note:** 110 tests pass across the workspace. Coverage reporting is not wired
   up yet; that remains a CI follow-up.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -177,7 +177,7 @@
 
 Weeks 1–3 are complete and verified. Week 3 added named symbol libraries, the
 `kicad-parser` crate, schema v3 `symbol_libraries` storage and 17 new tests,
-bringing the total from 90 to **107 passing tests**. `cargo check`, `cargo
+bringing the total from 90 to **110 passing tests**. `cargo check`, `cargo
 clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`,
 `cargo doc --workspace --no-deps` and `cargo build --workspace --release` all
 succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and

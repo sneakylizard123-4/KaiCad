@@ -54,7 +54,9 @@ impl From<std::io::Error> for ParseError {
 /// Parse a KiCad `.kicad_sym` file and return a [`SymbolLibrary`].
 ///
 /// Symbol ids are derived deterministically from the library and symbol names,
-/// so parsing the same content always produces the same ids.
+/// so parsing the same content always produces the same ids. Pins map name,
+/// number, electrical type, position and direction; unsupported graphical data
+/// is ignored.
 pub fn parse_symbol_library(path: impl AsRef<Path>) -> Result<SymbolLibrary, ParseError> {
     let path = path.as_ref();
     let document = std::fs::read_to_string(path)?;
@@ -167,22 +169,68 @@ fn parse_pin(node: &SExpr, symbol_id: Uuid) -> Result<Pin, ParseError> {
         number,
         name,
         electrical_type: pin_type(electrical),
-        position: PinPosition::default(),
-        direction: PinDirection::default(),
+        position: pin_position(node)?,
+        direction: pin_direction(electrical),
     })
 }
 
-/// Map KiCad electrical types; unknown types preserve the pin as unspecified.
+/// Parse a pin's `(at x y angle)` position in KiCad symbol space.
+///
+/// Coordinates are stored in millimetres without axis conversion; `angle` is
+/// KiCad's pin orientation in degrees. A missing `at` defaults to the origin
+/// and a missing angle defaults to zero.
+fn pin_position(node: &SExpr) -> Result<PinPosition, ParseError> {
+    let Some(at) = node.child("at") else {
+        return Ok(PinPosition::default());
+    };
+
+    let x = parse_coordinate(at, 1)?;
+    let y = parse_coordinate(at, 2)?;
+    let angle = match at.get(3).and_then(SExpr::atom) {
+        Some(value) => value
+            .parse::<f64>()
+            .map_err(|_| ParseError::Syntax(format!("invalid pin angle '{value}'")))?,
+        None => 0.0,
+    };
+
+    Ok(PinPosition { x, y, angle })
+}
+
+fn parse_coordinate(at: &[SExpr], index: usize) -> Result<f64, ParseError> {
+    let value = at
+        .get(index)
+        .and_then(SExpr::atom)
+        .ok_or_else(|| ParseError::Syntax("pin 'at' is missing a coordinate".to_string()))?;
+
+    value
+        .parse::<f64>()
+        .map_err(|_| ParseError::Syntax(format!("invalid pin coordinate '{value}'")))
+}
+
+/// Derive the signal direction from KiCad's electrical type.
+fn pin_direction(electrical: &str) -> PinDirection {
+    match electrical {
+        "input" => PinDirection::In,
+        "output" => PinDirection::Out,
+        "bidirectional" | "tri_state" => PinDirection::InOut,
+        _ => PinDirection::Unspecified,
+    }
+}
+
+/// Map KiCad electrical types; unknown non-standard types preserve the pin as
+/// unspecified rather than dropping it.
 fn pin_type(kicad: &str) -> PinType {
     match kicad {
         "input" => PinType::Input,
         "output" => PinType::Output,
         "bidirectional" => PinType::Bidirectional,
         "passive" => PinType::Passive,
+        "free" => PinType::Free,
         "power_in" | "power_out" => PinType::Power,
         "open_collector" => PinType::OpenCollector,
         "open_emitter" => PinType::OpenEmitter,
         "tri_state" => PinType::TriState,
+        "no_connect" => PinType::NoConnect,
         _ => PinType::Unspecified,
     }
 }
@@ -324,7 +372,7 @@ fn read_string(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::{ParseError, Token, parse_symbol_library, tokenize};
-    use core::symbol::PinType;
+    use core::symbol::{PinDirection, PinType};
     use core::symbol_library::SymbolLibrarySource;
 
     fn fixture(body: &str) -> String {
@@ -433,6 +481,50 @@ mod tests {
     }
 
     #[test]
+    fn pins_keep_position_and_direction() {
+        let library = parse_fixture(
+            r#"(symbol "Device:U" (symbol "U_1_1"
+                 (pin input line (at 2.54 3.81 180) (name "IN") (number "1"))
+                 (pin power_in line (at 0 -5.08 90) (name "VCC") (number "2"))))"#,
+        );
+
+        let pins = &library.symbols[0].pins;
+        assert_eq!(pins[0].position.x, 2.54);
+        assert_eq!(pins[0].position.y, 3.81);
+        assert_eq!(pins[0].position.angle, 180.0);
+        assert!(matches!(pins[0].direction, PinDirection::In));
+        assert_eq!(pins[1].position.x, 0.0);
+        assert_eq!(pins[1].position.y, -5.08);
+        assert_eq!(pins[1].position.angle, 90.0);
+        assert!(matches!(pins[1].direction, PinDirection::Unspecified));
+    }
+
+    #[test]
+    fn pin_without_position_defaults_to_origin() {
+        let library =
+            parse_fixture(r#"(symbol "Device:R" (pin passive line (name "~") (number "1")))"#);
+
+        let pin = &library.symbols[0].pins[0];
+        assert_eq!(pin.position.x, 0.0);
+        assert_eq!(pin.position.y, 0.0);
+        assert_eq!(pin.position.angle, 0.0);
+        assert!(matches!(pin.direction, PinDirection::Unspecified));
+    }
+
+    #[test]
+    fn free_and_no_connect_types_map_exactly() {
+        let library = parse_fixture(
+            r#"(symbol "Device:U"
+                 (pin free line (name "F") (number "1"))
+                 (pin no_connect line (name "NC") (number "2")))"#,
+        );
+
+        let pins = &library.symbols[0].pins;
+        assert!(matches!(pins[0].electrical_type, PinType::Free));
+        assert!(matches!(pins[1].electrical_type, PinType::NoConnect));
+    }
+
+    #[test]
     fn parsing_is_deterministic() {
         let body = r#"(symbol "Device:R" (symbol "R_1_1"
             (pin passive line (name "~") (number "1"))))"#;
@@ -448,7 +540,7 @@ mod tests {
     #[test]
     fn unknown_electrical_type_is_unspecified() {
         let library =
-            parse_fixture(r#"(symbol "Device:R" (pin free line (name "N") (number "1")))"#);
+            parse_fixture(r#"(symbol "Device:R" (pin mystery line (name "N") (number "1")))"#);
 
         assert!(matches!(library.symbols[0].pins[0].electrical_type, PinType::Unspecified));
     }

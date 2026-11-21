@@ -36,6 +36,10 @@ pub enum PinType {
     OpenCollector,
     OpenEmitter,
     TriState,
+    /// A pin that may be left unconnected (KiCad `free`).
+    Free,
+    /// A pin that must not be connected (KiCad `no_connect`).
+    NoConnect,
 }
 
 /// Position of a pin on a symbol.

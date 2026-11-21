@@ -6,7 +6,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–3 are complete (107 tests, clippy/fmt/doc/release
+> **Current state:** Weeks 1–3 are complete (110 tests, clippy/fmt/doc/release
 > all clean). Week 4 — netlist export, graph operations and broader ERC — is
 > next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
@@ -119,14 +119,14 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **107 tests**, all passing:
+`cargo test --workspace` currently runs **110 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 7 |
 | `collab` (`src/lib.rs`) | 9 |
 | `core` (`src/tests.rs` and inline modules) | 19 |
-| `kicad-parser` (`src/lib.rs` and inline modules) | 9 |
+| `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
 | `pcb` (`src/lib.rs` and modules) | 13 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 18 |
@@ -303,10 +303,13 @@ and Windows/macOS builds self-contained.
 schematics or `.kicad_pcb` boards. Known limits of the Week 3 import:
 
 - The library name is the file stem; KiCad files do not record a library name.
-- Pin positions and directions default to zero/`In`; only name, number and
-  electrical type are mapped today.
-- Unknown KiCad electrical types map to `PinType::Unspecified` rather than
-  failing, so a pin is never silently dropped.
+- Pin positions are stored exactly as KiCad's symbol-space `(at x y angle)` in
+  millimetres; no axis conversion is applied. `PinDirection` is derived from
+  the electrical type (`input` → `In`, `output` → `Out`, `bidirectional` and
+  `tri_state` → `InOut`, otherwise `Unspecified`).
+- Every KiCad electrical type maps to a `PinType`, including `free` and
+  `no_connect`. Only genuinely unknown non-standard types become
+  `PinType::Unspecified`, so a pin is never silently dropped.
 - Symbol and pin ids are UUIDv5 derivations, so re-parsing the same library
   yields the same ids. If ids differ, check that the file content changed.
 

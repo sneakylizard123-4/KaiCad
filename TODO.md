@@ -29,12 +29,12 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - `core::symbol_library::{SymbolLibrary, SymbolLibrarySource}` with JSON round trip
 - New `kicad-parser` crate: deterministic S-expression tokenizer/parser
 - `.kicad_sym` → `core::SymbolLibrary` mapping with UUIDv5 symbol, pin and library ids
-- KiCad pins mapped to name, number and electrical type; unknown types become `PinType::Unspecified`
+- KiCad pins mapped to name, number, electrical type, position and direction; unknown types become `PinType::Unspecified`
 - Schema v3 migration `0003_symbol_libraries.sql` with `(name)` index
 - Store symbol-library CRUD (`create`, `load`, `list`, `update`, `delete`)
 - `kicad-parser/examples/parse_library.rs`
 - Parser wired into the `kai-cad` self-check and cross-crate smoke tests
-- Documentation and the next-agent brief updated; total tests: 107
+- Documentation and the next-agent brief updated; total tests: 110
 
 ## 🚧 Next — Week 4: Schematic engine
 
@@ -45,7 +45,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add ERC rules for unconnected pins and duplicate symbol names
 - [ ] Extend the `kai-cad` self-check with netlist export
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥117 tests, clippy/fmt/doc clean
+- [ ] Target: ≥120 tests, clippy/fmt/doc clean
 
 ## ⬜ Later milestones
 

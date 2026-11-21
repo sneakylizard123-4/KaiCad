@@ -7,7 +7,7 @@
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database) and
 > 3 (symbol libraries and KiCad `.kicad_sym` import) are complete. The workspace
-> has 107 passing tests.
+> has 110 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -272,8 +272,10 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
 - Library and symbol names become UUIDv5 ids with `Uuid::NAMESPACE_OID`, so
   parsing the same content twice yields identical ids. The library name is the
   file stem because KiCad libraries do not record one.
-- Pins map name, number and electrical type; unknown electrical types become
-  `PinType::Unspecified`. Positions and directions are not imported yet.
+- Pins map name, number, electrical type, position (`at` x/y/angle in KiCad
+  symbol space, no axis conversion) and direction derived from the electrical
+  type. Known types include `free` and `no_connect`; only genuinely unknown
+  types become `PinType::Unspecified`.
 
 ### `kai-cad` — application binary
 

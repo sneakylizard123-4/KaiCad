@@ -15,7 +15,7 @@ This document is self-contained. Read it fully before writing code.
 - **Branch:** `main`
 - **Repository tip:** see `git log -1`
 - **Working tree:** clean at the time this brief was written
-- **Tests:** 107 passing, 0 failing
+- **Tests:** 110 passing, 0 failing
 - **Schema:** version 3 (`projects`, projection tables, `symbol_libraries`)
 - **Toolchain:** `stable` channel; edition 2024; MSRV/`rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -201,7 +201,7 @@ All of the following must be true:
 - [ ] `kai-cad` self-check renders a netlist and still ends `self-check: ok`.
 - [ ] The new smoke test passes.
 - [ ] No public API of any crate was broken.
-- [ ] Test count rises from 107 to at least 117, all passing.
+- [ ] Test count rises from 110 to at least 120, all passing.
 - [ ] Clippy, fmt and rustdoc are warning-free.
 - [ ] Documentation updated (§7).
 
