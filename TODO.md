@@ -51,16 +51,22 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - CI: Markdown link checker, `cargo-llvm-cov` coverage job and uploaded `lcov.info`
 - Documentation updated; total tests: 144
 
-## 🚧 Next — Week 6: PCB geometry and DRC
+### Week 6 — PCB geometry and DRC
+- Shared `Point::distance_to_segment` and `core::geometry::segment_distance`; non-finite input yields infinity
+- `Track::width` (0.25 mm) and `Via::{diameter, drill}` (0.6/0.3 mm) with serde defaults for older documents
+- `pcb::drc` with `DrcRules`, `DrcSeverity`, `DrcViolation`, `DrcReport` and eight rules: `track-width`, `track-layer`, `clearance`, `track-outside-board`, `via-outside-board`, `via-span`, `via-drill`, `track-path`
+- DRC wired into the `kai-cad` self-check and cross-crate smoke tests
+- Documentation updated; total tests: 162
+
+## 🚧 Next — Week 7: Deterministic routing
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Point-to-segment and segment-to-segment distance primitives in `core`
-- [ ] Track width, via diameter and via drill on the PCB data model
-- [ ] Deterministic DRC report: track width, layer, clearance, board containment and via span
-- [ ] Wire DRC into the `kai-cad` self-check and smoke tests
+- [ ] Grid/cost configuration and a `RouteRequest` API in `pcb::routing`
+- [ ] Deterministic A* single-layer router that avoids existing copper and the board edge
+- [ ] Validate routes with `run_drc` and wire them into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥158 tests, clippy/fmt/doc/link clean
+- [ ] Target: ≥178 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
@@ -72,7 +78,8 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ Footprint library loading (Week 5)
 - ⬜ Push-and-shove routing
 - ⬜ Interactive routing
-- 🚧 DRC (Week 6)
+- ✅ Deterministic DRC (Week 6)
+- 🚧 Deterministic grid routing (Week 7)
 - ⬜ Basic 2D/3D Vulkan renderer
 
 ### Custom GUI (not yet scheduled)

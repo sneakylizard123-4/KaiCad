@@ -1,10 +1,11 @@
-# Next Agent Prompt — Week 6: PCB Geometry and DRC
+# Next Agent Prompt — Week 7: Deterministic PCB Routing
 
 You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
-`/home/sneak/vscode/KaiCad`. Week 5 is finished and verified. Your job is
-**Week 6 of Phase 2: deterministic PCB geometry and design-rule checking** —
-shared distance primitives, track and via dimensions, and a DRC report — while
-keeping every existing API working.
+`/home/sneak/vscode/KaiCad`. Week 6 is finished and verified. Your job is
+**Week 7 of Phase 2: deterministic single-layer grid routing** — a configurable
+A* router that avoids existing copper and the board edge, returns simplified
+tracks, and produces results that pass the design-rule check — while keeping
+every existing API working.
 
 This document is self-contained. Read it fully before writing code.
 
@@ -14,7 +15,7 @@ This document is self-contained. Read it fully before writing code.
 
 - **Branch:** `main`
 - **Repository tip:** see `git log -1`
-- **Tests:** 144 passing, 0 failing
+- **Tests:** 162 passing, 0 failing
 - **Schema:** version 3 (`projects`, projection tables, `symbol_libraries`)
 - **Toolchain:** `stable` channel; edition 2024; MSRV/`rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -25,7 +26,7 @@ This document is self-contained. Read it fully before writing code.
 |-------|------|------------------------|
 | `core` | Shared data model, JSON serialization, symbol libraries, PCB primitives | none |
 | `schematic` | Netlist generation/export, connectivity graph, ERC | `core` |
-| `pcb` | Board data, outline geometry, layers, footprints, routing config | `core` |
+| `pcb` | Board data, outline geometry, layers, footprints, DRC, routing config | `core` |
 | `renderer` | Vulkan configuration types (`ash`) | none |
 | `ai` | kAI suggestions + deterministic validation | `core`, `schematic` |
 | `collab` | Sessions, versioning, sharing | `core` |
@@ -33,30 +34,33 @@ This document is self-contained. Read it fully before writing code.
 | `kicad-parser` | `.kicad_sym` import, deterministic S-expressions | `core` |
 | `kai-cad` | Application binary + cross-crate smoke tests | all of the above |
 
-### Existing PCB support (built in Week 5)
+### Existing PCB support (built in Weeks 5–6)
 
-- `core::Point` with `new` and `distance_to`; `core::BoundingBox { min, max }`.
+- `core::Point` with `new`, `distance_to`, `distance_to_segment`;
+  `core::geometry::segment_distance` (symmetric, `0.0` for crossing or touching
+  segments, `f64::INFINITY` for non-finite input).
 - `core::PcbOutline` with `new`, `rectangle`, `is_closed`, `signed_area`,
-  `area`, `perimeter`, `contains_point` (boundary inclusive, even-odd ray
-  casting) and `bounding_box`.
-- `pcb::LayerStack` with `new`, `push`, `len`, `is_empty`, `copper_layers`,
-  `find`, `validate(&Stackup)` and `copper_layers_in_stackup(&Stackup)`;
-  `LayerIssue`/`LayerIssueKind` for `DuplicateId`, `DuplicateName`,
-  `EmptyName`, `MissingFromStackup` and `NonCopperInStackup`.
-- `pcb::FootprintLibrary` with `sorted`, `find`, `to_json`, `from_json`,
-  `save`, `load` and `FootprintLibraryError`; libraries are KaiCad JSON.
-- `pcb::PcbDesign { id, outline, layers, stackup, footprints, tracks, vias }`;
-  `pcb::Track { id, net_id, layer, path: Vec<core::Point> }`;
-  `pcb::Via { id, position, layer_start, layer_end }`.
+  `area`, `perimeter`, `contains_point` (boundary inclusive) and
+  `bounding_box`; `core::BoundingBox { min, max }`.
+- `pcb::PcbDesign { id, outline, layers, stackup, footprints, tracks, vias }`.
+- `pcb::Track { id, net_id, layer, width, path }` — `width` defaults to `0.25`
+  mm when absent from JSON.
+- `pcb::Via { id, position, layer_start, layer_end, diameter, drill }` —
+  `diameter`/`drill` default to `0.6`/`0.3` mm when absent from JSON.
+- `pcb::{DrcRules, DrcSeverity, DrcViolation, DrcReport, run_drc}` with eight
+  rules: `track-width`, `track-layer`, `clearance`, `track-outside-board`,
+  `via-outside-board`, `via-span`, `via-drill`, `track-path`. Reports are
+  sorted by `(rule_id, objects)`; `DrcRules::default()` is `0.15` mm minimum
+  width and `0.2` mm clearance; `DrcReport::is_valid` ignores warnings.
+- `pcb::routing::{Router, RoutingAlgorithm, RoutingOptimization}` — the
+  `Router` is configuration only and routes nothing.
 
-What is missing for Week 6:
+What is missing for Week 7:
 
-- No distance from a point to a line segment, so clearance checks cannot be
-  written yet.
-- Tracks have no width and vias have no diameter or drill, so width and
-  annular-ring rules have nothing to measure.
-- No DRC: nothing checks track layers, clearances, board containment or via
-  spans.
+- No route request or routing cost configuration.
+- No search: nothing connects two points with copper while avoiding existing
+  tracks, vias and the board edge.
+- No test showing that a generated route passes `run_drc`.
 
 ---
 
@@ -70,7 +74,7 @@ These come from `PRD.md` and are enforced in review:
    required for editing or persistence.
 3. **Deterministic operations.** No unseeded randomness in geometry, netlisting,
    routing, rule checks or export. Identical input must produce identical
-   output, byte for byte.
+   output, byte for byte. This includes generated track ids.
 4. **No silent data loss.** Preserve or report data you cannot represent.
 5. **AI output is untrusted.** Do not weaken `ai::SuggestionValidator`.
 6. **Zero warnings.** `cargo clippy --workspace --all-targets -- -D warnings`
@@ -87,189 +91,146 @@ These come from `PRD.md` and are enforced in review:
 
 ## 3. Deliverable
 
-### 3.1 Shared distance primitives
+### 3.1 Routing configuration
 
-Add to `core::geometry` (keep `Point` and `distance_to` unchanged):
+Extend `pcb::routing` (keep `Router`, `RoutingAlgorithm` and
+`RoutingOptimization` working):
 
 ```rust
-impl Point {
-    /// Shortest distance from this point to the segment `start`–`end`.
-    pub fn distance_to_segment(&self, start: &Point, end: &Point) -> f64;
+/// Costs and limits for the grid router.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RouterConfig {
+    /// Grid spacing in millimetres. Must be finite and positive.
+    pub grid: f64,
+    /// Extra path cost, in grid steps, for each direction change.
+    pub bend_cost: f64,
+    /// Maximum number of grid nodes the search may expand.
+    pub max_expansions: usize,
 }
 
-/// Shortest distance between two line segments.
-pub fn segment_distance(
-    first_start: &Point,
-    first_end: &Point,
-    second_start: &Point,
-    second_end: &Point,
-) -> f64;
+impl Default for RouterConfig {
+    // grid: 0.5, bend_cost: 1.0, max_expansions: 200_000
+}
+
+/// Add `pub config: RouterConfig` to `Router` with `#[serde(default)]`.
 ```
 
-Rules:
-
-- A zero-length segment is a point: `distance_to_segment(p, p, p) ==
-  p.distance_to(p)` and `segment_distance` degenerates accordingly.
-- The result is symmetric: `segment_distance(a, b, c, d) ==
-  segment_distance(c, d, a, b)`.
-- Crossing segments return `0.0`; touching endpoints return `0.0`.
-- Any non-finite coordinate returns `f64::INFINITY` (document it). Callers must
-  not treat that as "far away and therefore fine" without checking.
-- Implement projection clamping with `f64::clamp`; do not allocate.
-
-### 3.2 Track and via dimensions
-
-Extend the PCB data model. Defaults keep existing documents loadable:
+### 3.2 Route request and result
 
 ```rust
-pub struct Track {
-    pub id: uuid::Uuid,
+/// A single-net, single-layer routing request, in millimetres.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouteRequest {
     pub net_id: uuid::Uuid,
+    pub start: core::Point,
+    pub end: core::Point,
     pub layer: u16,
-    /// Copper width in millimetres.
-    #[serde(default = "default_track_width")]
+    /// Copper width in millimetres; defaults to 0.25.
     pub width: f64,
-    pub path: Vec<core::Point>,
 }
 
-pub struct Via {
-    pub id: uuid::Uuid,
-    pub position: core::Point,
-    pub layer_start: u16,
-    pub layer_end: u16,
-    /// Outer copper diameter in millimetres.
-    #[serde(default = "default_via_diameter")]
-    pub diameter: f64,
-    /// Finished drill diameter in millimetres.
-    #[serde(default = "default_via_drill")]
-    pub drill: f64,
-}
-```
-
-- Defaults: track width `0.25`, via diameter `0.6`, via drill `0.3`.
-- `Track` and `Via` must keep working with `..Default::default()`; update any
-  struct literal in the workspace that now needs the new fields.
-- Defaults must round trip through `serde_json` for documents written before
-  this change (test the missing-field case explicitly).
-
-### 3.3 Design-rule checking
-
-Add `pcb::drc`:
-
-```rust
-#[derive(Debug, Clone, PartialEq)]
-pub struct DrcRules {
-    /// Minimum acceptable copper width in millimetres.
-    pub min_track_width: f64,
-    /// Minimum copper-to-copper gap in millimetres.
-    pub clearance: f64,
-}
-
-impl Default for DrcRules {
-    // min_track_width: 0.15, clearance: 0.2
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DrcSeverity { Warning, Error }
+impl Default for RouteRequest { /* width: 0.25, everything else default */ }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct DrcViolation {
-    pub rule_id: String,
-    pub severity: DrcSeverity,
-    pub message: String,
-    /// Ids of the objects involved (tracks, vias), in a deterministic order.
-    pub objects: Vec<uuid::Uuid>,
-    /// Board location most representative of the problem, when there is one.
-    pub location: Option<core::Point>,
+pub enum RouteError {
+    /// The request or configuration is unusable. The message names the field.
+    InvalidRequest(String),
+    /// No path exists within the search bounds.
+    NoPath,
+    /// The search hit `RouterConfig::max_expansions` before finding a path.
+    ExpansionLimit,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct DrcReport {
-    pub violations: Vec<DrcViolation>,
-}
+impl std::fmt::Display for RouteError { /* ... */ }
+impl std::error::Error for RouteError {}
 
-impl DrcReport {
-    /// True when there are no `Error` violations.
-    pub fn is_valid(&self) -> bool;
-    /// Count of violations with the given severity.
-    pub fn count(&self, severity: DrcSeverity) -> usize;
-}
-
-/// Run every built-in rule on `design`.
-pub fn run_drc(design: &pcb::PcbDesign, rules: &DrcRules) -> DrcReport;
+/// Route one net on one layer, returning simplified tracks.
+pub fn route(
+    request: &RouteRequest,
+    design: &pcb::PcbDesign,
+    config: &RouterConfig,
+) -> Result<Vec<pcb::Track>, RouteError>;
 ```
-
-Built-in rules (all deterministic; one violation per offending object or pair):
-
-| Rule id | Severity | Trigger |
-|---------|----------|---------|
-| `track-width` | Error if `<= 0`, Warning below `min_track_width` | Track width |
-| `track-layer` | Error | Track layer is missing from `design.layers` or is not copper |
-| `clearance` | Error | Two tracks on the same copper layer are closer than `rules.clearance`, measured edge to edge (`segment_distance - w1/2 - w2/2`) |
-| `track-outside-board` | Error | Any track path point is outside the outline (skip when the outline has fewer than three points) |
-| `via-outside-board` | Error | A via centre is outside the outline (same skip rule) |
-| `via-span` | Error | `layer_start == layer_end`, the span is not top-to-bottom in stackup order, or either layer is missing/non-copper |
-| `via-drill` | Error if `drill <= 0` or `drill >= diameter`, Warning if the annular ring `(diameter - drill) / 2` is below `min_track_width / 2` | Via drill and annular ring |
-| `track-path` | Error | A track has fewer than two points, or a non-finite coordinate |
 
 Rules:
 
-- Clearance is checked between every unordered pair on the same layer
-  (`for left in 0..n { for right in left + 1..n }`) so each pair is reported
-  once. Include each track id once in `objects`, ordered by id string.
-- `track-outside-board` names the track once even when several points are
-  outside; `location` is the first offending point in path order.
-- Violations are sorted by `(rule_id, objects)` and the report is independent
-  of `HashMap` iteration. Do not deduplicate distinct pairs.
-- `is_valid` ignores warnings. `count` is a straight filter count.
-- The report must not mutate the design, allocate per-rule rule ids at run
-  time beyond `String::from`, and must never panic on degenerate input
-  (empty design, single-point tracks, unknown layers).
-- Copper layers are the layers in `design.layers` with `LayerKind::Copper`.
-  The stackup may be empty; treat an empty stackup as "layers not ordered"
-  and only require that the via's two layers exist and are copper, with
-  `layer_start != layer_end`.
+- Validate `config.grid` (finite, `> 0`), `request.width` (finite, `> 0`),
+  both endpoints (finite) and `request.layer` (defined and copper). Validate
+  that the outline has at least three points. Any failure returns
+  `InvalidRequest` naming the field; never panic.
+- Snap `start` and `end` to the nearest node of an origin-anchored grid
+  (`(value / grid).round() * grid`, so exact half-grid ties round away from
+  zero) and document that returned endpoints are the snapped points. If both
+  snap to the same node, return `InvalidRequest`.
+- The search is 4-neighbour A* over grid nodes inside the outline. A node is
+  unusable when it is outside the outline, when it is closer than
+  `clearance + request.width / 2 + other.width / 2` to any existing track on
+  the same copper layer, or when it is closer than
+  `clearance + request.width / 2 + via.diameter / 2` to a via that spans the
+  request layer. Use `DrcRules::default().clearance`.
+- A via blocks the request layer when its start or end equals that layer, or
+  when the layer lies between them in stackup order. With an empty stackup,
+  only the two endpoint layer ids block.
+- Move cost is `1.0` per step plus `bend_cost` when the move direction differs
+  from the previous one. The heuristic is Manhattan distance in grid steps.
+  Break all ties deterministically, for example by expanding the lowest
+  `(f, g, y, x)`; the result must not depend on heap insertion order.
+- Return `NoPath` when the open set empties, and `ExpansionLimit` when
+  `max_expansions` nodes have been expanded.
+- Simplify the chosen node path by merging collinear points; keep the first and
+  last node, the bends and the exact snapped coordinates. Return one `Track`
+  today (`Vec` leaves room for via-split multi-layer output later) with
+  `net_id` and `width` from the request and `layer` set to the request layer.
+- Track ids must be deterministic: derive them with `uuid::Uuid::new_v5` from a
+  fixed namespace and a name built from the net id, layer, width and snapped
+  endpoints. Never use `Uuid::new_v4` in routing.
+- Routing must not mutate `design`.
+- The returned tracks, added to a clone of the design, must produce no `Error`
+  violations from `run_drc` with default rules: inside the outline, on the
+  requested copper layer, wide enough, two or more points, and clear of
+  existing copper.
 
-### 3.4 Wire DRC into the application
+### 3.3 Wire routing into the application
 
 Extend the `kai-cad` PCB self-check to:
 
-1. Build a 100 × 80 mm board with two copper layers (`F.Cu` id 0, `B.Cu` id 1)
-   and a stackup `[0, 1]`.
-2. Add two parallel tracks on `F.Cu` that violate the default clearance.
-3. Run `run_drc` and assert the report contains a `clearance` error and is
-   therefore invalid.
-4. Widen/move the tracks to a clean configuration and assert the report is
-   valid and empty.
-5. Print the DRC result in the existing `pcb:` line.
+1. Keep the existing 100 × 80 mm, two-copper-layer board and its DRC checks.
+2. Route a new net between two points on an otherwise empty area and assert
+   `route` succeeds.
+3. Add the returned tracks to a clone of the design and assert `run_drc` is
+   valid with no violations.
+4. Block the path with a wall of existing tracks and assert the same request
+   returns `RouteError::NoPath` (or `ExpansionLimit` if the wall forces the
+   search over the cap).
+5. Print the routed point count in the existing `pcb:` line.
 
-Add a cross-crate smoke test in `kai-cad/tests/smoke.rs` that builds a clean
-board (one track, one via inside the outline) and asserts `run_drc` is valid,
-then moves the track outside the outline and asserts `track-outside-board`.
+Add a cross-crate smoke test in `kai-cad/tests/smoke.rs` that routes a clean
+point-to-point connection, asserts the result is non-empty and DRC-clean, then
+places a blocking wall and asserts the route fails with `NoPath`.
 
-### 3.5 Tests (target: 14–18 new tests)
+### 3.4 Tests (target: 16–18 new tests)
 
 Cover at least:
 
-1. Point-to-segment distance for inside, before-the-start, after-the-end and
-   zero-length segments.
-2. Point-to-segment distance is symmetric for reversed endpoints.
-3. Segment distance for parallel, crossing, touching and disjoint segments.
-4. Segment distance is symmetric and non-finite input yields infinity.
-5. Track and via serde defaults when the fields are absent.
-6. `track-width` for zero, below-minimum and acceptable widths.
-7. `track-layer` for unknown and non-copper layers.
-8. `clearance` for overlapping, close and far-apart tracks on one layer, and
-   for tracks on different layers.
-9. `track-outside-board` including the empty-outline skip.
-10. `via-outside-board` and `via-span` (same layer, reversed span, unknown
-    layer, non-copper layer).
-11. `via-drill` for zero drill, drill larger than diameter and a thin ring.
-12. `track-path` for a one-point track and a NaN coordinate.
-13. Report ordering is deterministic across repeated runs and independent of
-    the track vector order.
-14. `is_valid`, `count` and an empty design.
-15. kai-cad smoke test for clean and outside-board DRC.
+1. `RouterConfig` defaults and JSON round trip.
+2. A straight route between aligned points returns one track whose simplified
+   path has no redundant collinear points.
+3. The route's first and last points are the snapped endpoints.
+4. Off-grid endpoints snap to the nearest grid node.
+5. A route around a blocking track keeps clearance and stays in the outline.
+6. A route through a gap narrower than the clearance fails rather than
+   overlapping copper.
+7. A wall of tracks from one board edge to the other returns `NoPath`.
+8. A small `max_expansions` returns `ExpansionLimit`.
+9. Invalid requests: non-finite start, zero width, zero grid, unknown layer,
+   non-copper layer and identical snapped endpoints.
+10. Vias block the layers they span and do not block unrelated layers.
+11. The router never leaves the board outline.
+12. Adding the route to the design passes `run_drc` with no violations.
+13. Repeated routing of the same request is byte-identical, including track ids
+    (serialize the tracks as JSON and compare strings).
+14. Routing does not mutate the input design.
+15. kai-cad smoke test for a clean route and a blocked route.
 
 ---
 
@@ -277,16 +238,16 @@ Cover at least:
 
 All of the following must be true:
 
-- [ ] `Point::distance_to_segment` and `core::geometry::segment_distance` exist,
-      are documented and tested.
-- [ ] `Track::width`, `Via::diameter` and `Via::drill` exist with serde defaults
-      that load old documents.
-- [ ] `pcb::drc::{DrcRules, DrcSeverity, DrcViolation, DrcReport, run_drc}` and
-      all eight rules exist with deterministic ordering.
-- [ ] `kai-cad` self-check exercises DRC and still ends `self-check: ok`.
+- [ ] `RouterConfig`, `RouteRequest`, `RouteError` and `route` exist with the
+      documented semantics and doc comments.
+- [ ] `Router::config` round trips through serde and old `Router` JSON loads.
+- [ ] Routing is deterministic, including ids; repeated calls are identical.
+- [ ] A returned route passes `run_drc` and stays inside the outline.
+- [ ] `kai-cad` self-check routes and blocks a path and still ends
+      `self-check: ok`.
 - [ ] The new smoke test passes.
-- [ ] No public API was broken; old JSON documents still load.
-- [ ] Test count rises from 144 to at least 158, all passing.
+- [ ] No public API was broken.
+- [ ] Test count rises from 162 to at least 178, all passing.
 - [ ] Clippy, fmt, rustdoc and Markdown links are clean.
 - [ ] Documentation updated (§7).
 
@@ -315,12 +276,13 @@ cargo build --workspace --release
 
 ## 6. Suggested implementation order
 
-1. Add the distance primitives and their tests, checking hand-computed cases
-   (3-4-5 triangles, unit squares, parallel offsets).
-2. Add the track/via fields and serde-default tests; fix any constructors.
-3. Add `pcb::drc` one rule at a time, with a test per rule; finish with the
-   ordering and empty-input tests.
-4. Wire DRC into `kai-cad` and add the smoke test.
+1. Add `RouterConfig`, `RouteRequest`, `RouteError` and their defaults; update
+   the `Router` field and its tests.
+2. Implement grid snapping, node validity and the A* search with a small,
+   deterministic test board; check straight and L-shaped routes first.
+3. Add obstacle handling for tracks and vias, then simplification and id
+   derivation; add the determinism and DRC-clean tests.
+4. Wire routing into `kai-cad` and add the smoke test.
 5. Run the full verification suite; fix warnings before moving on.
 6. Update documentation and leave the changes uncommitted.
 
@@ -331,16 +293,17 @@ cargo build --workspace --release
 Update these files so they describe the new reality:
 
 - `README.md` — status, test count, PCB features, roadmap.
-- `docs/PLAN.md` — mark Week 6 complete and point to the next brief.
+- `docs/PLAN.md` — mark Week 7 complete and point to the Week 8 brief.
 - `docs/PHASE1_TASKS.md` — update the status note (Phase 1 remains closed).
-- `docs/ARCHITECTURE.md` — distance primitives, PCB dimensions, the DRC module
-  and rule table, and the "Current milestone and next steps" section.
-- `docs/DEVELOPMENT.md` — new test count and DRC troubleshooting notes.
-- `docs/CONTRIBUTING.md` — note that DRC reports are deterministic and that
-  rules must not depend on iteration order.
-- `docs/NEXT_AGENT_PROMPT.md` — replace this brief with the Week 7 (routing)
-  one once Week 6 is verified.
-- `TODO.md` — mark Week 6 done and list Week 7.
+- `docs/ARCHITECTURE.md` — routing types, router algorithm and determinism
+  guarantees, and the "Current milestone and next steps" section.
+- `docs/DEVELOPMENT.md` — new test count, router example/self-check output and
+  routing troubleshooting notes.
+- `docs/CONTRIBUTING.md` — note that routing is deterministic, ids are derived
+  with UUIDv5, and search ties must not depend on heap or map iteration order.
+- `docs/NEXT_AGENT_PROMPT.md` — replace this brief with the Week 8 one once
+  Week 7 is verified.
+- `TODO.md` — mark Week 7 done and list Week 8.
 
 ---
 
@@ -348,12 +311,13 @@ Update these files so they describe the new reality:
 
 Do not start these; they are later milestones:
 
-- Routing algorithms, push-and-shove, interactive routing or rip-up/reroute.
+- Multi-layer routing, via insertion, blind/buried vias or via optimisation.
+- Push-and-shove, rip-up/reroute, interactive routing or length matching.
 - Pad copper geometry, pad-to-track clearance or footprint placement.
-- Differential pairs, impedance, length matching or thermal analysis.
+- Differential pairs, impedance, thermal analysis or plane generation.
 - KiCad `.kicad_pcb` import/export.
 - Interactive editing, GUI, windowing or Vulkan object creation.
-- Schema migrations: the DRC report is computed, not stored, this week.
+- Persisting routes in SQLite: tracks remain part of the in-memory design.
 - Async, networking or collaboration transport.
 
 ---
@@ -363,7 +327,8 @@ Do not start these; they are later milestones:
 When finished, report:
 
 1. Files added and changed (do not commit).
-2. The final public API of the distance helpers, PCB dimensions and DRC.
+2. The final public API of the routing configuration, request, error and
+   `route` function.
 3. Test count per crate and total.
 4. Verification output tails for the commands in §5.
 5. Anything you deliberately deferred, with the reason.

@@ -65,15 +65,16 @@
 
 ### Implementation status
 
-**Weeks 1–5 are complete and verified.** The Cargo workspace, CI pipeline,
+**Weeks 1–6 are complete and verified.** The Cargo workspace, CI pipeline,
 toolchain configuration, shared data model, SQLite engineering database, named
 symbol libraries, KiCad `.kicad_sym` import, the basic schematic engine
-(netlist generation and export, graph traversal, ERC) and the PCB core
-(outline geometry, layer validation, footprint libraries) are in place. The
-workspace has **144 passing tests**, clean `cargo clippy --workspace
+(netlist generation and export, graph traversal, ERC), the PCB core (outline
+geometry, layer validation, footprint libraries) and PCB geometry/DRC (distance
+primitives, track and via dimensions, eight deterministic rules) are in place.
+The workspace has **162 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 6 brief.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 7 brief.
 
 Phase 1 progress:
 
@@ -89,13 +90,14 @@ Phase 2 progress:
 | Week | Focus | Status |
 |------|-------|--------|
 | 5 | PCB core: outline geometry, layer-stack validation, footprint libraries | ✅ Complete |
-| 6 | PCB geometry and design-rule checking | ⬜ Not started |
-| 7–8 | Routing, rendering and PCB integration | ⬜ Not started |
+| 6 | PCB geometry and design-rule checking | ✅ Complete |
+| 7–8 | Deterministic routing, rendering and PCB integration | ⬜ Not started |
 
 The detailed brief for the next implementation pass — including schema
 requirements, acceptance criteria and verification commands — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 6:
-shared distance primitives, track and pad dimensions, and deterministic DRC.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 7:
+deterministic single-layer routing on a configurable grid, with DRC-clean
+results.
 
 ## 4. Key Milestones
 

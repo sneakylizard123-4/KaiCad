@@ -7,8 +7,8 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 6, PCB geometry and
-design-rule checking — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+instructions. The current implementation brief — Week 7, deterministic
+single-layer routing — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
 
@@ -25,7 +25,9 @@ design-rule checking — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 - **AI output is untrusted.** Any AI-proposed change must pass deterministic
   validation before it is applied.
 - **Deterministic operations.** Do not introduce unseeded randomness into
-  geometry, netlisting, routing or rule checks.
+  geometry, netlisting, routing or rule checks. DRC violations are sorted by
+  `(rule_id, objects)`, each unordered track pair is checked once, and rule
+  results must not depend on track-vector order or `HashMap` iteration.
 - **No silent data loss.** Report or preserve data you cannot represent.
 - **Never edit an applied migration.** Migrations live in
   `store/migrations/<version>_<name>.sql` and are embedded with `include_str!`.

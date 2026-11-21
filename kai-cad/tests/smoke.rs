@@ -150,6 +150,45 @@ fn footprint_library_round_trips_through_json() {
 }
 
 #[test]
+fn drc_accepts_a_clean_board_and_flags_a_track_outside_it() {
+    let design = pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(50.0, 40.0),
+        layers: vec![
+            core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
+            core::PcbLayer::new(1, "B.Cu", core::LayerKind::Copper),
+        ],
+        stackup: core::Stackup { layers: vec![0, 1] },
+        tracks: vec![pcb::Track {
+            id: Uuid::new_v4(),
+            net_id: Uuid::new_v4(),
+            layer: 0,
+            width: 0.3,
+            path: vec![core::Point::new(5.0, 5.0), core::Point::new(20.0, 5.0)],
+        }],
+        vias: vec![pcb::Via {
+            id: Uuid::new_v4(),
+            position: core::Point::new(25.0, 20.0),
+            layer_start: 0,
+            layer_end: 1,
+            ..pcb::Via::default()
+        }],
+        ..pcb::PcbDesign::default()
+    };
+
+    let report = pcb::run_drc(&design, &pcb::DrcRules::default());
+    assert!(report.is_valid());
+    assert!(report.violations.is_empty());
+
+    let mut outside = design;
+    outside.tracks[0].path = vec![core::Point::new(5.0, 5.0), core::Point::new(80.0, 5.0)];
+    let report = pcb::run_drc(&outside, &pcb::DrcRules::default());
+
+    assert!(!report.is_valid());
+    assert_eq!(report.count(pcb::DrcSeverity::Error), 1);
+    assert!(report.violations.iter().any(|violation| violation.rule_id == "track-outside-board"));
+}
+
+#[test]
 fn ai_validation_accepts_good_and_rejects_bad_suggestion() {
     let kai = ai::kAI::new(ai::kAIConfig::default());
 

@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 5 PCB core foundation complete (pre-alpha); Week 6 (PCB geometry and DRC) is next
+- **Implementation:** Week 6 PCB geometry and DRC complete (pre-alpha); Week 7 (deterministic routing) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (144 tests across the workspace)
+# Run tests (162 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -143,7 +143,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 6)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 7)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -151,15 +151,16 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–5 are complete and verified: **144 tests pass**, `cargo clippy
+Weeks 1–6 are complete and verified: **162 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 5 added board-outline geometry
-(area, perimeter, contains-point and bounding box), layer-stack validation and
-JSON footprint libraries with deterministic save/load.
+clean, and the release build succeeds. Week 6 added shared point/segment
+distance primitives, track width and via diameter/drill dimensions with serde
+defaults, and a deterministic eight-rule design-rule check.
 
-The next milestone is **Week 6 — PCB geometry and design-rule checking**:
-track widths, pad dimensions and a deterministic DRC report. The full brief is
-in [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
+The next milestone is **Week 7 — deterministic single-layer routing**: a
+configurable grid router that avoids existing copper and the board edge, with
+routes validated by the DRC. The full brief is in
+[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
 
@@ -176,8 +177,9 @@ What each crate provides today:
   `duplicate-net-name`, `duplicate-symbol-name` and `self-connection` (errors).
 - 🚧 **pcb** — `PcbDesign` built on `core` types, board-outline geometry,
   `LayerStack` with validation, `FootprintLibrary` JSON persistence
-  (`to_json`, `from_json`, `save`, `load`), `Router` configuration and
-  `Footprint`/`OutlineShape` types. No routing algorithm or DRC yet.
+  (`to_json`, `from_json`, `save`, `load`), track width and via dimensions,
+  a deterministic eight-rule DRC (`run_drc`), `Router` configuration and
+  `Footprint`/`OutlineShape` types. No routing algorithm yet.
 - 🚧 **renderer** — `RendererConfig` and `WindowConfig` only. `Renderer::new`
   and `Renderer::render` return `NotImplemented`; no Vulkan objects are created.
 - 🚧 **ai (kAI)** — configuration plus deterministic suggestion validation
@@ -191,8 +193,9 @@ What each crate provides today:
 - ✅ **kicad-parser** — deterministic S-expression reader and `.kicad_sym`
   loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
-  deterministic self-check that calls every subsystem, exports a KiCad netlist
-  and round trips a footprint library through a temporary file.
+  deterministic self-check that calls every subsystem, exports a KiCad netlist,
+  round trips a footprint library through a temporary file, and checks that DRC
+  rejects a shorted board and accepts a clean one.
 
 ## Roadmap
 

@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–5 are complete (144 tests, clippy/fmt/doc/release
-> all clean). Week 6 — PCB geometry and design-rule checking — is next; its
-> work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–6 are complete (162 tests, clippy/fmt/doc/release
+> all clean). Week 7 — deterministic single-layer routing — is next; its work
+> order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,19 +121,19 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **144 tests**, all passing:
+`cargo test --workspace` currently runs **162 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 7 |
 | `collab` (`src/lib.rs`) | 9 |
-| `core` (`src/tests.rs` and inline modules) | 26 |
+| `core` (`src/tests.rs` and inline modules) | 31 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
-| `pcb` (`src/lib.rs` and modules) | 23 |
+| `pcb` (`src/lib.rs`, `drc.rs` and modules) | 35 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 19 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 10 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 11 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -157,7 +157,7 @@ License: GPL-3.0-or-later
 subsystem self-check:
   core: project JSON round trip ok (… bytes)
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
-  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s)
+  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing)
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always
   collab: 1 session(s)
@@ -179,7 +179,7 @@ would **not** be built by Cargo.
 # Build a Project, serialize it to pretty JSON, deserialize it and verify it
 cargo run -p core --example project_roundtrip
 
-# Construct an OutlineShape and print a summary
+# Construct a board outline, layer stack, track and DRC report
 cargo run -p pcb --example board_outline
 
 # Create, list, load, update and delete a project in a SQLite database
@@ -247,8 +247,8 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–5 are finished; Week 6 adds shared distance primitives, track and pad
-dimensions, and deterministic design-rule checking. Before starting, read
+Weeks 1–6 are finished; Week 7 adds deterministic single-layer grid routing
+with DRC-clean output. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -342,6 +342,33 @@ Known limits:
 
 If the output changes between runs, check that no upstream code reintroduced
 `HashMap` iteration order into symbol or net collections.
+
+### DRC results look wrong
+
+`pcb::run_drc` is pure and deterministic: the same design and rules always
+produce the same report, sorted by `(rule_id, objects)`. If a result surprises
+you, check these semantics before changing a rule:
+
+- Clearance is measured **edge to edge** on the same copper layer:
+  `segment_distance - width_a / 2 - width_b / 2`, with each unordered pair
+  checked once. Tracks on other layers and non-copper layers are skipped.
+- `track-outside-board` and `via-outside-board` are disabled when the outline
+  has fewer than three points, so an unnamed or empty board does not report
+  every object as outside.
+- An empty stackup means layer order is unknown, not that no layer is valid: a
+  via only needs two distinct, existing copper layers. With a non-empty
+  stackup, a via must span the first to the last copper layer in stackup order.
+- `track-width` reports `<= 0` as an error and widths below
+  `DrcRules::min_track_width` as a warning. `via-drill` reports a
+  non-positive or oversized drill as an error and a thin annular ring as a
+  warning.
+- Non-finite coordinates are reported by `track-path`; the distance helpers
+  return `f64::INFINITY` for them, and clearance ignores non-finite distances
+  rather than calling them clear.
+
+If the report changes between identical runs, look for code that consumes
+`HashMap` iteration order or track insertion order instead of the sorted
+report.
 
 ### Footprint libraries behave unexpectedly
 

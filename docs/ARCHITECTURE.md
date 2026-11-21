@@ -6,8 +6,9 @@
 > read this as a description of working EDA functionality.
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
-> 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine) and
-> 5 (PCB core) are complete. The workspace has 144 passing tests.
+> 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
+> 5 (PCB core) and 6 (PCB geometry and DRC) are complete. The workspace has
+> 162 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -21,7 +22,7 @@ graph TD
     app["kai-cad<br/>(binary)"]
     core["core<br/>shared data model"]
     schematic["schematic<br/>netlist · graph · ERC"]
-    pcb["pcb<br/>footprint · layer · routing"]
+    pcb["pcb<br/>footprint · layer · drc · routing"]
     renderer["renderer<br/>Vulkan via ash"]
     ai["ai (kAI)<br/>suggest · validate"]
     collab["collab<br/>sessions · versioning · sharing"]
@@ -94,7 +95,7 @@ network access or external services (`PRD.md` §1.2, §1.3).
 | Module | Public types / functions | Purpose |
 |--------|--------------------------|---------|
 | `component` | `Component`, `ComponentProperty` | Instance linking a symbol to a footprint |
-| `geometry` | `Point` | 2D point in millimetres with `distance_to` |
+| `geometry` | `Point`, `segment_distance` | 2D point in millimetres with `distance_to` and `distance_to_segment`; segment-to-segment distance |
 | `net` | `Net`, `NetClass` | Named connectivity and design-rule class |
 | `pcb` | `PcbOutline`, `BoundingBox`, `PcbLayer`, `LayerKind`, `Stackup` | Board outline with area/perimeter/contains-point/bounds, layers and layer order |
 | `project` | `Project`, `SchematicData`, `PcbData`, `ProjectMetadata` | Root document and its sections |
@@ -189,16 +190,21 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   `copper_layers_in_stackup(&Stackup)`. Validation reports `LayerIssue`s of
   kind `DuplicateId`, `DuplicateName`, `EmptyName`, `MissingFromStackup` and
   `NonCopperInStackup`, sorted by `(layer_id, kind)`.
+- `drc` — `DrcRules`, `DrcSeverity`, `DrcViolation`, `DrcReport` and
+  `run_drc`, a pure function implementing the eight rules listed below.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
   Hybrid}`, `RoutingOptimization`.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
   `tracks`, `vias`) built on `core::PcbOutline`/`core::PcbLayer`/
-  `core::Stackup`/`core::Point`, plus `Track` and `Via`.
+  `core::Stackup`/`core::Point`, plus `Track` (copper `width`, default
+  `0.25` mm) and `Via` (`diameter`/`drill`, defaults `0.6`/`0.3` mm). Missing
+  dimension fields load with those defaults, so older documents still open.
 
 `PcbDesign::copper_layer_count` is implemented and honours the stackup.
 Outline geometry lives on `core::PcbOutline`: `signed_area`, `area`,
 `perimeter`, `contains_point` (even-odd ray casting with boundary-inclusive
-edges) and `bounding_box`. No routing algorithm or DRC exists yet.
+edges) and `bounding_box`. Design-rule checking lives in `pcb::drc` and is
+implemented; no routing algorithm exists yet.
 
 ### `renderer` — Vulkan rendering engine
 
@@ -299,8 +305,9 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
 Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, and with no arguments runs a deterministic self-check:
 it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
-builds a PCB design (outline measurements, layer validation and a footprint
-library round trip), reads the default renderer, AI and collaboration configuration,
+builds a PCB design (outline measurements, layer validation, a footprint
+library round trip and clean/dirty DRC runs), reads the default renderer, AI
+and collaboration configuration,
 exercises the SQLite store with an in-memory database, and parses a hermetic
 `.kicad_sym` fixture with `kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
@@ -348,8 +355,8 @@ flowchart LR
    assignments and populates `PcbDesign` (`footprints`, `tracks`, `vias`).
    Tracks reference their net by `net_id`; vias record the layers they span.
    Only the data types exist today.
-6. **Validation.** ERC runs on the schematic netlist with deterministic rules
-   (see below). DRC on PCB geometry is planned.
+6. **Validation.** ERC runs on the schematic netlist and DRC runs on the PCB
+   geometry, both with deterministic rules (see below). Routing is planned.
 7. **Cross-probing and rendering.** The renderer draws schematic/PCB data, and
    selections are intended to synchronise between views. Not implemented.
 
@@ -372,6 +379,30 @@ order. It reports:
 
 `ERCResult::valid` is true only when there are no `Error` or `Critical`
 violations. `ERCResult::is_valid()` is the accessor.
+
+### Design-rule check (DRC)
+
+`pcb::run_drc(&design, &rules)` is a pure, deterministic function. Violations
+are sorted by `(rule_id, objects)`, each unordered track pair is reported once,
+and the report never depends on track order or `HashMap` iteration.
+
+| Rule id | Severity | Trigger |
+|---------|----------|---------|
+| `track-width` | Error at `<= 0`, Warning below `min_track_width` | Track copper width |
+| `track-layer` | Error | Track layer missing or not copper |
+| `clearance` | Error | Two tracks on one copper layer are closer than `clearance`, edge to edge |
+| `track-outside-board` | Error | A track path point lies outside the outline |
+| `via-outside-board` | Error | A via centre lies outside the outline |
+| `via-span` | Error | Via ends on the same layer, leaves the top-to-bottom stackup span, or uses a missing/non-copper layer |
+| `via-drill` | Error for a non-positive or oversized drill, Warning for a thin annular ring | Via drill and ring |
+| `track-path` | Error | A track has fewer than two points or a non-finite coordinate |
+
+An outline with fewer than three points disables the two board-containment
+rules. An empty stackup means layer order is unknown, so `via-span` only
+requires two distinct, existing copper layers. `DrcRules` defaults to a
+`0.15` mm minimum width and `0.2` mm clearance; `DrcReport::is_valid` ignores
+warnings, and `DrcReport::count` filters by severity. A non-finite distance
+from `core::geometry` is never treated as clearance.
 
 ### AI suggestion validation
 
@@ -427,22 +458,23 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–5, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–6, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v3) with migrations plus project and symbol-library
 CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
 (`kicad-parser`), deterministic netlist generation and KiCad export, graph
 traversal, five-rule ERC, board-outline geometry, layer-stack validation,
-JSON footprint libraries, renderer/AI/collab configuration types, `kai-cad`
+JSON footprint libraries, distance primitives, track/via dimensions,
+eight-rule DRC, renderer/AI/collab configuration types, the `kai-cad`
 self-check binary, CI (including a Markdown link check and coverage job), and
 documentation.
 
-**Next (Week 6):** PCB geometry and design-rule checking. The planned work is:
+**Next (Week 7):** deterministic single-layer routing. The planned work is:
 
-1. Shared point-to-segment and segment-to-segment distance primitives.
-2. Track widths and pad dimensions on the PCB data model.
-3. A deterministic DRC report covering track width, clearance, vias and board
-   containment.
+1. A grid/cost configuration and a `RouteRequest` type in `pcb::routing`.
+2. A deterministic A* router that avoids existing copper and the board edge.
+3. Routes validated with `run_drc` and wired into the `kai-cad` self-check and
+   cross-crate smoke tests.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

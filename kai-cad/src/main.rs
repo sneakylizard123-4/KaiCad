@@ -149,7 +149,7 @@ fn check_schematic() -> Result<(), String> {
 }
 
 fn check_pcb() -> Result<(), String> {
-    let design = pcb::PcbDesign {
+    let mut design = pcb::PcbDesign {
         outline: core::PcbOutline::rectangle(100.0, 80.0),
         layers: vec![
             core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
@@ -181,6 +181,35 @@ fn check_pcb() -> Result<(), String> {
     let issues = stack.validate(&design.stackup);
     ensure(issues.is_empty(), "pcb: layer stack reported unexpected issues")?;
 
+    design.tracks = vec![
+        pcb::Track {
+            id: Uuid::new_v4(),
+            net_id: Uuid::new_v4(),
+            layer: 0,
+            width: 0.25,
+            path: vec![core::Point::new(10.0, 10.0), core::Point::new(90.0, 10.0)],
+        },
+        pcb::Track {
+            id: Uuid::new_v4(),
+            net_id: Uuid::new_v4(),
+            layer: 0,
+            width: 0.25,
+            path: vec![core::Point::new(10.0, 10.2), core::Point::new(90.0, 10.2)],
+        },
+    ];
+
+    let dirty = pcb::run_drc(&design, &pcb::DrcRules::default());
+    ensure(!dirty.is_valid(), "pcb: DRC accepted tracks that violate the clearance")?;
+    ensure(
+        dirty.violations.iter().any(|violation| violation.rule_id == "clearance"),
+        "pcb: DRC did not report the clearance violation",
+    )?;
+
+    design.tracks[1].path = vec![core::Point::new(10.0, 20.0), core::Point::new(90.0, 20.0)];
+    let clean = pcb::run_drc(&design, &pcb::DrcRules::default());
+    ensure(clean.is_valid(), "pcb: DRC rejected a clean board")?;
+    ensure(clean.violations.is_empty(), "pcb: DRC reported a violation on a clean board")?;
+
     let library = pcb::FootprintLibrary {
         name: "self-check".to_string(),
         footprints: vec![pcb::Footprint {
@@ -207,12 +236,14 @@ fn check_pcb() -> Result<(), String> {
     ensure(loaded.footprints[0].pad_positions.len() == 2, "pcb: footprint library lost pads")?;
 
     println!(
-        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s)",
+        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s), DRC clean={} ({} violation(s) before fixing)",
         design.outline.points.len(),
         design.outline.area(),
         design.layers.len(),
         design.copper_layer_count(),
-        loaded.footprints.len()
+        loaded.footprints.len(),
+        clean.violations.is_empty(),
+        dirty.violations.len()
     );
     Ok(())
 }
