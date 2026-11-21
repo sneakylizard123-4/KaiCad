@@ -6,7 +6,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1 and 2 are complete (85 tests, clippy/fmt/doc/release
+> **Current state:** Weeks 1 and 2 are complete (89 tests, clippy/fmt/doc/release
 > all clean). Week 3 — symbol management and KiCad symbol library loading — is
 > next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
@@ -118,7 +118,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **85 tests**, all passing:
+`cargo test --workspace` currently runs **89 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -127,8 +127,8 @@ benchmarks; a bare `cargo check` misses them.
 | `core` (`src/tests.rs`) | 15 |
 | `pcb` (`src/lib.rs` and modules) | 13 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
-| `schematic` (`src/lib.rs` and modules) | 15 |
-| `store` (`src/tests.rs`) | 13 |
+| `schematic` (`src/lib.rs` and modules) | 18 |
+| `store` (`src/tests.rs`) | 14 |
 | `kai-cad/tests/smoke.rs` (cross-crate integration) | 7 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
@@ -157,7 +157,7 @@ subsystem self-check:
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=true
   collab: 1 session(s)
-  store: created, loaded and deleted 1 project (schema v1)
+  store: created, loaded and deleted 1 project (schema v2)
 self-check: ok
 ```
 

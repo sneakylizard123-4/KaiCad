@@ -54,7 +54,9 @@ impl Graph {
     ///
     /// Every [`Connection`](crate::netlist::Connection) becomes an edge between
     /// the symbol nodes owning its source and target pins. Connections that
-    /// reference a symbol which is not part of the netlist are skipped.
+    /// reference a symbol which is not part of the netlist are skipped. Edge ids
+    /// are derived from the connection, so building the graph twice from the
+    /// same netlist produces the same edges.
     pub fn from_netlist(netlist: &Netlist) -> Graph {
         let mut nodes = Vec::with_capacity(netlist.symbols.len() + netlist.nets.len());
         let mut symbol_ids = HashSet::new();
@@ -84,7 +86,10 @@ impl Graph {
                 continue;
             }
             edges.push(Edge {
-                id: uuid::Uuid::new_v4(),
+                id: uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_OID,
+                    format!("edge|{}|{}|{}", connection.wire_id, source, target).as_bytes(),
+                ),
                 source,
                 target,
                 properties: vec![EdgeProperty {
@@ -166,6 +171,23 @@ mod tests {
 
         assert_eq!(graph.node_count(), 0);
         assert_eq!(graph.edge_count(), 0);
+    }
+
+    #[test]
+    fn graph_generation_is_deterministic() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        let first = symbol("R1", &[a]);
+        let second = symbol("R2", &[b]);
+        let net = Net { id: Uuid::new_v4(), name: "N1".into(), pins: vec![a, b], ..Net::default() };
+        let netlist = generate_netlist(&[first, second], std::slice::from_ref(&net));
+
+        let one = Graph::from_netlist(&netlist);
+        let two = Graph::from_netlist(&netlist);
+
+        assert_eq!(one.edge_count(), 1);
+        assert_eq!(one.edges[0].id, two.edges[0].id);
+        assert_eq!(one.node_count(), two.node_count());
     }
 
     #[test]

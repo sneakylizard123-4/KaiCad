@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (85 tests across the workspace)
+# Run tests (89 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -141,7 +141,7 @@ KaiCad/
 ## Current State
 
 Week 1 scaffolding and Week 2 engineering database are complete and verified:
-**85 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings` and
+**89 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings` and
 `cargo fmt --all -- --check` are clean, and the release build succeeds.
 
 The next milestone is **Week 3 — symbol management**: KiCad symbol library

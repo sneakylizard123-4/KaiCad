@@ -129,7 +129,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 85 tests pass across the workspace. Coverage reporting is not wired
+- **Note:** 89 tests pass across the workspace. Coverage reporting is not wired
   up yet; that remains a CI follow-up.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -170,7 +170,7 @@
 Week 1 (project scaffolding) and Week 2 (SQLite engineering database) are
 complete and verified. The workspace now contains a `store` crate with
 migrations, `Store` CRUD, 13 new unit tests and one new cross-crate integration
-test, bringing the total from 71 to **85 passing tests**. `cargo check`,
+test, bringing the total from 71 to **89 passing tests**. `cargo check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
 --check`, `cargo doc --workspace --no-deps` and `cargo build --workspace
 --release` all succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
