@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 3 symbol management complete (pre-alpha); Week 4 (schematic engine) is next
+- **Implementation:** Week 4 schematic engine complete (pre-alpha); Week 5 (PCB core) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (110 tests across the workspace)
+# Run tests (126 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -141,7 +141,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 4)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 5)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -149,13 +149,13 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–3 are complete and verified: **110 tests pass**, `cargo clippy
+Weeks 1–4 are complete and verified: **126 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 3 added named symbol libraries, a
-deterministic KiCad `.kicad_sym` parser and SQLite persistence for libraries.
+clean, and the release build succeeds. Week 4 added deterministic KiCad netlist
+export, graph traversal helpers and two new ERC rules.
 
-The next milestone is **Week 4 — schematic engine**: KiCad netlist export,
-graph operations and broader ERC. The full brief is in
+The next milestone is **Week 5 — PCB core**: board-outline geometry, layer
+stack rules and footprint library loading. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -165,9 +165,11 @@ What each crate provides today:
   shared `ChangeProposal`, and named symbol libraries. Real JSON serialization: `to_json`, `to_json_pretty`,
   `from_json`, `save`, `load` plus `Project::{to_json, from_json, save, load}`.
 - ✅ **schematic** — real netlist generation (`generate_netlist` maps pin ids to
-  `PinRef`s and emits connections for adjacent pins), a connectivity `Graph`,
-  and deterministic ERC with three rules: `net-single-pin` (warning),
-  `duplicate-net-name` (error) and `self-connection` (error).
+  `PinRef`s and emits connections for adjacent pins), deterministic KiCad
+  netlist export (`to_kicad_netlist`), a connectivity `Graph` with
+  neighbour/connectivity/component queries, and deterministic ERC with five
+  rules: `net-single-pin` and `unconnected-pin` (warnings),
+  `duplicate-net-name`, `duplicate-symbol-name` and `self-connection` (errors).
 - 🚧 **pcb** — `PcbDesign` built on `core` types, `LayerStack`, `Router`
   configuration and `Footprint`/`OutlineShape` types. No routing or geometry
   computation yet.
@@ -184,13 +186,14 @@ What each crate provides today:
 - ✅ **kicad-parser** — deterministic S-expression reader and `.kicad_sym`
   loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
-  deterministic self-check that calls every subsystem.
+  deterministic self-check that calls every subsystem and exports a KiCad
+  netlist.
 
 ## Roadmap
 
 | Phase | Weeks | Focus | Status |
 |-------|-------|-------|--------|
-| 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | 🚧 Week 3 complete |
+| 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ⬜ Not started |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | ⬜ Not started |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |

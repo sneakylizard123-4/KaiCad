@@ -5,9 +5,9 @@
 > skeletons whose functions return `NotImplemented` or empty values. Do not
 > read this as a description of working EDA functionality.
 >
-> Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database) and
-> 3 (symbol libraries and KiCad `.kicad_sym` import) are complete. The workspace
-> has 110 passing tests.
+> Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
+> 3 (symbol libraries and KiCad `.kicad_sym` import) and 4 (schematic engine)
+> are complete. The workspace has 126 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -156,15 +156,23 @@ boundaries:
 
 Dependencies: `core`, `serde`, `uuid`. Modules:
 
-- `netlist` — `Netlist`, `Connection`, `PinRef` and `generate_netlist`.
-  `generate_netlist` indexes every symbol pin by `Pin::id`, walks each net's
-  pins in order, and emits a `Connection` for every adjacent pair that resolves
-  to a known pin. Unknown pin ids are skipped.
+- `netlist` — `Netlist`, `Connection`, `PinRef`, `generate_netlist` and
+  `to_kicad_netlist`. `generate_netlist` indexes every symbol pin by `Pin::id`,
+  walks each net's pins in order, and emits a `Connection` for every adjacent
+  pair that resolves to a known pin; unknown pin ids are skipped.
+  `to_kicad_netlist` renders a deterministic, pretty-printed S-expression
+  document: components and nets sorted, net codes from 1, nodes sorted by
+  `(reference, pin, id)`, escaped strings and one trailing newline. It is
+  export-only; no KiCad netlist is parsed back into the internal model.
 - `graph` — hand-rolled connectivity `Graph` of symbol/net `Node`s and `Edge`s.
   `Graph::from_netlist` builds one node per symbol and per net, and one edge per
   connection whose endpoints are known symbols; `node_count`/`edge_count`
-  report the sizes.
-- `erc` — `run_erc`, `ERCResult`, `Violation`, `ViolationSeverity`.
+  report the sizes. `edges_for`, `neighbours`, `is_connected` (BFS) and
+  `connected_components` add deterministic read-only traversal; unknown ids
+  yield empty or `false` results rather than panics, and net nodes are isolated
+  because edges only join symbol pins.
+- `erc` — `run_erc`, `ERCResult`, `Violation`, `ViolationSeverity` and the five
+  built-in rules listed below.
 
 ### `pcb` — PCB engine
 
@@ -281,8 +289,8 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
 
 Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, and with no arguments runs a deterministic self-check:
-it serializes a `Project`, generates and ERC-checks a netlist, builds a PCB
-design, reads the default renderer, AI and collaboration configuration,
+it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
+builds a PCB design, reads the default renderer, AI and collaboration configuration,
 exercises the SQLite store with an in-memory database, and parses a hermetic
 `.kicad_sym` fixture with `kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
@@ -349,6 +357,8 @@ order. It reports:
 | `net-single-pin` | Warning | A net has fewer than two pins |
 | `duplicate-net-name` | Error | Two nets share the same non-empty name |
 | `self-connection` | Error | A connection's source and target pin are identical |
+| `unconnected-pin` | Warning | A symbol pin appears in no net (one per pin) |
+| `duplicate-symbol-name` | Error | Two symbols share the same non-empty name (one per name) |
 
 `ERCResult::valid` is true only when there are no `Error` or `Critical`
 violations. `ERCResult::is_valid()` is the accessor.
@@ -401,26 +411,26 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 - **Primary:** KiCad 10 project files.
 - **Secondary:** KiCad 9 project files.
-- `kicad-parser` imports `.kicad_sym` symbol libraries. No `.kicad_sch` or
-  `.kicad_pcb` parser or writer exists yet, and nothing is exported.
+- `kicad-parser` imports `.kicad_sym` symbol libraries and `schematic` exports
+  a KiCad netlist. No `.kicad_sch` or `.kicad_pcb` parser or writer and no
+  netlist importer exist yet.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–3, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–4, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v3) with migrations plus project and symbol-library
 CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
-(`kicad-parser`), deterministic netlist generation and three-rule ERC, PCB data
-types and layer stack helper, renderer/AI/collab configuration types, `kai-cad`
-self-check binary, CI, and documentation.
+(`kicad-parser`), deterministic netlist generation and KiCad export, graph
+traversal, five-rule ERC, PCB data types and layer stack helper,
+renderer/AI/collab configuration types, `kai-cad` self-check binary, CI, and
+documentation.
 
-**Next (Week 4):** schematic engine. The planned work is:
+**Next (Week 5):** PCB core foundation. The planned work is:
 
-1. Deterministic KiCad netlist export from `schematic::Netlist`.
-2. Graph operations: neighbour lookup, connectivity tests and components.
-3. Broader ERC: unconnected pins and duplicate symbol names.
-
-The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+1. Deterministic board-outline geometry: area, contains-point and bounding box.
+2. Layer-stack validation and query helpers.
+3. Footprint library model and loading.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

@@ -6,9 +6,10 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–3 are complete (110 tests, clippy/fmt/doc/release
-> all clean). Week 4 — netlist export, graph operations and broader ERC — is
-> next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–4 are complete (126 tests, clippy/fmt/doc/release
+> all clean). Week 5 — PCB core: outline geometry, layer stack and footprint
+> libraries — is next; its work order is in
+> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -119,7 +120,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **110 tests**, all passing:
+`cargo test --workspace` currently runs **126 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -129,9 +130,9 @@ benchmarks; a bare `cargo check` misses them.
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
 | `pcb` (`src/lib.rs` and modules) | 13 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
-| `schematic` (`src/lib.rs` and modules) | 18 |
+| `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 19 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 8 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 9 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -154,7 +155,7 @@ License: GPL-3.0-or-later
 
 subsystem self-check:
   core: project JSON round trip ok (… bytes)
-  schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s)
+  schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
   pcb: outline 4 points, 1 layer(s), 1 copper layer(s)
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always
@@ -238,10 +239,10 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–3 are finished; Week 4 adds KiCad netlist export, graph operations and
-broader ERC. Before starting, read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md),
-which contains the API requirements, acceptance criteria and verification
-commands. The existing JSON persistence in `core::serialization` must keep
+Weeks 1–4 are finished; Week 5 begins the PCB core with board-outline
+geometry, layer-stack rules and footprint library loading. Before starting,
+read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
+requirements, acceptance criteria and verification commands. The existing JSON persistence in `core::serialization` must keep
 working while new persistence layers are added.
 
 When a milestone changes the crate graph, commands or task status, update
@@ -315,6 +316,23 @@ schematics or `.kicad_pcb` boards. Known limits of the Week 3 import:
 
 Malformed S-expressions return `ParseError::Syntax`; unreadable files return
 `ParseError::Io`. Neither path panics.
+
+### KiCad netlist export looks wrong
+
+`to_kicad_netlist` is export only; KaiCad never reads a KiCad netlist back.
+Known limits:
+
+- `value` and `footprint` are always empty because a `Netlist` carries no
+  component properties yet.
+- Components use `Symbol::name` as their reference. Net codes start at 1 and
+  follow sorted `(name, id)` order, so insertion order never changes the bytes.
+- A net whose pins resolve to no known symbol pin is still emitted, without
+  nodes, so the caller can see every net in the netlist.
+- Quotes, backslashes and line breaks are escaped, the document ends with
+  exactly one `\n`, and repeated calls on the same netlist are byte identical.
+
+If the output changes between runs, check that no upstream code reintroduced
+`HashMap` iteration order into symbol or net collections.
 
 ### Build is slow the first time
 

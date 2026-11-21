@@ -7,15 +7,18 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 4, netlist export, graph
-operations and broader ERC — is in
+instructions. The current implementation brief — Week 5, PCB core: outline
+geometry, layer stack and footprint libraries — is in
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
 
 - **No KiCad wrapping.** KaiCad implements its own engines. KiCad file formats
   are an import/export target only: `kicad-parser` maps `.kicad_sym` input into
-  `core` types, and those types remain the internal representation.
+  `core` types, and those types remain the internal representation. KiCad
+  netlist output from `schematic::to_kicad_netlist` is likewise export-only and
+  must never become the internal representation or gain a parser in the same
+  layer.
 - **Local-first.** No change may make a network connection, cloud service or
   AI model mandatory for normal editing.
 - **AI output is untrusted.** Any AI-proposed change must pass deterministic

@@ -36,21 +36,28 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Parser wired into the `kai-cad` self-check and cross-crate smoke tests
 - Documentation and the next-agent brief updated; total tests: 110
 
-## 🚧 Next — Week 4: Schematic engine
+### Week 4 — Schematic engine
+- Deterministic KiCad netlist export (`schematic::to_kicad_netlist`)
+- Graph traversal: `edges_for`, `neighbours`, `is_connected`, `connected_components`
+- ERC rules `unconnected-pin` (warning) and `duplicate-symbol-name` (error)
+- Netlist export wired into the `kai-cad` self-check and smoke tests
+- Documentation updated; total tests: 126
+
+## 🚧 Next — Week 5: PCB core
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Add deterministic KiCad netlist export from `schematic::Netlist`
-- [ ] Add graph operations: neighbours, connectivity and connected components
-- [ ] Add ERC rules for unconnected pins and duplicate symbol names
-- [ ] Extend the `kai-cad` self-check with netlist export
+- [ ] Deterministic board-outline geometry: area, contains-point, bounding box
+- [ ] Layer-stack validation and query helpers
+- [ ] Footprint library model and loading
+- [ ] Wire the new PCB work into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥120 tests, clippy/fmt/doc clean
+- [ ] Target: ≥140 tests, clippy/fmt/doc clean
 
 ## ⬜ Later milestones
 
-### Phase 1 remaining
-- Week 4 completes Phase 1 (basic schematic engine)
+### Phase 1
+- ✅ Complete (Weeks 1–4, basic schematic engine)
 
 ### Phase 2 — PCB core (Weeks 5–8)
 - Board outline, layers, stackup
