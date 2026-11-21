@@ -19,11 +19,14 @@ use rusqlite::{Connection, OptionalExtension, Transaction};
 mod tests;
 
 /// Highest migration version shipped by this crate.
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// Migrations are numbered SQL files embedded with `include_str!`.  Never edit
 /// an applied migration; add a new numbered entry at the end.
-const MIGRATIONS: &[(u32, &str)] = &[(1, include_str!("../migrations/0001_initial.sql"))];
+const MIGRATIONS: &[(u32, &str)] = &[
+    (1, include_str!("../migrations/0001_initial.sql")),
+    (2, include_str!("../migrations/0002_projection_primary_keys.sql")),
+];
 
 /// A synchronous SQLite-backed engineering database.
 #[derive(Debug)]

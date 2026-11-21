@@ -34,7 +34,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Implement a minimal deterministic S-expression parser
 - [ ] Parse KiCad `.kicad_sym` files into `core::SymbolLibrary`
 - [ ] Map KiCad pins to `core::Pin` (name, number, electrical type)
-- [ ] Add `store` migration `0002_symbol_libraries.sql`
+- [ ] Add `store` migration `0003_symbol_libraries.sql`
 - [ ] Implement `store` symbol-library CRUD
 - [ ] Add `kicad-parser/examples/parse_library.rs`
 - [ ] Wire kicad-parser into `kai-cad` self-check + smoke test

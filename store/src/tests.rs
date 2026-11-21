@@ -107,7 +107,7 @@ fn fixture_project_with_namespace(namespace: &str) -> core::Project {
 #[test]
 fn open_in_memory_applies_initial_migration() {
     let store = Store::open_in_memory().expect("open in-memory store");
-    assert_eq!(store.schema_version().expect("schema version"), 1);
+    assert_eq!(store.schema_version().expect("schema version"), 2);
 }
 
 #[test]
@@ -117,11 +117,11 @@ fn migrations_are_idempotent() {
 
     {
         let store = Store::open(&path).expect("first open");
-        assert_eq!(store.schema_version().expect("schema version"), 1);
+        assert_eq!(store.schema_version().expect("schema version"), 2);
     }
     {
         let store = Store::open(&path).expect("second open");
-        assert_eq!(store.schema_version().expect("schema version"), 1);
+        assert_eq!(store.schema_version().expect("schema version"), 2);
     }
 }
 
@@ -176,6 +176,31 @@ fn create_duplicate_id_returns_error_and_leaves_first_row_intact() {
     let loaded =
         store.load_project(project.id).expect("load project").expect("project still exists");
     assert_eq!(loaded.name, project.name);
+}
+
+#[test]
+fn duplicate_project_reuses_entity_ids_across_projects() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let original = fixture_project();
+
+    store.create_project(&original).expect("create original project");
+
+    // Duplicating a project keeps its entity ids; only the project id changes.
+    let mut copy = original.clone();
+    copy.id = fixed_uuid("copy:project");
+    copy.name = "copy".to_string();
+
+    store.create_project(&copy).expect("a copied project may reuse the original's entity ids");
+
+    let loaded = store.load_project(copy.id).expect("load copy").expect("copy exists");
+    assert_eq!(loaded.schematic.symbols[0].id, original.schematic.symbols[0].id);
+    assert_eq!(loaded.schematic.nets[0].id, original.schematic.nets[0].id);
+    assert_eq!(store.list_projects().expect("list projects").len(), 2);
+
+    assert!(store.delete_project(copy.id).expect("delete copy"));
+    let counts = projection_counts(&store, original.id).expect("projection counts");
+    assert_eq!(counts.symbols, 1);
+    assert_eq!(counts.nets, 1);
 }
 
 #[test]
