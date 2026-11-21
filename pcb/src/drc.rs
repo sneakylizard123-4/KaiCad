@@ -4,7 +4,8 @@
 //! input always produces the same report, byte for byte, because violations
 //! are sorted by rule id and object ids. Non-finite geometry is reported by
 //! the rules rather than silently skipped, and no rule panics on degenerate
-//! input.
+//! input. Limits live on the design and are validated before use; an invalid
+//! set is reported as a `drc-rules` error and the defaults are applied.
 
 use std::cmp::Ordering;
 
@@ -13,19 +14,85 @@ use uuid::Uuid;
 use crate::{PcbDesign, Track, Via};
 
 /// Minimum copper dimensions enforced by the built-in rules.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Limits are stored on [`PcbDesign::rules`](crate::PcbDesign::rules) and are
+/// serialized with the design. Every limit must be finite and greater than
+/// zero; [`DrcRules::validate`] checks this, and [`run_drc`] reports an invalid
+/// set as a `drc-rules` error and falls back to the defaults.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DrcRules {
     /// Minimum acceptable copper width in millimetres.
+    #[serde(default = "default_min_track_width")]
     pub min_track_width: f64,
     /// Minimum copper-to-copper gap in millimetres.
+    #[serde(default = "default_clearance")]
     pub clearance: f64,
+    /// Minimum annular ring around a via in millimetres.
+    #[serde(default = "default_min_annular_ring")]
+    pub min_annular_ring: f64,
+    /// Minimum finished via drill diameter in millimetres.
+    #[serde(default = "default_min_via_drill")]
+    pub min_via_drill: f64,
+}
+
+fn default_min_track_width() -> f64 {
+    0.15
+}
+
+fn default_clearance() -> f64 {
+    0.2
+}
+
+fn default_min_annular_ring() -> f64 {
+    0.05
+}
+
+fn default_min_via_drill() -> f64 {
+    0.2
 }
 
 impl Default for DrcRules {
     fn default() -> Self {
-        Self { min_track_width: 0.15, clearance: 0.2 }
+        Self {
+            min_track_width: default_min_track_width(),
+            clearance: default_clearance(),
+            min_annular_ring: default_min_annular_ring(),
+            min_via_drill: default_min_via_drill(),
+        }
     }
 }
+
+impl DrcRules {
+    /// Check that every limit is finite and greater than zero.
+    pub fn validate(&self) -> Result<(), DrcRulesError> {
+        for (field, value) in [
+            ("min_track_width", self.min_track_width),
+            ("clearance", self.clearance),
+            ("min_annular_ring", self.min_annular_ring),
+            ("min_via_drill", self.min_via_drill),
+        ] {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(DrcRulesError { field });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A [`DrcRules`] limit that is not finite and greater than zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrcRulesError {
+    /// Name of the offending limit, for example `clearance`.
+    pub field: &'static str,
+}
+
+impl std::fmt::Display for DrcRulesError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "DRC limit `{}` must be finite and greater than zero", self.field)
+    }
+}
+
+impl std::error::Error for DrcRulesError {}
 
 /// How serious a [`DrcViolation`] is.
 ///
@@ -73,13 +140,29 @@ impl DrcReport {
 /// Run every built-in rule on `design`.
 ///
 /// The report contains at most one violation per offending object or pair.
-/// Track clearance is measured edge to edge on the same copper layer, and
-/// every unordered pair is reported once. An outline with fewer than three
-/// points disables the board-containment rules, and an empty stackup means
-/// layer order is unknown, so via spans only need distinct, existing copper
-/// layers.
+/// Track clearance is measured edge to edge on the same copper layer between
+/// tracks on different nets, and every unordered pair is reported once. An
+/// outline with fewer than three points disables the board-containment rules,
+/// and an empty stackup means layer order is unknown, so via spans only need
+/// distinct, existing copper layers. An invalid [`DrcRules`] set adds one
+/// `drc-rules` error and the checks run with [`DrcRules::default`].
 pub fn run_drc(design: &PcbDesign, rules: &DrcRules) -> DrcReport {
     let mut violations = Vec::new();
+    let active_rules = match rules.validate() {
+        Ok(()) => rules.clone(),
+        Err(error) => {
+            push(
+                &mut violations,
+                "drc-rules",
+                DrcSeverity::Error,
+                error.to_string(),
+                Vec::new(),
+                None,
+            );
+            DrcRules::default()
+        }
+    };
+    let rules = &active_rules;
     let stackup_copper = stackup_copper_ids(design);
 
     for track in &design.tracks {
@@ -155,7 +238,16 @@ fn push(
 fn check_track_width(track: &Track, rules: &DrcRules, violations: &mut Vec<DrcViolation>) {
     let location = track.path.first().and_then(finite_location);
 
-    if track.width <= 0.0 {
+    if !track.width.is_finite() {
+        push(
+            violations,
+            "track-width",
+            DrcSeverity::Error,
+            format!("track {} has non-finite width {}", track.id, track.width),
+            vec![track.id],
+            location,
+        );
+    } else if track.width <= 0.0 {
         push(
             violations,
             "track-width",
@@ -312,7 +404,28 @@ fn check_via_span(
 fn check_via_drill(via: &Via, rules: &DrcRules, violations: &mut Vec<DrcViolation>) {
     let location = finite_location(&via.position);
 
-    if via.drill <= 0.0 {
+    if !via.diameter.is_finite() || !via.drill.is_finite() {
+        push(
+            violations,
+            "via-drill",
+            DrcSeverity::Error,
+            format!(
+                "via {} has a non-finite drill {} or diameter {}",
+                via.id, via.drill, via.diameter
+            ),
+            vec![via.id],
+            location,
+        );
+    } else if via.diameter <= 0.0 {
+        push(
+            violations,
+            "via-drill",
+            DrcSeverity::Error,
+            format!("via {} has non-positive diameter {} mm", via.id, via.diameter),
+            vec![via.id],
+            location,
+        );
+    } else if via.drill <= 0.0 {
         push(
             violations,
             "via-drill",
@@ -333,18 +446,28 @@ fn check_via_drill(via: &Via, rules: &DrcRules, violations: &mut Vec<DrcViolatio
             vec![via.id],
             location,
         );
+    } else if via.drill < rules.min_via_drill {
+        push(
+            violations,
+            "via-drill",
+            DrcSeverity::Error,
+            format!(
+                "via {} drill {} mm is below the minimum {} mm",
+                via.id, via.drill, rules.min_via_drill
+            ),
+            vec![via.id],
+            location,
+        );
     } else {
         let ring = (via.diameter - via.drill) / 2.0;
-        if ring < rules.min_track_width / 2.0 {
+        if ring < rules.min_annular_ring {
             push(
                 violations,
                 "via-drill",
                 DrcSeverity::Warning,
                 format!(
                     "via {} annular ring {:.3} mm is below {:.3} mm",
-                    via.id,
-                    ring,
-                    rules.min_track_width / 2.0
+                    via.id, ring, rules.min_annular_ring
                 ),
                 vec![via.id],
                 location,
@@ -360,6 +483,14 @@ fn check_clearance(design: &PcbDesign, rules: &DrcRules, violations: &mut Vec<Dr
             let second = &design.tracks[right];
 
             if first.layer != second.layer || !is_copper(design, first.layer) {
+                continue;
+            }
+
+            if first.net_id == second.net_id {
+                continue;
+            }
+
+            if !first.width.is_finite() || !second.width.is_finite() {
                 continue;
             }
 
@@ -446,7 +577,7 @@ mod tests {
     }
 
     fn track(layer: u16, width: f64, path: Vec<Point>) -> Track {
-        Track { id: Uuid::new_v4(), net_id: Uuid::nil(), layer, width, path }
+        Track { id: Uuid::new_v4(), net_id: Uuid::new_v4(), layer, width, path }
     }
 
     fn via(start: u16, end: u16, position: Point) -> Via {
@@ -665,5 +796,137 @@ mod tests {
         let mut sorted = clearance[0].objects.clone();
         sorted.sort_by_key(|id| id.to_string());
         assert_eq!(clearance[0].objects, sorted);
+    }
+
+    #[test]
+    fn drc_rules_validate_requires_finite_positive_limits() {
+        assert!(DrcRules::default().validate().is_ok());
+
+        let cases = [
+            (DrcRules { min_track_width: 0.0, ..DrcRules::default() }, "min_track_width"),
+            (DrcRules { clearance: f64::NAN, ..DrcRules::default() }, "clearance"),
+            (DrcRules { min_annular_ring: -0.1, ..DrcRules::default() }, "min_annular_ring"),
+            (DrcRules { min_via_drill: f64::INFINITY, ..DrcRules::default() }, "min_via_drill"),
+        ];
+
+        for (rules, field) in cases {
+            let error = rules.validate().expect_err("invalid limits must be rejected");
+            assert_eq!(error.field, field);
+            assert!(error.to_string().contains(field));
+        }
+    }
+
+    #[test]
+    fn run_drc_reports_invalid_rules_and_falls_back_to_defaults() {
+        let design = board(
+            vec![
+                track(0, 0.25, vec![Point::new(10.0, 10.0), Point::new(30.0, 10.0)]),
+                track(0, 0.25, vec![Point::new(10.0, 10.4), Point::new(30.0, 10.4)]),
+            ],
+            Vec::new(),
+        );
+
+        let report = run_drc(&design, &DrcRules { clearance: f64::NAN, ..DrcRules::default() });
+
+        assert!(!report.is_valid());
+        assert_eq!(count_rule(&report, "drc-rules"), 1);
+        assert_eq!(count_rule(&report, "clearance"), 1);
+    }
+
+    #[test]
+    fn track_width_rule_flags_non_finite_widths() {
+        let design = board(
+            vec![
+                track(0, f64::NAN, vec![Point::new(10.0, 10.0), Point::new(20.0, 10.0)]),
+                track(0, f64::INFINITY, vec![Point::new(10.0, 20.0), Point::new(20.0, 20.0)]),
+            ],
+            Vec::new(),
+        );
+
+        let report = run_drc(&design, &DrcRules::default());
+        let widths = with_rule(&report, "track-width");
+
+        assert_eq!(widths.len(), 2);
+        assert!(widths.iter().all(|violation| violation.severity == DrcSeverity::Error));
+        assert!(!report.is_valid());
+    }
+
+    #[test]
+    fn via_drill_rule_rejects_non_finite_and_non_positive_dimensions() {
+        let base = board(Vec::new(), vec![via(0, 1, Point::new(50.0, 40.0))]);
+
+        for (drill, diameter) in [(f64::NAN, 0.6), (0.3, f64::INFINITY), (-0.1, 0.6), (0.3, 0.0)] {
+            let mut design = base.clone();
+            design.vias[0].drill = drill;
+            design.vias[0].diameter = diameter;
+
+            let report = run_drc(&design, &DrcRules::default());
+            let violations = with_rule(&report, "via-drill");
+
+            assert_eq!(violations.len(), 1, "drill {drill}, diameter {diameter}");
+            assert_eq!(violations[0].severity, DrcSeverity::Error);
+        }
+    }
+
+    #[test]
+    fn via_drill_rule_enforces_the_minimum_drill_limit() {
+        let design = board(Vec::new(), vec![via(0, 1, Point::new(50.0, 40.0))]);
+        let rules = DrcRules { min_via_drill: 0.4, ..DrcRules::default() };
+
+        let report = run_drc(&design, &rules);
+        let violations = with_rule(&report, "via-drill");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].severity, DrcSeverity::Error);
+        assert!(violations[0].message.contains("minimum"));
+    }
+
+    #[test]
+    fn via_ring_uses_the_annular_ring_limit_not_the_track_width_limit() {
+        let design = board(Vec::new(), vec![via(0, 1, Point::new(50.0, 40.0))]);
+
+        let decoupled =
+            DrcRules { min_track_width: 4.0, min_annular_ring: 0.05, ..DrcRules::default() };
+        assert_eq!(count_rule(&run_drc(&design, &decoupled), "via-drill"), 0);
+
+        let strict_ring = DrcRules { min_annular_ring: 0.2, ..DrcRules::default() };
+        let report = run_drc(&design, &strict_ring);
+        let violations = with_rule(&report, "via-drill");
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].severity, DrcSeverity::Warning);
+    }
+
+    #[test]
+    fn clearance_rule_ignores_tracks_on_the_same_net() {
+        let net = Uuid::new_v4();
+        let path = vec![Point::new(10.0, 10.0), Point::new(30.0, 10.0)];
+        let mut first = track(0, 0.25, path.clone());
+        let mut second = track(0, 0.25, path);
+        first.net_id = net;
+        second.net_id = net;
+
+        let same_net = board(vec![first, second], Vec::new());
+        assert_eq!(count_rule(&run_drc(&same_net, &DrcRules::default()), "clearance"), 0);
+
+        let different_nets = board(
+            vec![
+                track(0, 0.25, vec![Point::new(10.0, 10.0), Point::new(30.0, 10.0)]),
+                track(0, 0.25, vec![Point::new(10.0, 10.0), Point::new(30.0, 10.0)]),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(count_rule(&run_drc(&different_nets, &DrcRules::default()), "clearance"), 1);
+    }
+
+    #[test]
+    fn drc_rules_load_defaults_for_missing_fields() {
+        let rules: DrcRules = serde_json::from_str(r#"{"min_track_width":0.2,"clearance":0.25}"#)
+            .expect("partial rules should load");
+
+        assert_eq!(rules.min_track_width, 0.2);
+        assert_eq!(rules.clearance, 0.25);
+        assert_eq!(rules.min_annular_ring, DrcRules::default().min_annular_ring);
+        assert_eq!(rules.min_via_drill, DrcRules::default().min_via_drill);
     }
 }

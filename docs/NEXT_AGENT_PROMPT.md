@@ -15,7 +15,7 @@ This document is self-contained. Read it fully before writing code.
 
 - **Branch:** `main`
 - **Repository tip:** see `git log -1`
-- **Tests:** 162 passing, 0 failing
+- **Tests:** 171 passing, 0 failing
 - **Schema:** version 3 (`projects`, projection tables, `symbol_libraries`)
 - **Toolchain:** `stable` channel; edition 2024; MSRV/`rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -47,11 +47,16 @@ This document is self-contained. Read it fully before writing code.
   mm when absent from JSON.
 - `pcb::Via { id, position, layer_start, layer_end, diameter, drill }` —
   `diameter`/`drill` default to `0.6`/`0.3` mm when absent from JSON.
-- `pcb::{DrcRules, DrcSeverity, DrcViolation, DrcReport, run_drc}` with eight
-  rules: `track-width`, `track-layer`, `clearance`, `track-outside-board`,
+- `pcb::{DrcRules, DrcRulesError, DrcSeverity, DrcViolation, DrcReport,
+  run_drc}` with eight geometry rules plus `drc-rules` limit validation:
+  `track-width`, `track-layer`, `clearance`, `track-outside-board`,
   `via-outside-board`, `via-span`, `via-drill`, `track-path`. Reports are
-  sorted by `(rule_id, objects)`; `DrcRules::default()` is `0.15` mm minimum
-  width and `0.2` mm clearance; `DrcReport::is_valid` ignores warnings.
+  sorted by `(rule_id, objects)`. Limits live on `PcbDesign::rules` and
+  serialize with the design; `DrcRules::default()` is `0.15` mm minimum width,
+  `0.2` mm clearance, `0.05` mm minimum annular ring and `0.2` mm minimum via
+  drill. `DrcRules::validate` rejects non-finite or non-positive limits, and
+  same-net tracks are exempt from clearance. `DrcReport::is_valid` ignores
+  warnings.
 - `pcb::routing::{Router, RoutingAlgorithm, RoutingOptimization}` — the
   `Router` is configuration only and routes nothing.
 
@@ -167,7 +172,7 @@ Rules:
   `clearance + request.width / 2 + other.width / 2` to any existing track on
   the same copper layer, or when it is closer than
   `clearance + request.width / 2 + via.diameter / 2` to a via that spans the
-  request layer. Use `DrcRules::default().clearance`.
+  request layer. Use the design's limits (`design.rules.clearance`).
 - A via blocks the request layer when its start or end equals that layer, or
   when the layer lies between them in stackup order. With an empty stackup,
   only the two endpoint layer ids block.
@@ -186,7 +191,7 @@ Rules:
   endpoints. Never use `Uuid::new_v4` in routing.
 - Routing must not mutate `design`.
 - The returned tracks, added to a clone of the design, must produce no `Error`
-  violations from `run_drc` with default rules: inside the outline, on the
+  violations from `run_drc` with the design's rules: inside the outline, on the
   requested copper layer, wide enough, two or more points, and clear of
   existing copper.
 
@@ -247,7 +252,7 @@ All of the following must be true:
       `self-check: ok`.
 - [ ] The new smoke test passes.
 - [ ] No public API was broken.
-- [ ] Test count rises from 162 to at least 178, all passing.
+- [ ] Test count rises from 171 to at least 187, all passing.
 - [ ] Clippy, fmt, rustdoc and Markdown links are clean.
 - [ ] Documentation updated (§7).
 

@@ -8,7 +8,7 @@
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
 > 5 (PCB core) and 6 (PCB geometry and DRC) are complete. The workspace has
-> 162 passing tests.
+> 171 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -190,12 +190,14 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   `copper_layers_in_stackup(&Stackup)`. Validation reports `LayerIssue`s of
   kind `DuplicateId`, `DuplicateName`, `EmptyName`, `MissingFromStackup` and
   `NonCopperInStackup`, sorted by `(layer_id, kind)`.
-- `drc` — `DrcRules`, `DrcSeverity`, `DrcViolation`, `DrcReport` and
-  `run_drc`, a pure function implementing the eight rules listed below.
+- `drc` — `DrcRules` (validated, serde-friendly, stored on the design),
+  `DrcRulesError`, `DrcSeverity`, `DrcViolation`, `DrcReport` and `run_drc`, a
+  pure function implementing the eight geometry rules and the rule-set
+  validation listed below.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
   Hybrid}`, `RoutingOptimization`.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
-  `tracks`, `vias`) built on `core::PcbOutline`/`core::PcbLayer`/
+  `tracks`, `vias`, `rules`) built on `core::PcbOutline`/`core::PcbLayer`/
   `core::Stackup`/`core::Point`, plus `Track` (copper `width`, default
   `0.25` mm) and `Via` (`diameter`/`drill`, defaults `0.6`/`0.3` mm). Missing
   dimension fields load with those defaults, so older documents still open.
@@ -383,26 +385,32 @@ violations. `ERCResult::is_valid()` is the accessor.
 ### Design-rule check (DRC)
 
 `pcb::run_drc(&design, &rules)` is a pure, deterministic function. Violations
-are sorted by `(rule_id, objects)`, each unordered track pair is reported once,
-and the report never depends on track order or `HashMap` iteration.
+are sorted by `(rule_id, objects)`, each unordered track pair on different nets
+is reported once, and the report never depends on track order or `HashMap`
+iteration.
 
 | Rule id | Severity | Trigger |
 |---------|----------|---------|
-| `track-width` | Error at `<= 0`, Warning below `min_track_width` | Track copper width |
+| `track-width` | Error for a non-finite or `<= 0` width, Warning below `min_track_width` | Track copper width |
 | `track-layer` | Error | Track layer missing or not copper |
-| `clearance` | Error | Two tracks on one copper layer are closer than `clearance`, edge to edge |
+| `clearance` | Error | Two tracks on one copper layer and different nets are closer than `clearance`, edge to edge |
 | `track-outside-board` | Error | A track path point lies outside the outline |
 | `via-outside-board` | Error | A via centre lies outside the outline |
 | `via-span` | Error | Via ends on the same layer, leaves the top-to-bottom stackup span, or uses a missing/non-copper layer |
-| `via-drill` | Error for a non-positive or oversized drill, Warning for a thin annular ring | Via drill and ring |
+| `via-drill` | Error for a non-finite or non-positive drill/diameter, drill `>=` diameter, or drill below `min_via_drill`; Warning for a ring below `min_annular_ring` | Via drill, diameter and annular ring |
 | `track-path` | Error | A track has fewer than two points or a non-finite coordinate |
+| `drc-rules` | Error | A stored limit is non-finite or `<= 0`; checks then run with the defaults |
 
 An outline with fewer than three points disables the two board-containment
 rules. An empty stackup means layer order is unknown, so `via-span` only
-requires two distinct, existing copper layers. `DrcRules` defaults to a
-`0.15` mm minimum width and `0.2` mm clearance; `DrcReport::is_valid` ignores
-warnings, and `DrcReport::count` filters by severity. A non-finite distance
-from `core::geometry` is never treated as clearance.
+requires two distinct, existing copper layers. Limits live on
+`PcbDesign::rules` and serialize with the design; `DrcRules` defaults to a
+`0.15` mm minimum width, `0.2` mm clearance, `0.05` mm minimum annular ring
+and `0.2` mm minimum via drill. `DrcRules::validate` rejects non-finite or
+non-positive limits, and `run_drc` reports them through `drc-rules` without
+silently changing a valid rule set. `DrcReport::is_valid` ignores warnings,
+and `DrcReport::count` filters by severity. A non-finite distance from
+`core::geometry` is never treated as clearance.
 
 ### AI suggestion validation
 
@@ -465,7 +473,8 @@ CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
 (`kicad-parser`), deterministic netlist generation and KiCad export, graph
 traversal, five-rule ERC, board-outline geometry, layer-stack validation,
 JSON footprint libraries, distance primitives, track/via dimensions,
-eight-rule DRC, renderer/AI/collab configuration types, the `kai-cad`
+nine-rule DRC (eight geometry rules plus limit validation), renderer/AI/collab
+configuration types, the `kai-cad`
 self-check binary, CI (including a Markdown link check and coverage job), and
 documentation.
 

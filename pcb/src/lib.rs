@@ -5,7 +5,7 @@ pub mod footprint;
 pub mod layer;
 pub mod routing;
 
-pub use drc::{DrcReport, DrcRules, DrcSeverity, DrcViolation, run_drc};
+pub use drc::{DrcReport, DrcRules, DrcRulesError, DrcSeverity, DrcViolation, run_drc};
 pub use footprint::{Footprint, FootprintLibrary, FootprintLibraryError, PadPosition, PadType};
 pub use layer::{LayerIssue, LayerIssueKind, LayerStack};
 
@@ -19,6 +19,9 @@ pub struct PcbDesign {
     pub footprints: Vec<footprint::Footprint>,
     pub tracks: Vec<Track>,
     pub vias: Vec<Via>,
+    /// Design-rule limits used when checking this design.
+    #[serde(default)]
+    pub rules: drc::DrcRules,
 }
 
 impl Default for PcbDesign {
@@ -31,6 +34,7 @@ impl Default for PcbDesign {
             footprints: Vec::new(),
             tracks: Vec::new(),
             vias: Vec::new(),
+            rules: drc::DrcRules::default(),
         }
     }
 }
@@ -123,7 +127,7 @@ impl Default for Via {
 
 #[cfg(test)]
 mod tests {
-    use super::{PcbDesign, Track, Via};
+    use super::{DrcRules, PcbDesign, Track, Via};
     use core::{LayerKind, PcbLayer};
 
     #[test]
@@ -201,6 +205,23 @@ mod tests {
         .expect("via without dimensions should deserialize");
         assert_eq!(via.diameter, 0.6);
         assert_eq!(via.drill, 0.3);
+    }
+
+    #[test]
+    fn design_persists_drc_rules_and_loads_defaults_for_old_documents() {
+        let design = PcbDesign {
+            rules: DrcRules { clearance: 0.3, ..DrcRules::default() },
+            ..PcbDesign::default()
+        };
+
+        let json = serde_json::to_string(&design).expect("design should serialize");
+        let restored: PcbDesign = serde_json::from_str(&json).expect("design should parse");
+        assert_eq!(restored.rules, design.rules);
+
+        let mut value = serde_json::to_value(&design).expect("design should serialize");
+        value.as_object_mut().expect("design is an object").remove("rules");
+        let old: PcbDesign = serde_json::from_value(value).expect("old design should parse");
+        assert_eq!(old.rules, DrcRules::default());
     }
 
     #[test]

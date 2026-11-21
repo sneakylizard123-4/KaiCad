@@ -6,7 +6,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–6 are complete (162 tests, clippy/fmt/doc/release
+> **Current state:** Weeks 1–6 are complete (171 tests, clippy/fmt/doc/release
 > all clean). Week 7 — deterministic single-layer routing — is next; its work
 > order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
@@ -121,7 +121,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **162 tests**, all passing:
+`cargo test --workspace` currently runs **171 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -129,7 +129,7 @@ benchmarks; a bare `cargo check` misses them.
 | `collab` (`src/lib.rs`) | 9 |
 | `core` (`src/tests.rs` and inline modules) | 31 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
-| `pcb` (`src/lib.rs`, `drc.rs` and modules) | 35 |
+| `pcb` (`src/lib.rs`, `drc.rs` and modules) | 44 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 19 |
@@ -351,20 +351,27 @@ you, check these semantics before changing a rule:
 
 - Clearance is measured **edge to edge** on the same copper layer:
   `segment_distance - width_a / 2 - width_b / 2`, with each unordered pair
-  checked once. Tracks on other layers and non-copper layers are skipped.
+  checked once. Tracks on other layers, non-copper layers and the **same net**
+  are skipped, because same-net copper is an intentional connection.
+- Limits live on `PcbDesign::rules` and serialize with the design. Every limit
+  must be finite and greater than zero; `DrcRules::validate` checks this and
+  `run_drc` reports an invalid set as a `drc-rules` error, then checks with the
+  defaults so the rest of the report stays useful.
 - `track-outside-board` and `via-outside-board` are disabled when the outline
   has fewer than three points, so an unnamed or empty board does not report
   every object as outside.
 - An empty stackup means layer order is unknown, not that no layer is valid: a
   via only needs two distinct, existing copper layers. With a non-empty
   stackup, a via must span the first to the last copper layer in stackup order.
-- `track-width` reports `<= 0` as an error and widths below
-  `DrcRules::min_track_width` as a warning. `via-drill` reports a
-  non-positive or oversized drill as an error and a thin annular ring as a
-  warning.
+- `track-width` reports a non-finite or `<= 0` width as an error and widths
+  below `DrcRules::min_track_width` as a warning. `via-drill` reports a
+  non-finite or non-positive drill or diameter, a drill that is not smaller
+  than its diameter, or a drill below `DrcRules::min_via_drill` as an error;
+  a ring below `DrcRules::min_annular_ring` is only a warning. The ring limit
+  is independent of `min_track_width`.
 - Non-finite coordinates are reported by `track-path`; the distance helpers
   return `f64::INFINITY` for them, and clearance ignores non-finite distances
-  rather than calling them clear.
+  or widths rather than calling them clear.
 
 If the report changes between identical runs, look for code that consumes
 `HashMap` iteration order or track insertion order instead of the sorted

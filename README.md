@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (162 tests across the workspace)
+# Run tests (171 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -151,11 +151,12 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–6 are complete and verified: **162 tests pass**, `cargo clippy
+Weeks 1–6 are complete and verified: **171 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
 clean, and the release build succeeds. Week 6 added shared point/segment
 distance primitives, track width and via diameter/drill dimensions with serde
-defaults, and a deterministic eight-rule design-rule check.
+defaults, and a deterministic design-rule check whose limits are stored on the
+design, validated before use, and enforced with dedicated via limits.
 
 The next milestone is **Week 7 — deterministic single-layer routing**: a
 configurable grid router that avoids existing copper and the board edge, with
@@ -178,7 +179,8 @@ What each crate provides today:
 - 🚧 **pcb** — `PcbDesign` built on `core` types, board-outline geometry,
   `LayerStack` with validation, `FootprintLibrary` JSON persistence
   (`to_json`, `from_json`, `save`, `load`), track width and via dimensions,
-  a deterministic eight-rule DRC (`run_drc`), `Router` configuration and
+  a deterministic nine-rule DRC (`run_drc`) with validated, per-design limits,
+  `Router` configuration and
   `Footprint`/`OutlineShape` types. No routing algorithm yet.
 - 🚧 **renderer** — `RendererConfig` and `WindowConfig` only. `Renderer::new`
   and `Renderer::render` return `NotImplemented`; no Vulkan objects are created.

@@ -70,8 +70,9 @@ toolchain configuration, shared data model, SQLite engineering database, named
 symbol libraries, KiCad `.kicad_sym` import, the basic schematic engine
 (netlist generation and export, graph traversal, ERC), the PCB core (outline
 geometry, layer validation, footprint libraries) and PCB geometry/DRC (distance
-primitives, track and via dimensions, eight deterministic rules) are in place.
-The workspace has **162 passing tests**, clean `cargo clippy --workspace
+primitives, track and via dimensions, eight geometry rules plus validated,
+persisted limit checking) are in place. The workspace has **171 passing
+tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 7 brief.

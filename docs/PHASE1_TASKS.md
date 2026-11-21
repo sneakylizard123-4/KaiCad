@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 162 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 171 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -186,7 +186,9 @@ KiCad netlist export, graph traversal helpers, two ERC rules and 16 new tests,
 bringing the total from 110 to 126. Week 5 began Phase 2 with board-outline
 geometry, layer-stack validation and JSON footprint libraries, adding 18 tests.
 Week 6 added distance primitives, track/via dimensions and an eight-rule DRC,
-adding another 18 tests for a total of **162 passing tests**. `cargo check`,
+adding another 18 tests. A follow-up limit-hardening pass added validated and
+persisted rules, dedicated via limits and a same-net clearance exemption, with
+9 more tests, for a total of **171 passing tests**. `cargo check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
 --check`, `cargo doc --workspace --no-deps`,
 `python3 scripts/check_markdown_links.py` and `cargo build --workspace

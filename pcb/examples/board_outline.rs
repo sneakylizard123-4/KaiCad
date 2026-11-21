@@ -22,7 +22,7 @@ fn main() {
 
     let stack = pcb::LayerStack::new(design.layers.clone());
     let issues = stack.validate(&design.stackup);
-    let drc = pcb::run_drc(&design, &pcb::DrcRules::default());
+    let drc = pcb::run_drc(&design, &design.rules);
 
     println!("KaiCad board outline example (pre-alpha)");
     println!("  outline points:      {}", design.outline.points.len());

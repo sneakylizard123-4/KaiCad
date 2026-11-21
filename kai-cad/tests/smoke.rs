@@ -175,13 +175,13 @@ fn drc_accepts_a_clean_board_and_flags_a_track_outside_it() {
         ..pcb::PcbDesign::default()
     };
 
-    let report = pcb::run_drc(&design, &pcb::DrcRules::default());
+    let report = pcb::run_drc(&design, &design.rules);
     assert!(report.is_valid());
     assert!(report.violations.is_empty());
 
     let mut outside = design;
     outside.tracks[0].path = vec![core::Point::new(5.0, 5.0), core::Point::new(80.0, 5.0)];
-    let report = pcb::run_drc(&outside, &pcb::DrcRules::default());
+    let report = pcb::run_drc(&outside, &outside.rules);
 
     assert!(!report.is_valid());
     assert_eq!(report.count(pcb::DrcSeverity::Error), 1);

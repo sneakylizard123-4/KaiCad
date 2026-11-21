@@ -26,8 +26,10 @@ single-layer routing — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
   validation before it is applied.
 - **Deterministic operations.** Do not introduce unseeded randomness into
   geometry, netlisting, routing or rule checks. DRC violations are sorted by
-  `(rule_id, objects)`, each unordered track pair is checked once, and rule
-  results must not depend on track-vector order or `HashMap` iteration.
+  `(rule_id, objects)`, each unordered track pair on different nets is checked
+  once, and rule results must not depend on track-vector order or `HashMap`
+  iteration. Limits live on the design, are validated before use, and same-net
+  copper is exempt from clearance because it is an intentional connection.
 - **No silent data loss.** Report or preserve data you cannot represent.
 - **Never edit an applied migration.** Migrations live in
   `store/migrations/<version>_<name>.sql` and are embedded with `include_str!`.

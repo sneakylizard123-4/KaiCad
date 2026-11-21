@@ -198,7 +198,7 @@ fn check_pcb() -> Result<(), String> {
         },
     ];
 
-    let dirty = pcb::run_drc(&design, &pcb::DrcRules::default());
+    let dirty = pcb::run_drc(&design, &design.rules);
     ensure(!dirty.is_valid(), "pcb: DRC accepted tracks that violate the clearance")?;
     ensure(
         dirty.violations.iter().any(|violation| violation.rule_id == "clearance"),
@@ -206,7 +206,7 @@ fn check_pcb() -> Result<(), String> {
     )?;
 
     design.tracks[1].path = vec![core::Point::new(10.0, 20.0), core::Point::new(90.0, 20.0)];
-    let clean = pcb::run_drc(&design, &pcb::DrcRules::default());
+    let clean = pcb::run_drc(&design, &design.rules);
     ensure(clean.is_valid(), "pcb: DRC rejected a clean board")?;
     ensure(clean.violations.is_empty(), "pcb: DRC reported a violation on a clean board")?;
 

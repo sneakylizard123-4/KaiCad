@@ -54,9 +54,10 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 ### Week 6 — PCB geometry and DRC
 - Shared `Point::distance_to_segment` and `core::geometry::segment_distance`; non-finite input yields infinity
 - `Track::width` (0.25 mm) and `Via::{diameter, drill}` (0.6/0.3 mm) with serde defaults for older documents
-- `pcb::drc` with `DrcRules`, `DrcSeverity`, `DrcViolation`, `DrcReport` and eight rules: `track-width`, `track-layer`, `clearance`, `track-outside-board`, `via-outside-board`, `via-span`, `via-drill`, `track-path`
+- `pcb::drc` with `DrcRules`, `DrcSeverity`, `DrcViolation`, `DrcReport` and eight geometry rules plus `drc-rules` limit validation: `track-width`, `track-layer`, `clearance`, `track-outside-board`, `via-outside-board`, `via-span`, `via-drill`, `track-path`
+- DRC limits are persisted on `PcbDesign::rules`, validated before use, and cover a dedicated annular-ring limit, a minimum via drill and a same-net clearance exemption
 - DRC wired into the `kai-cad` self-check and cross-crate smoke tests
-- Documentation updated; total tests: 162
+- Documentation updated; total tests: 171
 
 ## 🚧 Next — Week 7: Deterministic routing
 
@@ -66,7 +67,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Deterministic A* single-layer router that avoids existing copper and the board edge
 - [ ] Validate routes with `run_drc` and wire them into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥178 tests, clippy/fmt/doc/link clean
+- [ ] Target: ≥187 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
