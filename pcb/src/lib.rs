@@ -4,6 +4,9 @@ pub mod footprint;
 pub mod layer;
 pub mod routing;
 
+pub use footprint::{Footprint, FootprintLibrary, FootprintLibraryError, PadPosition, PadType};
+pub use layer::{LayerIssue, LayerIssueKind, LayerStack};
+
 /// A complete PCB design.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PcbDesign {

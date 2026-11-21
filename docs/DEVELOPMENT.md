@@ -6,10 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–4 are complete (126 tests, clippy/fmt/doc/release
-> all clean). Week 5 — PCB core: outline geometry, layer stack and footprint
-> libraries — is next; its work order is in
-> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–5 are complete (144 tests, clippy/fmt/doc/release
+> all clean). Week 6 — PCB geometry and design-rule checking — is next; its
+> work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -114,25 +113,27 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Build a release binary | `cargo build --workspace --release` |
 | Run the store CRUD example | `cargo run -p store --example project_crud` |
 | Parse a KiCad symbol library | `cargo run -p kicad-parser --example parse_library` |
+| Check relative Markdown links | `python3 scripts/check_markdown_links.py` |
+| Measure test coverage locally (after `cargo install cargo-llvm-cov`) | `cargo llvm-cov --workspace --all-targets --summary-only` |
 
 Note that `--all-targets` is required to lint/check tests, examples and
 benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **126 tests**, all passing:
+`cargo test --workspace` currently runs **144 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 7 |
 | `collab` (`src/lib.rs`) | 9 |
-| `core` (`src/tests.rs` and inline modules) | 19 |
+| `core` (`src/tests.rs` and inline modules) | 26 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
-| `pcb` (`src/lib.rs` and modules) | 13 |
+| `pcb` (`src/lib.rs` and modules) | 23 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 19 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 9 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 10 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -156,7 +157,7 @@ License: GPL-3.0-or-later
 subsystem self-check:
   core: project JSON round trip ok (… bytes)
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
-  pcb: outline 4 points, 1 layer(s), 1 copper layer(s)
+  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s)
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always
   collab: 1 session(s)
@@ -220,17 +221,24 @@ browser after a run.
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request targeting
-`main`. It is a single `Check` job on `ubuntu-latest`:
+`main`. It has a `Check` job and a `Coverage` job, both on `ubuntu-latest`.
+
+The `Check` job runs:
 
 1. `actions/checkout@v4`
 2. `dtolnay/rust-toolchain@stable` with `rustfmt, clippy`
 3. `Swatinem/rust-cache@v2`
 4. `cargo fmt --all -- --check`
-5. `cargo check --workspace --all-targets`
-6. `cargo clippy --workspace --all-targets -- -D warnings`
-7. `cargo doc --workspace --no-deps` ("Build docs")
-8. `cargo test --workspace`
-9. `cargo build --workspace --release`
+5. `python3 scripts/check_markdown_links.py` ("Check Markdown links")
+6. `cargo check --workspace --all-targets`
+7. `cargo clippy --workspace --all-targets -- -D warnings`
+8. `cargo doc --workspace --no-deps` ("Build docs")
+9. `cargo test --workspace`
+10. `cargo build --workspace --release`
+
+The `Coverage` job installs `llvm-tools-preview` and `cargo-llvm-cov`, runs
+`cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info`,
+prints the summary and uploads `lcov.info` as a `coverage-lcov` artifact.
 
 `CARGO_TERM_COLOR` is set to `always` for readable logs. `-D warnings` is
 passed to Clippy only, not through a global `RUSTFLAGS`, because global flags
@@ -239,10 +247,11 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–4 are finished; Week 5 begins the PCB core with board-outline
-geometry, layer-stack rules and footprint library loading. Before starting,
-read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
-requirements, acceptance criteria and verification commands. The existing JSON persistence in `core::serialization` must keep
+Weeks 1–5 are finished; Week 6 adds shared distance primitives, track and pad
+dimensions, and deterministic design-rule checking. Before starting, read
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
+requirements, acceptance criteria and verification commands. The existing JSON
+persistence in `core::serialization` and the footprint-library format must keep
 working while new persistence layers are added.
 
 When a milestone changes the crate graph, commands or task status, update
@@ -333,6 +342,24 @@ Known limits:
 
 If the output changes between runs, check that no upstream code reintroduced
 `HashMap` iteration order into symbol or net collections.
+
+### Footprint libraries behave unexpectedly
+
+Footprint libraries are KaiCad's own JSON, not KiCad `.kicad_mod` files.
+Known limits:
+
+- `FootprintLibrary::from_json` rejects duplicate footprint names with
+  `FootprintLibraryError::Duplicate` rather than keeping the first or last
+  copy. Rename the footprint or remove the duplicate.
+- `to_json` and `save` always write two-space indentation and one trailing
+  newline, so a saved file is byte-stable. Do not hand-edit it into compact
+  JSON and expect `save` to preserve the layout.
+- `save` creates missing parent directories; `load` reads the file as UTF-8
+  and reports I/O and JSON errors through `FootprintLibraryError`.
+- `sorted` orders by `(name, reference_designator)` for display only; the
+  library keeps insertion order, so `to_json` output follows the vector.
+- Pad outlines are outlines, not copper shapes: DRC geometry does not exist
+  yet.
 
 ### Build is slow the first time
 

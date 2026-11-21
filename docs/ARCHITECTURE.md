@@ -6,8 +6,8 @@
 > read this as a description of working EDA functionality.
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
-> 3 (symbol libraries and KiCad `.kicad_sym` import) and 4 (schematic engine)
-> are complete. The workspace has 126 passing tests.
+> 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine) and
+> 5 (PCB core) are complete. The workspace has 144 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -96,7 +96,7 @@ network access or external services (`PRD.md` §1.2, §1.3).
 | `component` | `Component`, `ComponentProperty` | Instance linking a symbol to a footprint |
 | `geometry` | `Point` | 2D point in millimetres with `distance_to` |
 | `net` | `Net`, `NetClass` | Named connectivity and design-rule class |
-| `pcb` | `PcbOutline`, `PcbLayer`, `LayerKind`, `Stackup` | Board outline, layers and layer order |
+| `pcb` | `PcbOutline`, `BoundingBox`, `PcbLayer`, `LayerKind`, `Stackup` | Board outline with area/perimeter/contains-point/bounds, layers and layer order |
 | `project` | `Project`, `SchematicData`, `PcbData`, `ProjectMetadata` | Root document and its sections |
 | `proposal` | `ChangeProposal` | Field-level change shared by `ai` and `collab` |
 | `serialization` | `Error`, `Result`, `to_json`, `to_json_pretty`, `from_json`, `save`, `load` | JSON encoding and file persistence |
@@ -176,20 +176,29 @@ Dependencies: `core`, `serde`, `uuid`. Modules:
 
 ### `pcb` — PCB engine
 
-Dependencies: `core`, `serde`, `uuid`. Modules:
+Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
 
 - `footprint` — `Footprint`, `PadPosition`, `PadType`, `Outline`,
-  `OutlineShape::{Rectangle, RoundedRectangle}`.
+  `OutlineShape::{Rectangle, RoundedRectangle}`, plus `FootprintLibrary`
+  (`sorted`, `find`, `to_json`, `from_json`, `save`, `load`) and
+  `FootprintLibraryError`. Libraries are KaiCad's own JSON with two-space
+  indentation and one trailing newline; duplicate names are rejected on load.
+  A KiCad `.kicad_mod` parser does not exist.
 - `layer` — `LayerStack` (`new`, `push`, `len`, `is_empty`, `copper_layers`,
-  `find`) over `core::PcbLayer`.
+  `find`) over `core::PcbLayer`, plus `validate(&Stackup)` and
+  `copper_layers_in_stackup(&Stackup)`. Validation reports `LayerIssue`s of
+  kind `DuplicateId`, `DuplicateName`, `EmptyName`, `MissingFromStackup` and
+  `NonCopperInStackup`, sorted by `(layer_id, kind)`.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
   Hybrid}`, `RoutingOptimization`.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
   `tracks`, `vias`) built on `core::PcbOutline`/`core::PcbLayer`/
   `core::Stackup`/`core::Point`, plus `Track` and `Via`.
 
-`PcbDesign::copper_layer_count` is implemented and honours the stackup. No
-routing algorithm or board geometry computation exists yet.
+`PcbDesign::copper_layer_count` is implemented and honours the stackup.
+Outline geometry lives on `core::PcbOutline`: `signed_area`, `area`,
+`perimeter`, `contains_point` (even-odd ray casting with boundary-inclusive
+edges) and `bounding_box`. No routing algorithm or DRC exists yet.
 
 ### `renderer` — Vulkan rendering engine
 
@@ -290,7 +299,8 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
 Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, and with no arguments runs a deterministic self-check:
 it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
-builds a PCB design, reads the default renderer, AI and collaboration configuration,
+builds a PCB design (outline measurements, layer validation and a footprint
+library round trip), reads the default renderer, AI and collaboration configuration,
 exercises the SQLite store with an in-memory database, and parses a hermetic
 `.kicad_sym` fixture with `kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
@@ -417,20 +427,22 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–4, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–5, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v3) with migrations plus project and symbol-library
 CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
 (`kicad-parser`), deterministic netlist generation and KiCad export, graph
-traversal, five-rule ERC, PCB data types and layer stack helper,
-renderer/AI/collab configuration types, `kai-cad` self-check binary, CI, and
+traversal, five-rule ERC, board-outline geometry, layer-stack validation,
+JSON footprint libraries, renderer/AI/collab configuration types, `kai-cad`
+self-check binary, CI (including a Markdown link check and coverage job), and
 documentation.
 
-**Next (Week 5):** PCB core foundation. The planned work is:
+**Next (Week 6):** PCB geometry and design-rule checking. The planned work is:
 
-1. Deterministic board-outline geometry: area, contains-point and bounding box.
-2. Layer-stack validation and query helpers.
-3. Footprint library model and loading.
+1. Shared point-to-segment and segment-to-segment distance primitives.
+2. Track widths and pad dimensions on the PCB data model.
+3. A deterministic DRC report covering track width, clearance, vias and board
+   containment.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

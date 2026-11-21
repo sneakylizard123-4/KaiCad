@@ -1,10 +1,10 @@
-# Next Agent Prompt — Week 5: PCB Core Foundation
+# Next Agent Prompt — Week 6: PCB Geometry and DRC
 
-You are continuing **KaiCad**, a pre-alpha EDA application written in Rust, at
-`/home/sneak/vscode/KaiCad`. Week 4 is finished and verified. Your job is
-**Week 5 of Phase 1: the PCB core foundation** — deterministic board-outline
-geometry, layer-stack validation and footprint library loading — without
-breaking anything that already works.
+You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
+`/home/sneak/vscode/KaiCad`. Week 5 is finished and verified. Your job is
+**Week 6 of Phase 2: deterministic PCB geometry and design-rule checking** —
+shared distance primitives, track and via dimensions, and a DRC report — while
+keeping every existing API working.
 
 This document is self-contained. Read it fully before writing code.
 
@@ -14,8 +14,7 @@ This document is self-contained. Read it fully before writing code.
 
 - **Branch:** `main`
 - **Repository tip:** see `git log -1`
-- **Working tree:** clean at the time this brief was written
-- **Tests:** 126 passing, 0 failing
+- **Tests:** 144 passing, 0 failing
 - **Schema:** version 3 (`projects`, projection tables, `symbol_libraries`)
 - **Toolchain:** `stable` channel; edition 2024; MSRV/`rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -26,7 +25,7 @@ This document is self-contained. Read it fully before writing code.
 |-------|------|------------------------|
 | `core` | Shared data model, JSON serialization, symbol libraries, PCB primitives | none |
 | `schematic` | Netlist generation/export, connectivity graph, ERC | `core` |
-| `pcb` | Board data, layers, footprints, routing config | `core` |
+| `pcb` | Board data, outline geometry, layers, footprints, routing config | `core` |
 | `renderer` | Vulkan configuration types (`ash`) | none |
 | `ai` | kAI suggestions + deterministic validation | `core`, `schematic` |
 | `collab` | Sessions, versioning, sharing | `core` |
@@ -34,27 +33,30 @@ This document is self-contained. Read it fully before writing code.
 | `kicad-parser` | `.kicad_sym` import, deterministic S-expressions | `core` |
 | `kai-cad` | Application binary + cross-crate smoke tests | all of the above |
 
-### Existing PCB support
+### Existing PCB support (built in Week 5)
 
-- `core::pcb::{PcbOutline, PcbLayer, LayerKind, Stackup}` and `core::Point`.
-  `PcbOutline::{new, rectangle, is_closed}` exist; `is_closed` checks for a
-  non-zero shoelace area.
-- `pcb::PcbDesign { outline, layers, stackup, footprints, tracks, vias }` with
-  `copper_layer_count`.
-- `pcb::layer::LayerStack` with `new`, `push`, `len`, `is_empty`,
-  `copper_layers` and `find`.
-- `pcb::footprint::{Footprint, PadPosition, PadType, Outline, OutlineShape}`
-  as data types only; there is no library container and no loader.
-- `pcb::routing::{Router, RoutingAlgorithm, RoutingOptimization}` as
-  configuration types only.
+- `core::Point` with `new` and `distance_to`; `core::BoundingBox { min, max }`.
+- `core::PcbOutline` with `new`, `rectangle`, `is_closed`, `signed_area`,
+  `area`, `perimeter`, `contains_point` (boundary inclusive, even-odd ray
+  casting) and `bounding_box`.
+- `pcb::LayerStack` with `new`, `push`, `len`, `is_empty`, `copper_layers`,
+  `find`, `validate(&Stackup)` and `copper_layers_in_stackup(&Stackup)`;
+  `LayerIssue`/`LayerIssueKind` for `DuplicateId`, `DuplicateName`,
+  `EmptyName`, `MissingFromStackup` and `NonCopperInStackup`.
+- `pcb::FootprintLibrary` with `sorted`, `find`, `to_json`, `from_json`,
+  `save`, `load` and `FootprintLibraryError`; libraries are KaiCad JSON.
+- `pcb::PcbDesign { id, outline, layers, stackup, footprints, tracks, vias }`;
+  `pcb::Track { id, net_id, layer, path: Vec<core::Point> }`;
+  `pcb::Via { id, position, layer_start, layer_end }`.
 
-What is missing for Week 5:
+What is missing for Week 6:
 
-- No outline measurements (`area`, point containment, bounding box).
-- No layer-stack validation: duplicate ids/names, empty names, stackup ids
-  that do not exist, and non-copper entries in a copper stackup all pass.
-- No footprint library: footprints are bare structs with no named collection,
-  no persistence and no deterministic loading.
+- No distance from a point to a line segment, so clearance checks cannot be
+  written yet.
+- Tracks have no width and vias have no diameter or drill, so width and
+  annular-ring rules have nothing to measure.
+- No DRC: nothing checks track layers, clearances, board containment or via
+  spans.
 
 ---
 
@@ -73,178 +75,201 @@ These come from `PRD.md` and are enforced in review:
 5. **AI output is untrusted.** Do not weaken `ai::SuggestionValidator`.
 6. **Zero warnings.** `cargo clippy --workspace --all-targets -- -D warnings`
    and `cargo fmt --all -- --check` must pass.
-7. **`core` stays dependency-light.** Do not add `rusqlite` or `serde_json`
-   to `core`; it already has `serde`, `serde_json`, `uuid` and `chrono`.
-8. **No breaking changes** to existing public APIs. Additions are fine.
+7. **`core` stays dependency-light.** It already has `serde`, `serde_json`,
+   `uuid` and `chrono`; add nothing new.
+8. **No breaking changes** to existing public APIs. Adding fields with serde
+   defaults and new methods is fine; renaming or removing is not.
 9. **Update the docs** listed in §7 in the same change.
+10. **Do not commit.** Leave the changes in the working tree and report what
+    changed; the repository owner commits.
 
 ---
 
 ## 3. Deliverable
 
-### 3.1 Board-outline geometry
+### 3.1 Shared distance primitives
 
-Add to `core::pcb::PcbOutline` (re-export anything new from `core::lib.rs`):
+Add to `core::geometry` (keep `Point` and `distance_to` unchanged):
 
 ```rust
-/// Axis-aligned bounding box in millimetres.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BoundingBox {
-    pub min: Point,
-    pub max: Point,
+impl Point {
+    /// Shortest distance from this point to the segment `start`–`end`.
+    pub fn distance_to_segment(&self, start: &Point, end: &Point) -> f64;
 }
 
-impl PcbOutline {
-    /// Signed shoelace area in mm², positive for counter-clockwise corners.
-    pub fn signed_area(&self) -> f64;
-    /// Absolute enclosed area in mm²; zero for degenerate outlines.
-    pub fn area(&self) -> f64;
-    /// Whether `point` lies inside or on the outline (even-odd ray casting).
-    pub fn contains_point(&self, point: &Point) -> bool;
-    /// Bounding box of the corner points, or `None` for an empty outline.
-    pub fn bounding_box(&self) -> Option<BoundingBox>;
-    /// Total length of the implicit closed perimeter in millimetres.
-    pub fn perimeter(&self) -> f64;
-}
+/// Shortest distance between two line segments.
+pub fn segment_distance(
+    first_start: &Point,
+    first_end: &Point,
+    second_start: &Point,
+    second_end: &Point,
+) -> f64;
 ```
 
 Rules:
 
-- Areas are in square millimetres and lengths in millimetres; no unit
-  conversion.
-- `contains_point` treats the boundary as inside, works for concave polygons
-  and for points exactly on horizontal edges, and returns `false` for fewer
-  than three points. Do not panic for NaN input; return `false`.
-- `area` is the absolute value of `signed_area`, so clockwise and
-  counter-clockwise outlines report the same area.
-- `bounding_box` returns the minimum and maximum corner coordinates; a single
-  point is a zero-size box, not `None`.
-- `perimeter` includes the closing edge from the last point to the first.
-- Do not allocate or sort inside these methods; they must be `O(n)` and
-  deterministic.
+- A zero-length segment is a point: `distance_to_segment(p, p, p) ==
+  p.distance_to(p)` and `segment_distance` degenerates accordingly.
+- The result is symmetric: `segment_distance(a, b, c, d) ==
+  segment_distance(c, d, a, b)`.
+- Crossing segments return `0.0`; touching endpoints return `0.0`.
+- Any non-finite coordinate returns `f64::INFINITY` (document it). Callers must
+  not treat that as "far away and therefore fine" without checking.
+- Implement projection clamping with `f64::clamp`; do not allocate.
 
-### 3.2 Layer-stack validation
+### 3.2 Track and via dimensions
 
-Extend `pcb::layer::LayerStack` (keep every existing method):
+Extend the PCB data model. Defaults keep existing documents loadable:
 
 ```rust
-/// A problem found in a layer stack.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct LayerIssue {
-    pub layer_id: u16,
-    pub kind: LayerIssueKind,
-    pub description: String,
+pub struct Track {
+    pub id: uuid::Uuid,
+    pub net_id: uuid::Uuid,
+    pub layer: u16,
+    /// Copper width in millimetres.
+    #[serde(default = "default_track_width")]
+    pub width: f64,
+    pub path: Vec<core::Point>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum LayerIssueKind {
-    DuplicateId,
-    DuplicateName,
-    EmptyName,
-    MissingFromStackup,
-    NonCopperInStackup,
-}
-
-impl LayerStack {
-    /// Validate the stack and its optional `stackup` ordering.
-    /// Returns issues sorted by `(layer_id, kind)`.
-    pub fn validate(&self, stackup: &core::Stackup) -> Vec<LayerIssue>;
-    /// Copper layers in stackup order, or in stack order when the stackup is empty.
-    pub fn copper_layers_in_stackup(&self, stackup: &core::Stackup) -> Vec<&core::PcbLayer>;
+pub struct Via {
+    pub id: uuid::Uuid,
+    pub position: core::Point,
+    pub layer_start: u16,
+    pub layer_end: u16,
+    /// Outer copper diameter in millimetres.
+    #[serde(default = "default_via_diameter")]
+    pub diameter: f64,
+    /// Finished drill diameter in millimetres.
+    #[serde(default = "default_via_drill")]
+    pub drill: f64,
 }
 ```
 
-Rules:
+- Defaults: track width `0.25`, via diameter `0.6`, via drill `0.3`.
+- `Track` and `Via` must keep working with `..Default::default()`; update any
+  struct literal in the workspace that now needs the new fields.
+- Defaults must round trip through `serde_json` for documents written before
+  this change (test the missing-field case explicitly).
 
-- One issue per offending layer and kind. Report each duplicated id against
-  every layer that carries it, matching the existing ERC convention of naming
-  the offender rather than hiding it.
-- `DuplicateName` ignores empty names; `EmptyName` covers those instead.
-- When `stackup.layers` is non-empty, a stackup id with no layer is a
-  `MissingFromStackup` issue with that id; a stackup id that resolves to a
-  non-copper layer is a `NonCopperInStackup` issue against that layer.
-- Need a stable `Ord` on `(layer_id, LayerIssueKind)`: derive `PartialOrd`/`Ord`
-  on the enum (declaration order is the tie-break).
-- Deterministic: sort the final vector; never iterate a `HashMap`.
+### 3.3 Design-rule checking
 
-### 3.3 Footprint library
-
-Add `pcb::footprint::FootprintLibrary`:
+Add `pcb::drc`:
 
 ```rust
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct FootprintLibrary {
-    pub name: String,
-    pub footprints: Vec<Footprint>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrcRules {
+    /// Minimum acceptable copper width in millimetres.
+    pub min_track_width: f64,
+    /// Minimum copper-to-copper gap in millimetres.
+    pub clearance: f64,
 }
 
-impl FootprintLibrary {
-    /// Footprints sorted by `(name, reference_designator)`.
-    pub fn sorted(&self) -> Vec<&Footprint>;
-    /// Look up a footprint by exact name.
-    pub fn find(&self, name: &str) -> Option<&Footprint>;
-    /// Serialize as pretty JSON with a single trailing newline.
-    pub fn to_json(&self) -> Result<String, FootprintLibraryError>;
-    /// Parse a library document; rejects duplicate footprint names.
-    pub fn from_json(json: &str) -> Result<Self, FootprintLibraryError>;
-    /// Write the library to `path`, creating parent directories.
-    pub fn save(&self, path: impl AsRef<std::path::Path>) -> Result<(), FootprintLibraryError>;
-    /// Load a library from `path`.
-    pub fn load(path: impl AsRef<std::path::Path>) -> Result<Self, FootprintLibraryError>;
+impl Default for DrcRules {
+    // min_track_width: 0.15, clearance: 0.2
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DrcSeverity { Warning, Error }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrcViolation {
+    pub rule_id: String,
+    pub severity: DrcSeverity,
+    pub message: String,
+    /// Ids of the objects involved (tracks, vias), in a deterministic order.
+    pub objects: Vec<uuid::Uuid>,
+    /// Board location most representative of the problem, when there is one.
+    pub location: Option<core::Point>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DrcReport {
+    pub violations: Vec<DrcViolation>,
+}
+
+impl DrcReport {
+    /// True when there are no `Error` violations.
+    pub fn is_valid(&self) -> bool;
+    /// Count of violations with the given severity.
+    pub fn count(&self, severity: DrcSeverity) -> usize;
+}
+
+/// Run every built-in rule on `design`.
+pub fn run_drc(design: &pcb::PcbDesign, rules: &DrcRules) -> DrcReport;
 ```
+
+Built-in rules (all deterministic; one violation per offending object or pair):
+
+| Rule id | Severity | Trigger |
+|---------|----------|---------|
+| `track-width` | Error if `<= 0`, Warning below `min_track_width` | Track width |
+| `track-layer` | Error | Track layer is missing from `design.layers` or is not copper |
+| `clearance` | Error | Two tracks on the same copper layer are closer than `rules.clearance`, measured edge to edge (`segment_distance - w1/2 - w2/2`) |
+| `track-outside-board` | Error | Any track path point is outside the outline (skip when the outline has fewer than three points) |
+| `via-outside-board` | Error | A via centre is outside the outline (same skip rule) |
+| `via-span` | Error | `layer_start == layer_end`, the span is not top-to-bottom in stackup order, or either layer is missing/non-copper |
+| `via-drill` | Error if `drill <= 0` or `drill >= diameter`, Warning if the annular ring `(diameter - drill) / 2` is below `min_track_width / 2` | Via drill and annular ring |
+| `track-path` | Error | A track has fewer than two points, or a non-finite coordinate |
 
 Rules:
 
-- Footprint library documents are **KaiCad's own JSON**, not KiCad `.kicad_mod`
-  files. A KiCad footprint parser is explicitly out of scope.
-- `to_json` uses two-space indentation, `\n` line endings and exactly one
-  trailing newline so documents are byte-stable across runs.
-- `from_json` must return an error, not silently drop a duplicate name, and
-  must not panic on malformed input.
-- `FootprintLibraryError` implements `Display` and `std::error::Error` and
-  distinguishes JSON, I/O and `Duplicate` failures.
-- `save` writes deterministically (serialize the same struct), and `load`
-  round trips a saved library unchanged.
-- `pcb` may gain `serde_json` as a dependency; do not add it to `core`.
+- Clearance is checked between every unordered pair on the same layer
+  (`for left in 0..n { for right in left + 1..n }`) so each pair is reported
+  once. Include each track id once in `objects`, ordered by id string.
+- `track-outside-board` names the track once even when several points are
+  outside; `location` is the first offending point in path order.
+- Violations are sorted by `(rule_id, objects)` and the report is independent
+  of `HashMap` iteration. Do not deduplicate distinct pairs.
+- `is_valid` ignores warnings. `count` is a straight filter count.
+- The report must not mutate the design, allocate per-rule rule ids at run
+  time beyond `String::from`, and must never panic on degenerate input
+  (empty design, single-point tracks, unknown layers).
+- Copper layers are the layers in `design.layers` with `LayerKind::Copper`.
+  The stackup may be empty; treat an empty stackup as "layers not ordered"
+  and only require that the via's two layers exist and are copper, with
+  `layer_start != layer_end`.
 
-### 3.4 Wire the PCB work into the application
+### 3.4 Wire DRC into the application
 
-Extend the `kai-cad` self-check PCB section to:
+Extend the `kai-cad` PCB self-check to:
 
-1. Compute the rectangular outline's area and assert it equals `width * height`.
-2. Assert the outline contains its centre and rejects a point outside it.
-3. Validate a two-layer stack and assert the report is empty.
-4. Build a small `FootprintLibrary`, save it to a unique temp path, load it,
-   assert the footprint count survives, and delete the directory.
+1. Build a 100 × 80 mm board with two copper layers (`F.Cu` id 0, `B.Cu` id 1)
+   and a stackup `[0, 1]`.
+2. Add two parallel tracks on `F.Cu` that violate the default clearance.
+3. Run `run_drc` and assert the report contains a `clearance` error and is
+   therefore invalid.
+4. Widen/move the tracks to a clean configuration and assert the report is
+   valid and empty.
+5. Print the DRC result in the existing `pcb:` line.
 
-Keep the self-check hermetic, deterministic and ending `self-check: ok`.
-
-Add a cross-crate smoke test in `kai-cad/tests/smoke.rs` that builds a
-footprint library, round trips it through JSON and asserts the footprint and
-pad data survive.
+Add a cross-crate smoke test in `kai-cad/tests/smoke.rs` that builds a clean
+board (one track, one via inside the outline) and asserts `run_drc` is valid,
+then moves the track outside the outline and asserts `track-outside-board`.
 
 ### 3.5 Tests (target: 14–18 new tests)
 
 Cover at least:
 
-1. Rectangle area and perimeter (9×5 → 45 mm², 28 mm).
-2. Clockwise and counter-clockwise outlines report the same absolute area, and
-   signed areas have opposite signs.
-3. `contains_point` handles inside, outside, boundary and concave polygons.
-4. `contains_point` returns `false` for degenerate outlines and NaN input.
-5. `bounding_box` of a rectangle, of a single point, and `None` when empty.
-6. `perimeter` includes the closing edge.
-7. `validate` accepts a consistent stack.
-8. `validate` reports duplicate ids, duplicate names and empty names, sorted.
-9. `validate` reports stackup ids that are missing or non-copper.
-10. `copper_layers_in_stackup` follows stackup order and falls back to stack order.
-11. `FootprintLibrary::find` and `sorted` behave deterministically.
-12. JSON round trip preserves footprints, pads and outlines.
-13. `from_json` rejects duplicate names and malformed input without panicking.
-14. `save`/`load` round trip through a temp directory.
-15. Empty library serializes and round trips.
-16. kai-cad smoke test covers the footprint-library round trip.
+1. Point-to-segment distance for inside, before-the-start, after-the-end and
+   zero-length segments.
+2. Point-to-segment distance is symmetric for reversed endpoints.
+3. Segment distance for parallel, crossing, touching and disjoint segments.
+4. Segment distance is symmetric and non-finite input yields infinity.
+5. Track and via serde defaults when the fields are absent.
+6. `track-width` for zero, below-minimum and acceptable widths.
+7. `track-layer` for unknown and non-copper layers.
+8. `clearance` for overlapping, close and far-apart tracks on one layer, and
+   for tracks on different layers.
+9. `track-outside-board` including the empty-outline skip.
+10. `via-outside-board` and `via-span` (same layer, reversed span, unknown
+    layer, non-copper layer).
+11. `via-drill` for zero drill, drill larger than diameter and a thin ring.
+12. `track-path` for a one-point track and a NaN coordinate.
+13. Report ordering is deterministic across repeated runs and independent of
+    the track vector order.
+14. `is_valid`, `count` and an empty design.
+15. kai-cad smoke test for clean and outside-board DRC.
 
 ---
 
@@ -252,17 +277,17 @@ Cover at least:
 
 All of the following must be true:
 
-- [ ] `PcbOutline::{signed_area, area, contains_point, bounding_box, perimeter}`
-      exist, are documented and tested.
-- [ ] `LayerStack::{validate, copper_layers_in_stackup}` and the issue types
-      exist and are deterministic.
-- [ ] `FootprintLibrary` with JSON persistence exists and rejects duplicates.
-- [ ] `kai-cad` self-check exercises outline geometry, layer validation and a
-      footprint-library round trip, and still ends `self-check: ok`.
+- [ ] `Point::distance_to_segment` and `core::geometry::segment_distance` exist,
+      are documented and tested.
+- [ ] `Track::width`, `Via::diameter` and `Via::drill` exist with serde defaults
+      that load old documents.
+- [ ] `pcb::drc::{DrcRules, DrcSeverity, DrcViolation, DrcReport, run_drc}` and
+      all eight rules exist with deterministic ordering.
+- [ ] `kai-cad` self-check exercises DRC and still ends `self-check: ok`.
 - [ ] The new smoke test passes.
-- [ ] No public API of any crate was broken.
-- [ ] Test count rises from 126 to at least 140, all passing.
-- [ ] Clippy, fmt and rustdoc are warning-free.
+- [ ] No public API was broken; old JSON documents still load.
+- [ ] Test count rises from 144 to at least 158, all passing.
+- [ ] Clippy, fmt, rustdoc and Markdown links are clean.
 - [ ] Documentation updated (§7).
 
 ---
@@ -278,6 +303,7 @@ cargo check --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
 cargo test --workspace
+python3 scripts/check_markdown_links.py
 cargo run -p kicad-parser --example parse_library
 cargo run -p store --example project_crud
 cargo run -p pcb --example board_outline
@@ -289,14 +315,14 @@ cargo build --workspace --release
 
 ## 6. Suggested implementation order
 
-1. Add the outline geometry methods and their tests; property-check areas and
-   containment against hand-computed fixtures.
-2. Add `LayerIssue`, validation and `copper_layers_in_stackup` with tests.
-3. Add `FootprintLibrary` and its JSON/file round trips with tests.
-4. Wire everything into `kai-cad` and add the smoke test.
+1. Add the distance primitives and their tests, checking hand-computed cases
+   (3-4-5 triangles, unit squares, parallel offsets).
+2. Add the track/via fields and serde-default tests; fix any constructors.
+3. Add `pcb::drc` one rule at a time, with a test per rule; finish with the
+   ordering and empty-input tests.
+4. Wire DRC into `kai-cad` and add the smoke test.
 5. Run the full verification suite; fix warnings before moving on.
-6. Update documentation and commit with a Conventional Commit message such as
-   `feat(pcb): add board outline geometry and footprint libraries`.
+6. Update documentation and leave the changes uncommitted.
 
 ---
 
@@ -304,20 +330,17 @@ cargo build --workspace --release
 
 Update these files so they describe the new reality:
 
-- `README.md` — status, test count, PCB crate features, examples, roadmap.
-- `docs/PLAN.md` — mark Week 5 complete in the progress table; point to the
-  next brief.
-- `docs/PHASE1_TASKS.md` — record Phase 1 as complete and note where Week 5
-  sits relative to the Phase 2 breakdown.
-- `docs/ARCHITECTURE.md` — document outline geometry, layer validation, the
-  footprint library and the "Current milestone and next steps" section.
-- `docs/DEVELOPMENT.md` — new test count and footprint-library troubleshooting
-  notes.
-- `docs/CONTRIBUTING.md` — note that footprint libraries are KaiCad JSON and
-  that KiCad `.kicad_mod` support is import work, not the internal format.
-- `docs/NEXT_AGENT_PROMPT.md` — replace this brief with the Week 6 (PCB layout
-  and routing) one once Week 5 is verified.
-- `TODO.md` — mark Week 5 done and list Week 6.
+- `README.md` — status, test count, PCB features, roadmap.
+- `docs/PLAN.md` — mark Week 6 complete and point to the next brief.
+- `docs/PHASE1_TASKS.md` — update the status note (Phase 1 remains closed).
+- `docs/ARCHITECTURE.md` — distance primitives, PCB dimensions, the DRC module
+  and rule table, and the "Current milestone and next steps" section.
+- `docs/DEVELOPMENT.md` — new test count and DRC troubleshooting notes.
+- `docs/CONTRIBUTING.md` — note that DRC reports are deterministic and that
+  rules must not depend on iteration order.
+- `docs/NEXT_AGENT_PROMPT.md` — replace this brief with the Week 7 (routing)
+  one once Week 6 is verified.
+- `TODO.md` — mark Week 6 done and list Week 7.
 
 ---
 
@@ -325,11 +348,12 @@ Update these files so they describe the new reality:
 
 Do not start these; they are later milestones:
 
-- KiCad `.kicad_mod` footprint parsing or `.kicad_pcb` writing.
-- Footprint placement on a board, pad-to-net assignment or ratsnest.
-- Routing, push-and-shove, DRC, geometry collision or clearance checks.
+- Routing algorithms, push-and-shove, interactive routing or rip-up/reroute.
+- Pad copper geometry, pad-to-track clearance or footprint placement.
+- Differential pairs, impedance, length matching or thermal analysis.
+- KiCad `.kicad_pcb` import/export.
 - Interactive editing, GUI, windowing or Vulkan object creation.
-- Any change to netlist export or ERC semantics beyond keeping them working.
+- Schema migrations: the DRC report is computed, not stored, this week.
 - Async, networking or collaboration transport.
 
 ---
@@ -338,12 +362,11 @@ Do not start these; they are later milestones:
 
 When finished, report:
 
-1. Files added and changed.
-2. The final public API of the outline geometry, layer validation and footprint
-   library.
+1. Files added and changed (do not commit).
+2. The final public API of the distance helpers, PCB dimensions and DRC.
 3. Test count per crate and total.
 4. Verification output tails for the commands in §5.
 5. Anything you deliberately deferred, with the reason.
 
-Follow the repository's commit conventions. Do not rewrite unrelated code, and
-do not reformat files you did not change.
+Follow the repository's commit conventions when describing the changes, but
+leave the commit itself to the repository owner.

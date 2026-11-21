@@ -151,7 +151,11 @@ fn check_schematic() -> Result<(), String> {
 fn check_pcb() -> Result<(), String> {
     let design = pcb::PcbDesign {
         outline: core::PcbOutline::rectangle(100.0, 80.0),
-        layers: vec![core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper)],
+        layers: vec![
+            core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
+            core::PcbLayer::new(1, "B.Cu", core::LayerKind::Copper),
+        ],
+        stackup: core::Stackup { layers: vec![0, 1] },
         ..pcb::PcbDesign::default()
     };
 
@@ -159,13 +163,56 @@ fn check_pcb() -> Result<(), String> {
         design.outline.points.len() == 4,
         "pcb: rectangular outline should have four corner points",
     )?;
-    ensure(design.copper_layer_count() == 1, "pcb: expected exactly one copper layer")?;
+    ensure(
+        (design.outline.area() - 8_000.0).abs() < 1e-9,
+        "pcb: rectangular outline area is not 8000 mm^2",
+    )?;
+    ensure(
+        design.outline.contains_point(&core::Point::new(50.0, 40.0)),
+        "pcb: outline does not contain its centre",
+    )?;
+    ensure(
+        !design.outline.contains_point(&core::Point::new(150.0, 40.0)),
+        "pcb: outline contains a point outside the board",
+    )?;
+    ensure(design.copper_layer_count() == 2, "pcb: expected exactly two copper layers")?;
+
+    let stack = pcb::LayerStack::new(design.layers.clone());
+    let issues = stack.validate(&design.stackup);
+    ensure(issues.is_empty(), "pcb: layer stack reported unexpected issues")?;
+
+    let library = pcb::FootprintLibrary {
+        name: "self-check".to_string(),
+        footprints: vec![pcb::Footprint {
+            name: "R_0603".to_string(),
+            reference_designator: "R".to_string(),
+            pad_positions: vec![
+                pcb::PadPosition { x: -0.8, y: 0.0, pad_type: pcb::PadType::SurfaceMount },
+                pcb::PadPosition { x: 0.8, y: 0.0, pad_type: pcb::PadType::SurfaceMount },
+            ],
+            outline: pcb::footprint::Outline {
+                shape: pcb::footprint::OutlineShape::rounded_rectangle(-1.6, -0.8, 3.2, 1.6, 0.2),
+                copper: false,
+            },
+        }],
+    };
+
+    let directory = std::env::temp_dir().join(format!("kaicad-self-check-{}", Uuid::new_v4()));
+    let path = directory.join("footprints.json");
+    let round_trip = library.save(&path).and_then(|()| pcb::FootprintLibrary::load(&path));
+    let _ = std::fs::remove_dir_all(&directory);
+    let loaded =
+        round_trip.map_err(|error| format!("pcb: footprint library round trip failed: {error}"))?;
+    ensure(loaded.footprints.len() == 1, "pcb: footprint library lost its footprint")?;
+    ensure(loaded.footprints[0].pad_positions.len() == 2, "pcb: footprint library lost pads")?;
 
     println!(
-        "  pcb: outline {} points, {} layer(s), {} copper layer(s)",
+        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s)",
         design.outline.points.len(),
+        design.outline.area(),
         design.layers.len(),
-        design.copper_layer_count()
+        design.copper_layer_count(),
+        loaded.footprints.len()
     );
     Ok(())
 }

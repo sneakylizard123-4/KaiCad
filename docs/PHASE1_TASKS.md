@@ -1,9 +1,10 @@
 # KaiCad Phase 1 — Foundation Tasks (Weeks 1-4)
 
 > **Status legend:** ✅ complete · 🚧 partial (some acceptance criteria met) ·
-> ⬜ not started. Weeks 1–4 are complete and verified; see
-> [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 5 brief.
+> ⬜ not started. Phase 1 (Weeks 1–4) is complete and verified, and Phase 2
+> began with Week 5 (PCB core). See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for
+> Week 1 evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
+> Week 6 brief.
 
 ## Project Setup & Infrastructure
 
@@ -141,8 +142,8 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 126 tests pass across the workspace. Coverage reporting is not wired
-  up yet; that remains a CI follow-up.
+- **Note:** 144 tests pass across the workspace. The `Coverage` CI job runs
+  `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
 - **Owner:** QA Lead
@@ -180,11 +181,14 @@
 
 ## Status note
 
-Weeks 1–4 are complete and verified. Week 4 added deterministic KiCad netlist
-export, graph traversal helpers, two ERC rules and 16 new tests, bringing the
-total from 110 to **126 passing tests**. `cargo check`, `cargo clippy
+Weeks 1–4 (Phase 1) are complete and verified. Week 4 added deterministic
+KiCad netlist export, graph traversal helpers, two ERC rules and 16 new tests,
+bringing the total from 110 to 126. Week 5 began Phase 2 with board-outline
+geometry, layer-stack validation and JSON footprint libraries, adding 18 tests
+for a total of **144 passing tests**. `cargo check`, `cargo clippy
 --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`,
-`cargo doc --workspace --no-deps` and `cargo build --workspace --release` all
-succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 5 (PCB core) work
-order.
+`cargo doc --workspace --no-deps`, `python3 scripts/check_markdown_links.py`
+and `cargo build --workspace --release` all succeed. See
+[`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 6 (PCB geometry
+and DRC) work order.

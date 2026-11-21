@@ -43,16 +43,24 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Netlist export wired into the `kai-cad` self-check and smoke tests
 - Documentation updated; total tests: 126
 
-## 🚧 Next — Week 5: PCB core
+### Week 5 — PCB core
+- Deterministic outline geometry: `signed_area`, `area`, `perimeter`, `contains_point`, `bounding_box`
+- `LayerStack::validate` with `LayerIssue`/`LayerIssueKind`, sorted and deterministic
+- `FootprintLibrary` JSON persistence (`to_json`, `from_json`, `save`, `load`) rejecting duplicate names
+- Outline, layer and footprint-library checks wired into the `kai-cad` self-check and smoke tests
+- CI: Markdown link checker, `cargo-llvm-cov` coverage job and uploaded `lcov.info`
+- Documentation updated; total tests: 144
+
+## 🚧 Next — Week 6: PCB geometry and DRC
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Deterministic board-outline geometry: area, contains-point, bounding box
-- [ ] Layer-stack validation and query helpers
-- [ ] Footprint library model and loading
-- [ ] Wire the new PCB work into the `kai-cad` self-check and smoke tests
+- [ ] Point-to-segment and segment-to-segment distance primitives in `core`
+- [ ] Track width, via diameter and via drill on the PCB data model
+- [ ] Deterministic DRC report: track width, layer, clearance, board containment and via span
+- [ ] Wire DRC into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥140 tests, clippy/fmt/doc clean
+- [ ] Target: ≥158 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
@@ -60,12 +68,12 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ Complete (Weeks 1–4, basic schematic engine)
 
 ### Phase 2 — PCB core (Weeks 5–8)
-- Board outline, layers, stackup
-- Footprint library loading
-- Push-and-shove routing
-- Interactive routing
-- DRC
-- Basic 2D/3D Vulkan renderer
+- ✅ Board outline, layers and stackup (Week 5)
+- ✅ Footprint library loading (Week 5)
+- ⬜ Push-and-shove routing
+- ⬜ Interactive routing
+- 🚧 DRC (Week 6)
+- ⬜ Basic 2D/3D Vulkan renderer
 
 ### Custom GUI (not yet scheduled)
 - No dedicated GUI week exists in the 16-week plan; the application shell is currently the `kai-cad` CLI.
@@ -88,7 +96,8 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
 ## 🏠 Housekeeping
 
+- [x] Add a Markdown link checker to CI (`scripts/check_markdown_links.py`)
+- [x] Add coverage reporting to CI (`cargo-llvm-cov`, `lcov.info` artifact)
 - [ ] Add SPDX license headers to new files as they are substantially rewritten
 - [ ] Keep `Cargo.lock` committed
 - [ ] Maintain `docs/NEXT_AGENT_PROMPT.md` as the active brief
-- [ ] Add a Markdown link checker to CI

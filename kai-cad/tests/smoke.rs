@@ -116,6 +116,40 @@ fn pcb_copper_layer_count_tracks_copper_layers() {
 }
 
 #[test]
+fn footprint_library_round_trips_through_json() {
+    let library = pcb::FootprintLibrary {
+        name: "Smoke".to_string(),
+        footprints: vec![pcb::Footprint {
+            name: "R_0402".to_string(),
+            reference_designator: "R".to_string(),
+            pad_positions: vec![pcb::PadPosition {
+                x: -0.5,
+                y: 0.0,
+                pad_type: pcb::PadType::SurfaceMount,
+            }],
+            outline: pcb::footprint::Outline {
+                shape: pcb::footprint::OutlineShape::rectangle(-1.0, -0.5, 2.0, 1.0),
+                copper: false,
+            },
+        }],
+    };
+
+    let json = library.to_json().expect("serialize footprint library");
+    assert!(json.ends_with('\n'));
+
+    let restored = pcb::FootprintLibrary::from_json(&json).expect("parse footprint library");
+    assert_eq!(restored.name, "Smoke");
+    assert_eq!(restored.footprints.len(), 1);
+    assert_eq!(restored.footprints[0].name, "R_0402");
+    assert_eq!(restored.footprints[0].pad_positions[0].x, -0.5);
+    assert_eq!(restored.footprints[0].pad_positions[0].pad_type, pcb::PadType::SurfaceMount);
+    assert!(matches!(
+        restored.footprints[0].outline.shape,
+        pcb::footprint::OutlineShape::Rectangle { width, height, .. } if width == 2.0 && height == 1.0
+    ));
+}
+
+#[test]
 fn ai_validation_accepts_good_and_rejects_bad_suggestion() {
     let kai = ai::kAI::new(ai::kAIConfig::default());
 

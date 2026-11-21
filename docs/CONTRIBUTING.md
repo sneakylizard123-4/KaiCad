@@ -7,9 +7,8 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 5, PCB core: outline
-geometry, layer stack and footprint libraries — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+instructions. The current implementation brief — Week 6, PCB geometry and
+design-rule checking — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
 
@@ -18,7 +17,9 @@ geometry, layer stack and footprint libraries — is in
   `core` types, and those types remain the internal representation. KiCad
   netlist output from `schematic::to_kicad_netlist` is likewise export-only and
   must never become the internal representation or gain a parser in the same
-  layer.
+  layer. `pcb::FootprintLibrary` persists KaiCad's own JSON; a KiCad
+  `.kicad_mod` reader is separate import work and must not become the storage
+  format.
 - **Local-first.** No change may make a network connection, cloud service or
   AI model mandatory for normal editing.
 - **AI output is untrusted.** Any AI-proposed change must pass deterministic
@@ -120,7 +121,8 @@ Author and reviewer should both confirm:
 
 - [ ] The change is scoped to one concern and the commit messages follow the
       convention above.
-- [ ] `cargo fmt --all -- --check` passes.
+- [ ] `cargo fmt --all -- --check` passes and Markdown links resolve
+      (`python3 scripts/check_markdown_links.py`).
 - [ ] `cargo check --workspace --all-targets` passes.
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
 - [ ] `cargo test --workspace` passes.

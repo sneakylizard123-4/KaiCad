@@ -65,14 +65,15 @@
 
 ### Implementation status
 
-**Weeks 1–4 are complete and verified.** The Cargo workspace, CI pipeline,
+**Weeks 1–5 are complete and verified.** The Cargo workspace, CI pipeline,
 toolchain configuration, shared data model, SQLite engineering database, named
-symbol libraries, KiCad `.kicad_sym` import and the basic schematic engine
-(netlist generation and export, graph traversal, ERC) are in place. The
-workspace has **126 passing tests**, clean `cargo clippy --workspace
+symbol libraries, KiCad `.kicad_sym` import, the basic schematic engine
+(netlist generation and export, graph traversal, ERC) and the PCB core
+(outline geometry, layer validation, footprint libraries) are in place. The
+workspace has **144 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 5 brief.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 6 brief.
 
 Phase 1 progress:
 
@@ -83,9 +84,18 @@ Phase 1 progress:
 | 3 | Symbol management: symbol libraries and KiCad symbol loading | ✅ Complete |
 | 4 | Schematic engine: netlist export, graph operations, broader ERC | ✅ Complete |
 
+Phase 2 progress:
+
+| Week | Focus | Status |
+|------|-------|--------|
+| 5 | PCB core: outline geometry, layer-stack validation, footprint libraries | ✅ Complete |
+| 6 | PCB geometry and design-rule checking | ⬜ Not started |
+| 7–8 | Routing, rendering and PCB integration | ⬜ Not started |
+
 The detailed brief for the next implementation pass — including schema
 requirements, acceptance criteria and verification commands — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 6:
+shared distance primitives, track and pad dimensions, and deterministic DRC.
 
 ## 4. Key Milestones
 
