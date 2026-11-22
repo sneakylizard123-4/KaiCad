@@ -5,11 +5,15 @@
 //! generates and checks a netlist, builds a PCB design, and reads the default
 //! configuration of the renderer, AI, and collaboration subsystems.
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use uuid::Uuid;
 
 const USAGE: &str = "kai-cad [--version|--help]";
+const PLUGIN_USAGE: &str =
+    "kai-cad plugins <list|show|enable|disable|discover> [arguments] [--db <path>]";
+const DEFAULT_DB_PATH: &str = "kaicad.db";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,6 +28,7 @@ fn main() -> ExitCode {
             println!("kai-cad {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
+        [command, rest @ ..] if command == "plugins" => run_plugins(rest),
         _ => {
             eprintln!("error: unrecognized arguments: {}", args.join(" "));
             eprintln!("usage: {USAGE}");
@@ -35,12 +40,187 @@ fn main() -> ExitCode {
 fn print_help() {
     println!("KaiCad — modern EDA application in Rust (pre-alpha).");
     println!();
-    println!("usage: {USAGE}");
+    println!("usage:");
+    println!("  {USAGE}");
+    println!("  {PLUGIN_USAGE}");
     println!();
     println!("  -h, --help     print this help and exit");
     println!("  -V, --version  print the version and exit");
     println!();
+    println!("Plugin commands:");
+    print_plugin_help();
+    println!();
     println!("With no arguments, runs a deterministic self-check of every workspace subsystem.");
+}
+
+fn print_plugin_help() {
+    println!("  plugins list                 list registered plugins");
+    println!("  plugins show <id>            show one plugin manifest and state");
+    println!("  plugins enable <id>          enable a registered plugin");
+    println!("  plugins disable <id>         disable a registered plugin");
+    println!("  plugins discover <directory> register every valid manifest in a directory");
+    println!();
+    println!("  --db <path>                  registry database (default: {DEFAULT_DB_PATH})");
+}
+
+fn run_plugins(args: &[String]) -> ExitCode {
+    match plugins_command(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            eprintln!("usage: {PLUGIN_USAGE}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn plugins_command(args: &[String]) -> Result<(), String> {
+    let (positional, db_path) = parse_plugin_options(args)?;
+    let Some(command) = positional.first().map(String::as_str) else {
+        print_plugin_help();
+        return Ok(());
+    };
+
+    match command {
+        "help" | "-h" | "--help" => {
+            print_plugin_help();
+            Ok(())
+        }
+        "list" => {
+            expect_plugin_arguments(&positional, 1, "list")?;
+            let store = open_plugin_store(&db_path)?;
+            let states = store
+                .list_plugin_states()
+                .map_err(|error| format!("failed to list plugins: {error}"))?;
+            if states.is_empty() {
+                println!("No plugins registered.");
+            }
+            for (manifest, enabled) in states {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    manifest.id,
+                    manifest.version,
+                    if enabled { "enabled" } else { "disabled" },
+                    capability_list(&manifest)
+                );
+            }
+            Ok(())
+        }
+        "show" => {
+            expect_plugin_arguments(&positional, 2, "show")?;
+            let id = &positional[1];
+            let store = open_plugin_store(&db_path)?;
+            let manifest = store
+                .load_plugin(id)
+                .map_err(|error| format!("failed to load plugin `{id}`: {error}"))?
+                .ok_or_else(|| format!("plugin not found: {id}"))?;
+            let enabled = store
+                .plugin_enabled(id)
+                .map_err(|error| format!("failed to read plugin state: {error}"))?
+                .unwrap_or(false);
+            println!("id: {}", manifest.id);
+            println!("name: {}", manifest.name);
+            println!("version: {}", manifest.version);
+            println!("api_version: {}", manifest.api_version);
+            println!("entry_point: {}", manifest.entry_point);
+            println!("capabilities: {}", capability_list(&manifest));
+            println!("enabled: {enabled}");
+            Ok(())
+        }
+        "enable" | "disable" => {
+            expect_plugin_arguments(&positional, 2, command)?;
+            let id = &positional[1];
+            let enabled = command == "enable";
+            let mut store = open_plugin_store(&db_path)?;
+            if !store
+                .set_plugin_enabled(id, enabled)
+                .map_err(|error| format!("failed to update plugin `{id}`: {error}"))?
+            {
+                return Err(format!("plugin not found: {id}"));
+            }
+            println!("{} {id}", if enabled { "enabled" } else { "disabled" });
+            Ok(())
+        }
+        "discover" => {
+            expect_plugin_arguments(&positional, 2, "discover")?;
+            let directory = &positional[1];
+            let manifests = plugin::discover_manifests(directory)
+                .map_err(|error| format!("failed to discover plugins: {error}"))?;
+            let count = manifests.len();
+            let mut store = open_plugin_store(&db_path)?;
+            for manifest in &manifests {
+                store.save_plugin(manifest).map_err(|error| {
+                    format!("failed to register plugin `{}`: {error}", manifest.id)
+                })?;
+            }
+            println!("discovered {count} plugin(s) in {}", Path::new(directory).display());
+            Ok(())
+        }
+        other => Err(format!("unknown plugin command: {other}")),
+    }
+}
+
+fn parse_plugin_options(args: &[String]) -> Result<(Vec<String>, PathBuf), String> {
+    let mut positional = Vec::new();
+    let mut db_path = PathBuf::from(DEFAULT_DB_PATH);
+    let mut index = 0;
+
+    while index < args.len() {
+        let argument = &args[index];
+        if argument == "--db" {
+            index += 1;
+            let value = args.get(index).ok_or("--db requires a path")?;
+            if value.is_empty() {
+                return Err("--db requires a non-empty path".to_string());
+            }
+            db_path = PathBuf::from(value);
+        } else if let Some(value) = argument.strip_prefix("--db=") {
+            if value.is_empty() {
+                return Err("--db requires a non-empty path".to_string());
+            }
+            db_path = PathBuf::from(value);
+        } else if argument.starts_with('-') && argument != "-h" && argument != "--help" {
+            return Err(format!("unknown plugin option: {argument}"));
+        } else {
+            positional.push(argument.clone());
+        }
+        index += 1;
+    }
+
+    Ok((positional, db_path))
+}
+
+fn expect_plugin_arguments(
+    positional: &[String],
+    expected: usize,
+    command: &str,
+) -> Result<(), String> {
+    if positional.len() != expected {
+        return Err(format!(
+            "plugins {command} expects {} argument(s)",
+            expected.saturating_sub(1)
+        ));
+    }
+    Ok(())
+}
+
+fn open_plugin_store(path: &Path) -> Result<store::Store, String> {
+    store::Store::open(path)
+        .map_err(|error| format!("failed to open plugin database {}: {error}", path.display()))
+}
+
+fn capability_list(manifest: &plugin::PluginManifest) -> String {
+    manifest
+        .capabilities
+        .iter()
+        .map(|capability| match capability {
+            plugin::PluginCapability::Schematic => "schematic",
+            plugin::PluginCapability::Pcb => "pcb",
+            plugin::PluginCapability::Ai => "ai",
+            plugin::PluginCapability::ImportExport => "import-export",
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn run_self_check() -> ExitCode {
@@ -779,12 +959,91 @@ fn check_store() -> Result<(), String> {
         "store: PCB design survived project deletion",
     )?;
 
+    let alpha = plugin::PluginManifest {
+        id: "com.kaicad.self-check.alpha".to_string(),
+        name: "Alpha self-check plugin".to_string(),
+        version: "0.1.0".to_string(),
+        api_version: plugin::SUPPORTED_API_VERSION,
+        entry_point: "plugins/alpha.so".to_string(),
+        capabilities: vec![plugin::PluginCapability::Schematic],
+    };
+    let mut beta = plugin::PluginManifest {
+        id: "com.kaicad.self-check.beta".to_string(),
+        name: "Beta self-check plugin".to_string(),
+        version: "0.2.0".to_string(),
+        api_version: plugin::SUPPORTED_API_VERSION,
+        entry_point: "plugins/beta.so".to_string(),
+        capabilities: vec![plugin::PluginCapability::Pcb],
+    };
+    store
+        .save_plugin(&alpha)
+        .map_err(|error| format!("store: failed to save alpha plugin: {error}"))?;
+    store
+        .save_plugin(&beta)
+        .map_err(|error| format!("store: failed to save beta plugin: {error}"))?;
+    ensure(
+        store.list_plugins().map_err(|error| format!("store: failed to list plugins: {error}"))?
+            == [alpha.clone(), beta.clone()],
+        "store: persisted plugins are not sorted by id",
+    )?;
+    ensure(
+        store
+            .set_plugin_enabled(&beta.id, false)
+            .map_err(|error| format!("store: failed to disable beta plugin: {error}"))?,
+        "store: registered plugin could not be disabled",
+    )?;
+    beta.name = "Beta self-check plugin updated".to_string();
+    store
+        .save_plugin(&beta)
+        .map_err(|error| format!("store: failed to update beta plugin: {error}"))?;
+    ensure(
+        store
+            .plugin_enabled(&beta.id)
+            .map_err(|error| format!("store: failed to read beta state: {error}"))?
+            == Some(false),
+        "store: manifest upsert reset the disabled state",
+    )?;
+    ensure(
+        store
+            .list_enabled_plugins()
+            .map_err(|error| format!("store: failed to list enabled plugins: {error}"))?
+            .len()
+            == 1,
+        "store: enabled-plugin filter returned the wrong count",
+    )?;
+    ensure(
+        store
+            .list_plugins_with_capability(plugin::PluginCapability::Pcb)
+            .map_err(|error| format!("store: failed to filter plugins: {error}"))?
+            .len()
+            == 1,
+        "store: capability filter returned the wrong count",
+    )?;
+    ensure(
+        store
+            .set_plugin_enabled(&beta.id, true)
+            .map_err(|error| format!("store: failed to enable beta plugin: {error}"))?,
+        "store: disabled plugin could not be re-enabled",
+    )?;
+    let persisted_plugins = store
+        .list_plugins()
+        .map_err(|error| format!("store: failed to list persisted plugins: {error}"))?;
+    let enabled_plugins = store
+        .list_enabled_plugins()
+        .map_err(|error| format!("store: failed to list enabled plugins: {error}"))?;
+    ensure(
+        persisted_plugins.len() == 2 && enabled_plugins.len() == 2,
+        "store: plugin persistence lost a manifest or its state",
+    )?;
+
     let version = store
         .schema_version()
         .map_err(|error| format!("store: failed to read schema version: {error}"))?;
 
     println!(
-        "  store: created, loaded and deleted 1 project with its PCB design (schema v{version})"
+        "  store: created, loaded and deleted 1 project with its PCB design (schema v{version}), {} plugin(s) persisted/{} enabled",
+        persisted_plugins.len(),
+        enabled_plugins.len()
     );
     Ok(())
 }

@@ -4,7 +4,7 @@
 > ⬜ not started. Phase 1 (Weeks 1–4) is complete and verified, and Phase 2
 > began with Week 5 (PCB core). See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for
 > Week 1 evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
-> Week 13 brief.
+> Week 16 brief.
 
 ## Project Setup & Infrastructure
 
@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 282 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 301 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -202,10 +202,14 @@ tests**. Week 11 added bounded multi-step undo/redo history with redo-branch
 clearing and capacity eviction, with 19 more tests for a total of **263
 passing tests**. Week 12 added validated local plugin manifests, deterministic
 registry ordering and duplicate rejection, and deterministic directory
-discovery, with 19 more tests for a total of **282 passing tests**. `cargo check`,
+discovery, with 19 more tests for a total of **282 passing tests**. Week 13
+added SQLite-backed plugin CRUD in schema v5, with 10 more store tests. Week 14
+added persisted activation state, capability filters and schema v6, with 5 more
+store tests. Week 15 added the `kai-cad plugins` management CLI and four
+end-to-end CLI tests, for a total of **301 passing tests**. `cargo check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
 --check`, `cargo doc --workspace --no-deps`,
 `python3 scripts/check_markdown_links.py` and `cargo build --workspace
 --release` all succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
-evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 13
-(SQLite-backed plugin registry) work order.
+evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 16
+(beta readiness) work order.

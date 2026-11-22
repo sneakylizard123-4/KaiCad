@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 12 plugin manifest registry complete (pre-alpha); Week 13 (SQLite-backed plugin registry) is next
+- **Implementation:** Week 15 plugin management CLI complete (pre-alpha); Week 16 (beta readiness) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (282 tests across the workspace)
+# Run tests (301 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -122,7 +122,9 @@ KaiCad/
 │   │   ├── 0001_initial.sql
 │   │   ├── 0002_projection_primary_keys.sql
 │   │   ├── 0003_symbol_libraries.sql
-│   │   └── 0004_pcb_designs.sql
+│   │   ├── 0004_pcb_designs.sql
+│   │   ├── 0005_plugins.sql
+│   │   └── 0006_plugin_enabled.sql
 │   └── examples/
 │       └── project_crud.rs
 ├── kicad-parser/               # KiCad symbol-library import (S-expression)
@@ -145,7 +147,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 13)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 16)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -153,16 +155,16 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–12 are complete and verified: **282 tests pass**, `cargo clippy
+Weeks 1–15 are complete and verified: **301 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 12 added validated local plugin
-manifests (`PluginManifest`, `PluginCapability`), a deterministic
-`PluginRegistry` with duplicate rejection, and deterministic `*.json`
-discovery. Manifests never load or execute plugin code.
+clean, and the release build succeeds. Weeks 13–15 added SQLite-backed plugin
+persistence (schema v6), activation state and deterministic capability
+filters, plus `kai-cad plugins list|show|enable|disable|discover`. Manifests
+never load or execute plugin code.
 
-The next milestone is **Week 13 — SQLite-backed plugin registry**: persist
-validated manifests in schema v5 with deterministic CRUD. The full brief is in
-[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
+The next milestone is **Week 16 — beta readiness**: CLI hardening, user
+documentation, performance baselines and the release checklist. The full brief
+is in [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
 
@@ -203,10 +205,11 @@ What each crate provides today:
   `PluginCapability`), a deterministic id-sorted `PluginRegistry`, and
   deterministic discovery of direct `.json` files. Entry points are path-checked
   but never opened; no plugin code is loaded or executed.
-- ✅ **store** — SQLite engineering database (schema v4) with versioned
+- ✅ **store** — SQLite engineering database (schema v6) with versioned
   migrations, project CRUD (`create`, `load`, `list`, `update`, `delete`),
-  symbol-library CRUD, and PCB-design CRUD (`save`, `load`, `delete`) storing
-  tracks, vias, footprints and DRC rules as JSON.
+  symbol-library CRUD, PCB-design CRUD (`save`, `load`, `delete`) storing
+  tracks, vias, footprints and DRC rules as JSON, and validated plugin CRUD
+  with persisted enable/disable state and capability filters.
 - ✅ **kicad-parser** — deterministic S-expression reader and `.kicad_sym`
   loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
@@ -215,8 +218,10 @@ What each crate provides today:
   crosses a full-width top-layer wall using deterministic through vias, rejects
   a blocked route, applies a validated suggestion and undoes/redoes it, drives
   a bounded multi-step undo/redo history, discovers and registers validated
-  plugin manifests, creates a session and enforces roles, records a versioned
-  edit, stages/drains it, and stores and reloads a PCB design.
+  plugin manifests, manages the persisted plugin registry through `plugins
+  list|show|enable|disable|discover`, creates a session and enforces roles,
+  records a versioned edit, stages/drains it, and stores and reloads a PCB
+  design.
 
 ## Roadmap
 
@@ -225,7 +230,7 @@ What each crate provides today:
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 PCB core complete; renderer deferred |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 Week 12 complete; kAI generation, real-time sync and plugin execution deferred |
-| 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
+| 4 | 13–16 | Plugin persistence and management, polish, beta and KiCad 9/10 compatibility QA | 🚧 Weeks 13–15 complete; release readiness next |
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and
 [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) for the Phase 1 breakdown.

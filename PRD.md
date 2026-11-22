@@ -159,12 +159,12 @@ milestones and task breakdowns are maintained separately:
 - [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — the current
   implementation brief.
 
-Implementation status: Weeks 1–12 are complete — scaffolding, the shared data
+Implementation status: Weeks 1–15 are complete — scaffolding, the shared data
 model, the SQLite engineering database, symbol management, the schematic
 engine, PCB geometry and DRC, deterministic single-layer and multi-layer
 routing with through vias, PCB-design persistence, atomic kAI suggestion
 application with undo/redo, permission-checked collaborative edit sessions with
 version history and sync staging, bounded multi-step edit history, and a
-validated local plugin manifest registry. Week 13 (SQLite-backed plugin
-registry) is next. KaiCad is pre-alpha and does not yet provide usable
-schematic or PCB editing.
+validated local plugin registry with SQLite persistence, activation state and
+CLI management. Week 16 (beta readiness) is next. KaiCad is pre-alpha and does
+not yet provide usable schematic or PCB editing.

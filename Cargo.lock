@@ -792,6 +792,7 @@ dependencies = [
  "chrono",
  "core",
  "pcb",
+ "plugin",
  "rusqlite",
  "serde_json",
  "tempfile",

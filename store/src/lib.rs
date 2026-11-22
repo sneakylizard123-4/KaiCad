@@ -19,7 +19,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction};
 mod tests;
 
 /// Highest migration version shipped by this crate.
-const CURRENT_SCHEMA_VERSION: u32 = 4;
+const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 /// Migrations are numbered SQL files embedded with `include_str!`.  Never edit
 /// an applied migration; add a new numbered entry at the end.
@@ -28,6 +28,8 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (2, include_str!("../migrations/0002_projection_primary_keys.sql")),
     (3, include_str!("../migrations/0003_symbol_libraries.sql")),
     (4, include_str!("../migrations/0004_pcb_designs.sql")),
+    (5, include_str!("../migrations/0005_plugins.sql")),
+    (6, include_str!("../migrations/0006_plugin_enabled.sql")),
 ];
 
 /// A synchronous SQLite-backed engineering database.
@@ -58,6 +60,8 @@ pub enum StoreError {
     Duplicate(uuid::Uuid),
     /// A PCB design was saved for a project that does not exist.
     MissingProject(uuid::Uuid),
+    /// A plugin manifest was invalid or corrupt metadata could not be decoded.
+    Plugin(plugin::PluginError),
     /// The migration runner failed.
     MigrationFailed(String),
 }
@@ -70,6 +74,7 @@ impl fmt::Display for StoreError {
             Self::Io(error) => write!(f, "io error: {error}"),
             Self::Duplicate(id) => write!(f, "project already exists: {id}"),
             Self::MissingProject(id) => write!(f, "project does not exist: {id}"),
+            Self::Plugin(error) => write!(f, "plugin error: {error}"),
             Self::MigrationFailed(message) => write!(f, "migration failed: {message}"),
         }
     }
@@ -81,6 +86,7 @@ impl std::error::Error for StoreError {
             Self::Sqlite(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io(error) => Some(error),
+            Self::Plugin(error) => Some(error),
             Self::Duplicate(_) | Self::MissingProject(_) | Self::MigrationFailed(_) => None,
         }
     }
@@ -383,6 +389,131 @@ impl Store {
         let rows_changed = self
             .connection
             .execute("DELETE FROM pcb_designs WHERE project_id = ?1", [project_id.to_string()])?;
+        Ok(rows_changed > 0)
+    }
+
+    /// Validate and upsert a plugin manifest by id.
+    ///
+    /// Registration is global and not tied to a project. A rejected manifest
+    /// leaves the database unchanged. Re-saving an existing id preserves its
+    /// activation state.
+    pub fn save_plugin(&mut self, manifest: &plugin::PluginManifest) -> Result<()> {
+        manifest.validate().map_err(StoreError::Plugin)?;
+        let capabilities = serde_json::to_string(&manifest.capabilities)?;
+        let manifest_json = serde_json::to_string_pretty(manifest)?;
+
+        self.connection.execute(
+            "INSERT INTO plugins
+                 (id, name, version, api_version, entry_point, capabilities, manifest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                 name = excluded.name,
+                 version = excluded.version,
+                 api_version = excluded.api_version,
+                 entry_point = excluded.entry_point,
+                 capabilities = excluded.capabilities,
+                 manifest = excluded.manifest",
+            rusqlite::params![
+                &manifest.id,
+                &manifest.name,
+                &manifest.version,
+                manifest.api_version,
+                &manifest.entry_point,
+                capabilities,
+                format!("{manifest_json}\n"),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Load a validated plugin manifest by id; returns `Ok(None)` when absent.
+    pub fn load_plugin(&self, id: &str) -> Result<Option<plugin::PluginManifest>> {
+        let manifest: Option<String> = self
+            .connection
+            .query_row("SELECT manifest FROM plugins WHERE id = ?1", [id], |row| row.get(0))
+            .optional()?;
+        manifest
+            .map(|text| plugin::PluginManifest::from_json(&text).map_err(StoreError::Plugin))
+            .transpose()
+    }
+
+    /// List every plugin in ascending id order, including activation state.
+    pub fn list_plugin_states(&self) -> Result<Vec<(plugin::PluginManifest, bool)>> {
+        let mut statement =
+            self.connection.prepare("SELECT manifest, enabled FROM plugins ORDER BY id ASC")?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0)))?;
+
+        let mut plugins = Vec::new();
+        for row in rows {
+            let (text, enabled) = row?;
+            let manifest = plugin::PluginManifest::from_json(&text).map_err(StoreError::Plugin)?;
+            plugins.push((manifest, enabled));
+        }
+        Ok(plugins)
+    }
+
+    /// List every plugin manifest in ascending id order.
+    pub fn list_plugins(&self) -> Result<Vec<plugin::PluginManifest>> {
+        Ok(self.list_plugin_states()?.into_iter().map(|(manifest, _)| manifest).collect())
+    }
+
+    /// List enabled plugins in ascending id order.
+    pub fn list_enabled_plugins(&self) -> Result<Vec<plugin::PluginManifest>> {
+        Ok(self
+            .list_plugin_states()?
+            .into_iter()
+            .filter_map(|(manifest, enabled)| enabled.then_some(manifest))
+            .collect())
+    }
+
+    /// List plugins that declare `capability`, including disabled plugins.
+    pub fn list_plugins_with_capability(
+        &self,
+        capability: plugin::PluginCapability,
+    ) -> Result<Vec<plugin::PluginManifest>> {
+        Ok(self
+            .list_plugins()?
+            .into_iter()
+            .filter(|manifest| manifest.capabilities.contains(&capability))
+            .collect())
+    }
+
+    /// List enabled plugins that declare `capability`, in ascending id order.
+    pub fn list_enabled_plugins_with_capability(
+        &self,
+        capability: plugin::PluginCapability,
+    ) -> Result<Vec<plugin::PluginManifest>> {
+        Ok(self
+            .list_enabled_plugins()?
+            .into_iter()
+            .filter(|manifest| manifest.capabilities.contains(&capability))
+            .collect())
+    }
+
+    /// Enable or disable a registered plugin.
+    ///
+    /// Returns `false` when the id is not registered.
+    pub fn set_plugin_enabled(&mut self, id: &str, enabled: bool) -> Result<bool> {
+        let rows_changed = self.connection.execute(
+            "UPDATE plugins SET enabled = ?2 WHERE id = ?1",
+            rusqlite::params![id, if enabled { 1_i64 } else { 0_i64 }],
+        )?;
+        Ok(rows_changed > 0)
+    }
+
+    /// Read a plugin's activation state; `Ok(None)` when it is not registered.
+    pub fn plugin_enabled(&self, id: &str) -> Result<Option<bool>> {
+        let enabled: Option<i64> = self
+            .connection
+            .query_row("SELECT enabled FROM plugins WHERE id = ?1", [id], |row| row.get(0))
+            .optional()?;
+        Ok(enabled.map(|value| value != 0))
+    }
+
+    /// Delete a plugin; returns `false` when the id is not registered.
+    pub fn delete_plugin(&mut self, id: &str) -> Result<bool> {
+        let rows_changed = self.connection.execute("DELETE FROM plugins WHERE id = ?1", [id])?;
         Ok(rows_changed > 0)
     }
 

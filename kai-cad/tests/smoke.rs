@@ -724,3 +724,130 @@ fn routing_produces_a_drc_clean_track_and_reports_a_blocked_path() {
     assert!(pcb::routing::route(&blocked_request, &blocked, &config).is_err());
     let _ = &mut blocked;
 }
+
+fn run_cli(args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_kai-cad"))
+        .args(args)
+        .output()
+        .expect("run kai-cad")
+}
+
+fn cli_stdout(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn plugin_cli_discovers_lists_and_toggles() {
+    let directory = std::env::temp_dir().join(format!("kaicad-plugin-cli-{}", Uuid::new_v4()));
+    let plugin_directory = directory.join("plugins");
+    std::fs::create_dir_all(&plugin_directory).expect("create plugin directory");
+    let database = directory.join("registry.db");
+
+    let alpha = plugin::PluginManifest {
+        id: "com.smoke.cli.alpha".to_string(),
+        name: "Alpha CLI".to_string(),
+        version: "0.1.0".to_string(),
+        api_version: plugin::SUPPORTED_API_VERSION,
+        entry_point: "plugins/alpha.so".to_string(),
+        capabilities: vec![plugin::PluginCapability::Schematic],
+    };
+    let beta = plugin::PluginManifest {
+        id: "com.smoke.cli.beta".to_string(),
+        name: "Beta CLI".to_string(),
+        version: "0.2.0".to_string(),
+        api_version: plugin::SUPPORTED_API_VERSION,
+        entry_point: "plugins/beta.so".to_string(),
+        capabilities: vec![plugin::PluginCapability::Pcb, plugin::PluginCapability::Ai],
+    };
+    alpha.save(plugin_directory.join("alpha.json")).expect("save alpha manifest");
+    beta.save(plugin_directory.join("beta.json")).expect("save beta manifest");
+
+    let plugin_path = plugin_directory.to_str().expect("plugin path");
+    let database_path = database.to_str().expect("database path");
+    let output = run_cli(&["plugins", "discover", plugin_path, "--db", database_path]);
+    assert!(
+        output.status.success(),
+        "discover failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(cli_stdout(&output).contains("discovered 2 plugin(s)"));
+
+    let output = run_cli(&["plugins", "list", "--db", database_path]);
+    assert!(output.status.success());
+    let stdout = cli_stdout(&output);
+    let lines: Vec<_> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].starts_with("com.smoke.cli.alpha\t0.1.0\tenabled\tschematic"));
+    assert!(lines[1].starts_with("com.smoke.cli.beta\t0.2.0\tenabled\tpcb, ai"));
+
+    let output = run_cli(&["plugins", "disable", "com.smoke.cli.alpha", "--db", database_path]);
+    assert!(output.status.success());
+    assert!(cli_stdout(&output).contains("disabled com.smoke.cli.alpha"));
+
+    let output = run_cli(&["plugins", "list", "--db", database_path]);
+    let stdout = cli_stdout(&output);
+    let alpha_line =
+        stdout.lines().find(|line| line.starts_with("com.smoke.cli.alpha")).expect("alpha line");
+    assert!(alpha_line.contains("\tdisabled\t"));
+
+    let output = run_cli(&["plugins", "show", "com.smoke.cli.alpha", "--db", database_path]);
+    assert!(output.status.success());
+    let stdout = cli_stdout(&output);
+    assert!(stdout.contains("enabled: false"));
+    assert!(stdout.contains("capabilities: schematic"));
+
+    let output = run_cli(&["plugins", "enable", "com.smoke.cli.alpha", "--db", database_path]);
+    assert!(output.status.success());
+    assert!(cli_stdout(&output).contains("enabled com.smoke.cli.alpha"));
+
+    std::fs::remove_dir_all(&directory).expect("clean up CLI fixture directory");
+}
+
+#[test]
+fn plugin_cli_reports_missing_plugin() {
+    let directory = std::env::temp_dir().join(format!("kaicad-plugin-cli-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&directory).expect("create CLI fixture directory");
+    let database = directory.join("registry.db");
+    let database_path = database.to_str().expect("database path");
+
+    let output = run_cli(&["plugins", "enable", "com.smoke.missing", "--db", database_path]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("plugin not found: com.smoke.missing")
+    );
+
+    std::fs::remove_dir_all(&directory).expect("clean up CLI fixture directory");
+}
+
+#[test]
+fn plugin_cli_rejects_invalid_discovery_directory() {
+    let directory = std::env::temp_dir().join(format!("kaicad-plugin-cli-{}", Uuid::new_v4()));
+    let plugin_directory = directory.join("plugins");
+    std::fs::create_dir_all(&plugin_directory).expect("create plugin directory");
+    std::fs::write(plugin_directory.join("broken.json"), "{ not json")
+        .expect("write invalid manifest");
+    let database = directory.join("registry.db");
+    let plugin_path = plugin_directory.to_str().expect("plugin path");
+    let database_path = database.to_str().expect("database path");
+
+    let output = run_cli(&["plugins", "discover", plugin_path, "--db", database_path]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("failed to discover plugins"));
+
+    let output = run_cli(&["plugins", "list", "--db", database_path]);
+    assert!(output.status.success());
+    assert!(cli_stdout(&output).contains("No plugins registered."));
+
+    std::fs::remove_dir_all(&directory).expect("clean up CLI fixture directory");
+}
+
+#[test]
+fn plugin_cli_help_lists_management_commands() {
+    let output = run_cli(&["plugins", "--help"]);
+    assert!(output.status.success());
+    let stdout = cli_stdout(&output);
+    assert!(stdout.contains("plugins list"));
+    assert!(stdout.contains("plugins show <id>"));
+    assert!(stdout.contains("plugins discover <directory>"));
+    assert!(stdout.contains("--db <path>"));
+}

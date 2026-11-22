@@ -126,7 +126,7 @@ fn fixture_symbol_library(namespace: &str, name: &str) -> core::SymbolLibrary {
 #[test]
 fn open_in_memory_applies_initial_migration() {
     let store = Store::open_in_memory().expect("open in-memory store");
-    assert_eq!(store.schema_version().expect("schema version"), 4);
+    assert_eq!(store.schema_version().expect("schema version"), 6);
 }
 
 #[test]
@@ -136,11 +136,11 @@ fn migrations_are_idempotent() {
 
     {
         let store = Store::open(&path).expect("first open");
-        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.schema_version().expect("schema version"), 6);
     }
     {
         let store = Store::open(&path).expect("second open");
-        assert_eq!(store.schema_version().expect("schema version"), 4);
+        assert_eq!(store.schema_version().expect("schema version"), 6);
     }
 }
 
@@ -593,4 +593,264 @@ fn projection_counts(store: &Store, project_id: Uuid) -> crate::Result<Projectio
         .expect("non-negative count");
 
     Ok(ProjectionCounts { sheets, symbols, components, nets, footprints })
+}
+
+fn fixture_plugin(id: &str, name: &str) -> plugin::PluginManifest {
+    plugin::PluginManifest {
+        id: id.to_string(),
+        name: name.to_string(),
+        version: "0.1.0".to_string(),
+        api_version: plugin::SUPPORTED_API_VERSION,
+        entry_point: "plugins/example.so".to_string(),
+        capabilities: vec![plugin::PluginCapability::Schematic, plugin::PluginCapability::Ai],
+    }
+}
+
+#[test]
+fn plugin_save_and_load_round_trip() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let manifest = fixture_plugin("com.example.alpha", "Alpha");
+
+    store.save_plugin(&manifest).expect("save plugin");
+    let loaded =
+        store.load_plugin("com.example.alpha").expect("load plugin").expect("plugin exists");
+
+    assert_eq!(loaded, manifest);
+}
+
+#[test]
+fn plugin_list_is_sorted_by_id() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    for (id, name) in [
+        ("com.example.zeta", "Zeta"),
+        ("com.example.alpha", "Alpha"),
+        ("com.example.middle", "Middle"),
+    ] {
+        store.save_plugin(&fixture_plugin(id, name)).expect("save plugin");
+    }
+
+    let ids: Vec<_> = store
+        .list_plugins()
+        .expect("list plugins")
+        .into_iter()
+        .map(|manifest| manifest.id)
+        .collect();
+    assert_eq!(ids, vec!["com.example.alpha", "com.example.middle", "com.example.zeta"]);
+}
+
+#[test]
+fn plugin_lists_start_empty() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+
+    assert!(store.list_plugins().expect("list plugins").is_empty());
+    assert!(store.list_plugin_states().expect("list states").is_empty());
+    assert!(store.list_enabled_plugins().expect("list enabled").is_empty());
+}
+
+#[test]
+fn load_unknown_plugin_returns_none() {
+    let store = Store::open_in_memory().expect("open in-memory store");
+
+    assert!(store.load_plugin("com.example.missing").expect("load plugin").is_none());
+    assert!(store.plugin_enabled("com.example.missing").expect("plugin state").is_none());
+}
+
+#[test]
+fn delete_plugin_returns_true_then_false() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    store.save_plugin(&fixture_plugin("com.example.remove", "Remove")).expect("save plugin");
+
+    assert!(store.delete_plugin("com.example.remove").expect("delete plugin"));
+    assert!(!store.delete_plugin("com.example.remove").expect("delete plugin again"));
+    assert!(store.load_plugin("com.example.remove").expect("load plugin").is_none());
+}
+
+#[test]
+fn plugin_upsert_updates_without_duplicating() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let mut manifest = fixture_plugin("com.example.upsert", "Original");
+    store.save_plugin(&manifest).expect("save original");
+
+    manifest.name = "Updated".to_string();
+    manifest.version = "2.0.0".to_string();
+    manifest.capabilities = vec![plugin::PluginCapability::Pcb];
+    store.save_plugin(&manifest).expect("upsert plugin");
+
+    let loaded =
+        store.load_plugin("com.example.upsert").expect("load plugin").expect("plugin exists");
+    assert_eq!(loaded, manifest);
+    assert_eq!(store.list_plugins().expect("list plugins").len(), 1);
+}
+
+#[test]
+fn invalid_plugin_is_rejected_atomically() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let mut invalid = fixture_plugin("com.example.invalid", "Invalid");
+    invalid.entry_point = "../escape.so".to_string();
+
+    assert!(matches!(
+        store.save_plugin(&invalid),
+        Err(StoreError::Plugin(plugin::PluginError::UnsafeEntryPoint(_)))
+    ));
+    assert!(store.list_plugins().expect("list plugins").is_empty());
+}
+
+#[test]
+fn invalid_plugin_does_not_overwrite_existing() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let original = fixture_plugin("com.example.protected", "Protected");
+    store.save_plugin(&original).expect("save original");
+
+    let mut invalid = original.clone();
+    invalid.name = "Replacement".to_string();
+    invalid.capabilities.clear();
+    assert!(matches!(
+        store.save_plugin(&invalid),
+        Err(StoreError::Plugin(plugin::PluginError::InvalidManifest { .. }))
+    ));
+
+    assert_eq!(
+        store.load_plugin("com.example.protected").expect("load plugin").expect("plugin exists"),
+        original
+    );
+}
+
+#[test]
+fn corrupt_plugin_manifest_is_reported() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    store.save_plugin(&fixture_plugin("com.example.corrupt", "Corrupt")).expect("save plugin");
+    store
+        .connection
+        .execute("UPDATE plugins SET manifest = '{' WHERE id = ?1", ["com.example.corrupt"])
+        .expect("corrupt manifest row");
+
+    assert!(matches!(
+        store.load_plugin("com.example.corrupt"),
+        Err(StoreError::Plugin(plugin::PluginError::Json(_)))
+    ));
+    assert!(matches!(store.list_plugins(), Err(StoreError::Plugin(plugin::PluginError::Json(_)))));
+}
+
+#[test]
+fn file_backed_plugin_registry_survives_reopen() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let path = temp.path().join("plugins.db");
+    let manifest = fixture_plugin("com.example.persistent", "Persistent");
+
+    {
+        let mut store = Store::open(&path).expect("open store");
+        store.save_plugin(&manifest).expect("save plugin");
+    }
+
+    {
+        let store = Store::open(&path).expect("reopen store");
+        assert_eq!(store.schema_version().expect("schema version"), 6);
+        assert_eq!(
+            store
+                .load_plugin("com.example.persistent")
+                .expect("load plugin")
+                .expect("plugin exists"),
+            manifest
+        );
+    }
+}
+
+#[test]
+fn plugin_state_defaults_to_enabled() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    store.save_plugin(&fixture_plugin("com.example.enabled", "Enabled")).expect("save plugin");
+
+    assert_eq!(store.plugin_enabled("com.example.enabled").expect("plugin state"), Some(true));
+    let states = store.list_plugin_states().expect("list states");
+    assert_eq!(states.len(), 1);
+    assert!(states[0].1);
+}
+
+#[test]
+fn plugin_enable_and_disable_round_trip() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    store.save_plugin(&fixture_plugin("com.example.toggle", "Toggle")).expect("save plugin");
+
+    assert!(store.set_plugin_enabled("com.example.toggle", false).expect("disable plugin"));
+    assert_eq!(store.plugin_enabled("com.example.toggle").expect("plugin state"), Some(false));
+    assert!(store.set_plugin_enabled("com.example.toggle", true).expect("enable plugin"));
+    assert_eq!(store.plugin_enabled("com.example.toggle").expect("plugin state"), Some(true));
+
+    assert!(!store.set_plugin_enabled("com.example.missing", false).expect("missing plugin"));
+}
+
+#[test]
+fn resaving_plugin_preserves_disabled_state() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let mut manifest = fixture_plugin("com.example.disabled", "Disabled");
+    store.save_plugin(&manifest).expect("save plugin");
+    store.set_plugin_enabled(&manifest.id, false).expect("disable plugin");
+
+    manifest.name = "Still disabled".to_string();
+    store.save_plugin(&manifest).expect("resave plugin");
+
+    assert_eq!(store.plugin_enabled("com.example.disabled").expect("plugin state"), Some(false));
+    assert_eq!(
+        store.load_plugin("com.example.disabled").expect("load plugin").expect("plugin").name,
+        "Still disabled"
+    );
+}
+
+#[test]
+fn list_enabled_plugins_filters_and_sorts() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    for (id, name) in [
+        ("com.example.zeta", "Zeta"),
+        ("com.example.alpha", "Alpha"),
+        ("com.example.middle", "Middle"),
+    ] {
+        store.save_plugin(&fixture_plugin(id, name)).expect("save plugin");
+    }
+    store.set_plugin_enabled("com.example.middle", false).expect("disable plugin");
+
+    let enabled: Vec<_> = store
+        .list_enabled_plugins()
+        .expect("list enabled")
+        .into_iter()
+        .map(|manifest| manifest.id)
+        .collect();
+    assert_eq!(enabled, vec!["com.example.alpha", "com.example.zeta"]);
+    assert_eq!(store.list_plugin_states().expect("list states").len(), 3);
+}
+
+#[test]
+fn plugin_capability_queries_filter() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let mut schematic = fixture_plugin("com.example.schematic", "Schematic");
+    schematic.capabilities = vec![plugin::PluginCapability::Schematic];
+    let mut ai = fixture_plugin("com.example.ai", "AI");
+    ai.capabilities = vec![plugin::PluginCapability::Ai, plugin::PluginCapability::ImportExport];
+    let mut both = fixture_plugin("com.example.both", "Both");
+    both.capabilities = vec![plugin::PluginCapability::Schematic, plugin::PluginCapability::Ai];
+    for manifest in [schematic, ai, both] {
+        store.save_plugin(&manifest).expect("save plugin");
+    }
+    store.set_plugin_enabled("com.example.ai", false).expect("disable AI plugin");
+
+    let schematic: Vec<_> = store
+        .list_plugins_with_capability(plugin::PluginCapability::Schematic)
+        .expect("schematic plugins")
+        .into_iter()
+        .map(|manifest| manifest.id)
+        .collect();
+    assert_eq!(schematic, vec!["com.example.both", "com.example.schematic"]);
+
+    let enabled_ai: Vec<_> = store
+        .list_enabled_plugins_with_capability(plugin::PluginCapability::Ai)
+        .expect("enabled AI plugins")
+        .into_iter()
+        .map(|manifest| manifest.id)
+        .collect();
+    assert_eq!(enabled_ai, vec!["com.example.both"]);
+    assert!(
+        store
+            .list_plugins_with_capability(plugin::PluginCapability::Pcb)
+            .expect("PCB plugins")
+            .is_empty()
+    );
 }

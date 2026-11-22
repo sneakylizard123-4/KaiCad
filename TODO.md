@@ -110,16 +110,35 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Plugin discovery and validation wired into the `kai-cad` self-check and smoke tests
 - Documentation updated; total tests: 282
 
-## 🚧 Next — Week 13: SQLite-backed plugin registry
+### Week 13 — SQLite-backed plugin registry (schema v5)
+- Schema v5 `plugins` table with canonical manifest JSON and queryable projections
+- Validated plugin save/load/list/delete CRUD with deterministic id ordering
+- Corrupt rows and invalid manifests reported rather than skipped
+- Plugin persistence wired into the `kai-cad` self-check and store tests
+- 10 new store tests; total tests: 292
+
+### Week 14 — Plugin activation and capability queries (schema v6)
+- Schema v6 `enabled` column with a two-state CHECK constraint
+- `set_plugin_enabled`, `plugin_enabled` and `list_plugin_states`
+- Exact capability filters for all and enabled-only plugins
+- Manifest upserts preserve activation state
+- 5 new store tests; total tests: 297
+
+### Week 15 — Plugin management CLI
+- `kai-cad plugins list|show|enable|disable|discover` with optional `--db <path>`
+- Deterministic tab-separated listing and detailed show output
+- Discovery validates all manifests before opening the registry database
+- Four end-to-end CLI tests; total tests: 301
+
+## 🚧 Next — Week 16: Beta readiness
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Add schema v5 `plugins` migration with canonical manifest JSON
-- [ ] Add validated plugin save/load/list/delete CRUD to `store`
-- [ ] Keep listing deterministic by plugin id and reject corrupt rows
-- [ ] Wire plugin persistence into the `kai-cad` self-check and smoke tests
-- [ ] Update docs and all schema-version expectations to v5
-- [ ] Target: ≥298 tests, clippy/fmt/doc/link clean
+- [ ] Harden CLI argument handling and cover edge cases end to end
+- [ ] Add a user guide for build, plugin management and limitations
+- [ ] Add performance baselines without timing assertions
+- [ ] Complete the release checklist and compatibility audit
+- [ ] Target: ≥317 tests, clippy/fmt/doc/link/release clean
 
 ## ⬜ Later milestones
 
@@ -149,14 +168,15 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ Plugin manifest registry and discovery (Week 12; execution deferred)
 - ⬜ Circuit optimization suggestion generation
 - ⬜ Project sharing and real-time sync transport
-- ⬜ Plugin persistence (Week 13)
+- ✅ Plugin persistence, activation and CLI management (Weeks 13–15)
 - ⬜ Dynamic plugin loading and sandboxing
 
 ### Phase 4 — Polish & release (Weeks 13–16)
-- Performance optimization
-- User guides and API reference
-- KiCad 9/10 import/export QA
-- Beta release
+- ✅ SQLite plugin registry, activation state and CLI (Weeks 13–15; schema v6)
+- ⬜ Performance baselines
+- ⬜ User guides and API reference
+- ⬜ KiCad 9/10 import/export QA
+- ⬜ Beta release
 
 ## 🏠 Housekeeping
 

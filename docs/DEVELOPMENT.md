@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–12 are complete (282 tests, clippy/fmt/doc/release
-> all clean). Week 13 — SQLite-backed plugin registry — is next; its work order
-> is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–15 are complete (301 tests, clippy/fmt/doc/release
+> all clean). Week 16 — beta readiness — is next; its work order is in
+> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,7 +121,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **282 tests**, all passing:
+`cargo test --workspace` currently runs **301 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -133,8 +133,8 @@ benchmarks; a bare `cargo check` misses them.
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
-| `store` (`src/tests.rs`) | 23 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 17 |
+| `store` (`src/tests.rs`) | 38 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 21 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -163,13 +163,27 @@ subsystem self-check:
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always, applied 1 change(s), undo/redo ok (tx 97f81c80)
   collab: 1 session(s), 3 participant(s), session version 1, history 1 entry, staged 1 -> 0
-  store: created, loaded and deleted 1 project with its PCB design (schema v4)
+  store: created, loaded and deleted 1 project with its PCB design (schema v6), 2 plugin(s) persisted/2 enabled
   kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym
 self-check: ok
 ```
 
 `--help`/`-h` prints usage and exits; `--version`/`-V` prints `kai-cad
 <version>` and exits. Both return exit code 0 without running the self-check.
+
+The plugin registry is managed through `plugins` subcommands. `--db <path>`
+selects the SQLite database and defaults to `kaicad.db`:
+
+```bash
+cargo run -p kai-cad -- plugins list
+cargo run -p kai-cad -- plugins discover ./plugins --db my-project.db
+cargo run -p kai-cad -- plugins show com.example.alpha --db my-project.db
+cargo run -p kai-cad -- plugins disable com.example.alpha --db my-project.db
+cargo run -p kai-cad -- plugins enable com.example.alpha --db my-project.db
+```
+
+`discover` validates every manifest before opening the database. `list` prints
+`id`, `version`, state and comma-separated capabilities, one plugin per line.
 
 ## Examples
 
@@ -249,8 +263,8 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–12 are finished; Week 13 persists validated plugin manifests in SQLite
-schema v5 with deterministic CRUD. Before starting, read
+Weeks 1–15 are finished; Week 16 hardens the CLI, adds user documentation and
+performance baselines, and completes the release checklist. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -405,6 +419,12 @@ report.
   by `(id, entry_point)`. Missing directories and directories with no JSON
   manifests return `Io`.
 - Discovery never opens, resolves, copies or executes an entry point.
+- `store` persists the canonical manifest JSON in the global `plugins` table,
+  validates it again on load, and keeps activation in a separate `enabled`
+  column. Re-saving a manifest never resets its state.
+- `plugins list` uses `list_plugin_states` (id order); `enable`/`disable`
+  report a missing id as an error; `discover` imports all valid manifests but
+  fails before opening the database if any manifest is invalid.
 
 ### Edit history looks wrong
 

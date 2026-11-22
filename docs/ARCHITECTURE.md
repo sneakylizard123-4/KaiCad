@@ -10,8 +10,9 @@
 > 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
 > routing), 8 (multi-layer routing with vias), 9 (transactional kAI
 > application), 10 (collaborative edit sessions), 11 (multi-step edit
-> history) and 12 (plugin manifests and discovery) are complete. The workspace
-> has 282 passing tests.
+> history), 12 (plugin manifests and discovery), 13 (SQLite plugin registry),
+> 14 (plugin activation and capability queries) and 15 (plugin CLI) are
+> complete. The workspace has 301 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -50,6 +51,7 @@ graph TD
     ai --> schematic
     collab --> core
     store --> core
+    store --> plugin
 ```
 
 Arrows mean "depends on". `core` sits at the bottom of the graph and must not
@@ -78,6 +80,7 @@ flowchart BT
     ai --> schematic
     collab --> data
     store --> data
+    store --> plugin
     ui --> data
     ui --> schematic
     ui --> pcb
@@ -290,7 +293,7 @@ No transport, merge algorithm or real-time sync exists yet.
 
 ### `store` — engineering database
 
-Dependencies: `core`, `pcb`, `rusqlite` (with the `bundled` feature),
+Dependencies: `core`, `pcb`, `plugin`, `rusqlite` (with the `bundled` feature),
 `serde_json`, `uuid`, `chrono`. Modules: `lib.rs` plus embedded `migrations/`.
 
 - `Store` wraps a `rusqlite::Connection`, enables `PRAGMA foreign_keys = ON`,
@@ -305,10 +308,17 @@ Dependencies: `core`, `pcb`, `rusqlite` (with the `bundled` feature),
   complete `pcb::PcbDesign` (tracks, vias, footprints, pad copper and DRC
   rules) in `pcb_designs`, keyed by project. Saving is an upsert and requires
   the project to exist; deleting a project cascades to its design.
+- `Store::{save_plugin, load_plugin, list_plugins, list_plugin_states,
+  delete_plugin}` implement validated, id-sorted global plugin CRUD. Saving is
+  an upsert that preserves activation state and validates before writing;
+  loading validates the canonical manifest JSON again.
+- `Store::{set_plugin_enabled, plugin_enabled, list_enabled_plugins,
+  list_plugins_with_capability, list_enabled_plugins_with_capability}` manage
+  activation and deterministic capability filters.
 - `ProjectSummary` is returned by `list_projects` and ordered by
   `modified_at DESC, name ASC`.
-- `StoreError` covers SQLite, JSON, I/O, `Duplicate`, `MissingProject` and
-  migration failures.
+- `StoreError` covers SQLite, JSON, I/O, `Duplicate`, `MissingProject`,
+  `Plugin` and migration failures.
 
 **Schema rule:** the canonical record is `projects.document`, a complete JSON
 serialization of `core::Project`. The tables `sheets`, `symbols`, `components`,
@@ -320,7 +330,9 @@ globally, so a duplicated project may reuse the same entity ids. Symbol
 libraries use the same pattern in `symbol_libraries`: canonical `data` JSON with
 queryable `name` and `source` projections. PCB designs use `pcb_designs`, keyed
 by `project_id` with the complete design JSON in `data`; they cascade with the
-project. Migrations are numbered SQL files
+project. Plugins use the global `plugins` table: canonical `manifest` JSON with
+queryable scalar/capability projections and a separate `enabled` flag that is
+not part of the manifest. Migrations are numbered SQL files
 embedded with `include_str!`; once applied they are immutable — add a new
 numbered file rather than editing an old one.
 
@@ -366,21 +378,24 @@ plugin code is loaded or executed.
   return `PluginError::Io`.
 - `PluginError::{InvalidManifest, UnsupportedApiVersion, DuplicateId,
   UnsafeEntryPoint, Json, Io}` implements `Display` and `std::error::Error`.
+- Persistence and activation live in `store` (schema v6); the `plugin` crate
+  remains metadata validation, ordering and local discovery only.
 
 ### `kai-cad` — application binary
 
 Depends on every library crate. `src/main.rs` prints a banner, supports
-`--help`/`--version`, and with no arguments runs a deterministic self-check:
-it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
+`--help`/`--version`, exposes `plugins list|show|enable|disable|discover` with
+an optional `--db <path>` registry database, and with no arguments runs a
+deterministic self-check: it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
 builds a PCB design (outline measurements, layer validation, a footprint
 library round trip, clean/dirty DRC runs, a DRC-clean single-layer route, a
 multi-layer route across a full-width wall with through vias, and a blocked-
 route check), applies a validated kAI suggestion and undoes/redoes it, creates
 a collaboration session with roles, records a versioned edit and stages/drains
 its transaction, discovers and registers validated plugin manifests, exercises
-the SQLite store with an in-memory database including a PCB-design round trip,
-and parses a hermetic `.kicad_sym` fixture with `kicad-parser`. Integration
-tests live
+the SQLite store with an in-memory database including plugin persistence and a
+PCB-design round trip, and parses a hermetic `.kicad_sym` fixture with
+`kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
 
@@ -551,28 +566,29 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–12, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–15, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
-database (`store`, schema v4) with migrations plus project, symbol-library and
-PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
-(`kicad-parser`), deterministic netlist generation and KiCad export, graph
-traversal, five-rule ERC, board-outline geometry, layer-stack validation,
-JSON footprint libraries, distance primitives, track/via dimensions, pad
-copper, nine-rule DRC (eight geometry rules plus limit validation),
-deterministic single-layer and multi-layer grid routing with through vias and
-UUIDv5 ids, atomic core edit transactions with validated kAI suggestion
-application and undo/redo, permission-checked collaborative sessions with
-versioned project digests and staged transactions, bounded multi-step undo/redo
-history with branch clearing, validated plugin manifests with deterministic
-registry ordering and local discovery, renderer/AI/collab configuration types,
-the `kai-cad` self-check binary, CI (including a Markdown link check and
-coverage job), and documentation.
+database (`store`, schema v6) with migrations plus project, symbol-library,
+PCB-design and plugin CRUD, named symbol libraries and a deterministic
+`.kicad_sym` parser (`kicad-parser`), deterministic netlist generation and
+KiCad export, graph traversal, five-rule ERC, board-outline geometry,
+layer-stack validation, JSON footprint libraries, distance primitives,
+track/via dimensions, pad copper, nine-rule DRC (eight geometry rules plus
+limit validation), deterministic single-layer and multi-layer grid routing
+with through vias and UUIDv5 ids, atomic core edit transactions with validated
+kAI suggestion application and undo/redo, permission-checked collaborative
+sessions with versioned project digests and staged transactions, bounded
+multi-step undo/redo history with branch clearing, validated plugin manifests
+with deterministic registry ordering, local discovery, SQLite persistence,
+activation state, capability filters and CLI management, renderer/AI/collab
+configuration types, the `kai-cad` self-check binary, CI (including a Markdown
+link check and coverage job), and documentation.
 
-**Next (Week 13):** SQLite-backed plugin registry. The planned work is:
+**Next (Week 16):** beta readiness. The planned work is:
 
-1. Add schema v5 with a global `plugins` table and canonical manifest JSON.
-2. Add validated, deterministic plugin save/load/list/delete CRUD.
-3. Wire plugin persistence into the self-check and smoke tests.
+1. Harden the CLI parser and add user-facing plugin documentation.
+2. Add performance baselines for serialization, routing and plugin CRUD.
+3. Complete the release checklist and final compatibility audit.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
