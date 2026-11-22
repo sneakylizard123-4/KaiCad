@@ -4,7 +4,7 @@
 > ⬜ not started. Phase 1 (Weeks 1–4) is complete and verified, and Phase 2
 > began with Week 5 (PCB core). See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for
 > Week 1 evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
-> Week 7 brief.
+> Week 8 brief.
 
 ## Project Setup & Infrastructure
 
@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 171 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 188 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -188,7 +188,9 @@ geometry, layer-stack validation and JSON footprint libraries, adding 18 tests.
 Week 6 added distance primitives, track/via dimensions and an eight-rule DRC,
 adding another 18 tests. A follow-up limit-hardening pass added validated and
 persisted rules, dedicated via limits and a same-net clearance exemption, with
-9 more tests, for a total of **171 passing tests**. `cargo check`,
+9 more tests. Week 7 added deterministic single-layer routing, pad copper,
+via-to-track clearance and SQLite PCB-design persistence, with 17 more tests,
+for a total of **188 passing tests**. `cargo check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
 --check`, `cargo doc --workspace --no-deps`,
 `python3 scripts/check_markdown_links.py` and `cargo build --workspace

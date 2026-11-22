@@ -39,6 +39,119 @@ impl Default for PcbDesign {
     }
 }
 
+/// Axis-aligned copper rectangle in board coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CopperRect {
+    pub min: core::Point,
+    pub max: core::Point,
+}
+
+impl CopperRect {
+    fn from_center(center: core::Point, width: f64, height: f64) -> Self {
+        let half_width = width / 2.0;
+        let half_height = height / 2.0;
+        Self {
+            min: core::Point::new(center.x - half_width, center.y - half_height),
+            max: core::Point::new(center.x + half_width, center.y + half_height),
+        }
+    }
+
+    pub(crate) fn corners(&self) -> [core::Point; 4] {
+        [
+            self.min,
+            core::Point::new(self.max.x, self.min.y),
+            self.max,
+            core::Point::new(self.min.x, self.max.y),
+        ]
+    }
+
+    fn contains(&self, point: &core::Point) -> bool {
+        if !point.x.is_finite() || !point.y.is_finite() {
+            return false;
+        }
+        point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
+    }
+}
+
+/// Distance from a finite point to an axis-aligned rectangle.
+pub(crate) fn rect_distance_to_point(rect: &CopperRect, point: &core::Point) -> f64 {
+    if !point.x.is_finite() || !point.y.is_finite() {
+        return f64::NAN;
+    }
+    let dx = (rect.min.x - point.x).max(point.x - rect.max.x).max(0.0);
+    let dy = (rect.min.y - point.y).max(point.y - rect.max.y).max(0.0);
+    (dx * dx + dy * dy).sqrt()
+}
+
+/// Distance from a segment to an axis-aligned rectangle.
+pub(crate) fn rect_distance_to_segment(
+    rect: &CopperRect,
+    start: &core::Point,
+    end: &core::Point,
+) -> f64 {
+    if rect.contains(start) || rect.contains(end) {
+        return 0.0;
+    }
+
+    let corners = rect.corners();
+    let mut distance = f64::INFINITY;
+    for index in 0..4 {
+        distance = distance.min(core::geometry::segment_distance(
+            &corners[index],
+            &corners[(index + 1) % 4],
+            start,
+            end,
+        ));
+    }
+    distance
+}
+
+/// Distance between two axis-aligned rectangles.
+pub(crate) fn rect_distance_to_rect(a: &CopperRect, b: &CopperRect) -> f64 {
+    let overlap_x = a.min.x <= b.max.x && b.min.x <= a.max.x;
+    let overlap_y = a.min.y <= b.max.y && b.min.y <= a.max.y;
+    if overlap_x && overlap_y {
+        return 0.0;
+    }
+
+    let a_corners = a.corners();
+    let b_corners = b.corners();
+    let mut distance = f64::INFINITY;
+    for a_index in 0..4 {
+        for b_index in 0..4 {
+            distance = distance.min(core::geometry::segment_distance(
+                &a_corners[a_index],
+                &a_corners[(a_index + 1) % 4],
+                &b_corners[b_index],
+                &b_corners[(b_index + 1) % 4],
+            ));
+        }
+    }
+    distance
+}
+
+/// Pad copper placed in board coordinates, with the layers it occupies.
+#[derive(Debug, Clone)]
+pub(crate) struct PadCopper {
+    pub id: uuid::Uuid,
+    pub footprint_index: usize,
+    pub center: core::Point,
+    pub rect: CopperRect,
+    pub width: f64,
+    pub height: f64,
+    pub layers: Vec<u16>,
+    pub net_id: Option<uuid::Uuid>,
+}
+
+impl PadCopper {
+    pub(crate) fn has_valid_size(&self) -> bool {
+        self.width.is_finite() && self.width > 0.0 && self.height.is_finite() && self.height > 0.0
+    }
+}
+
 impl PcbDesign {
     /// Total number of copper layers in the stackup.
     ///
@@ -52,6 +165,97 @@ impl PcbDesign {
             .iter()
             .filter(|layer| layer.is_copper() && self.stackup.layers.contains(&layer.id))
             .count()
+    }
+
+    /// Copper layer ids in stackup order, or layer order when the stackup is empty.
+    pub(crate) fn copper_layer_ids(&self) -> Vec<u16> {
+        let mut ids = Vec::new();
+        for id in &self.stackup.layers {
+            if !ids.contains(id)
+                && self.layers.iter().any(|layer| layer.id == *id && layer.is_copper())
+            {
+                ids.push(*id);
+            }
+        }
+
+        if ids.is_empty() {
+            for layer in &self.layers {
+                if layer.is_copper() && !ids.contains(&layer.id) {
+                    ids.push(layer.id);
+                }
+            }
+        }
+        ids
+    }
+
+    /// Top copper layer, which is where surface-mount pads live.
+    pub(crate) fn top_copper_layer(&self) -> Option<u16> {
+        self.copper_layer_ids().first().copied()
+    }
+
+    /// Whether `layer` lies within the via's span.
+    pub(crate) fn via_covers_layer(&self, via: &Via, layer: u16) -> bool {
+        if via.layer_start == via.layer_end {
+            return layer == via.layer_start;
+        }
+
+        let copper = self.copper_layer_ids();
+        let start = copper.iter().position(|id| *id == via.layer_start);
+        let end = copper.iter().position(|id| *id == via.layer_end);
+
+        match (start, end) {
+            (Some(start), Some(end)) => {
+                let low = start.min(end);
+                let high = start.max(end);
+                copper[low..=high].contains(&layer)
+            }
+            _ => layer == via.layer_start || layer == via.layer_end,
+        }
+    }
+
+    /// Placed pad copper with absolute coordinates and layer coverage.
+    ///
+    /// Through-hole pads occupy every copper layer; surface-mount and tented
+    /// pads occupy the top copper layer. Pads keep their relative coordinates
+    /// and are offset by [`footprint::Footprint::position`].
+    pub(crate) fn pad_copper(&self) -> Vec<PadCopper> {
+        let copper = self.copper_layer_ids();
+        let top = self.top_copper_layer();
+        let mut pads = Vec::new();
+
+        for (footprint_index, footprint) in self.footprints.iter().enumerate() {
+            for (pad_index, pad) in footprint.pad_positions.iter().enumerate() {
+                let center =
+                    core::Point::new(footprint.position.x + pad.x, footprint.position.y + pad.y);
+                let layers = match pad.pad_type {
+                    footprint::PadType::ThroughHole => copper.clone(),
+                    footprint::PadType::SurfaceMount | footprint::PadType::Tented => {
+                        top.into_iter().collect()
+                    }
+                };
+                let name = format!(
+                    "pad:{}:{}:{}:{}:{}:{}:{}",
+                    footprint.name,
+                    footprint.reference_designator,
+                    footprint_index,
+                    pad_index,
+                    pad.x.to_bits(),
+                    pad.y.to_bits(),
+                    footprint.position.x.to_bits(),
+                );
+                pads.push(PadCopper {
+                    id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes()),
+                    footprint_index,
+                    center,
+                    rect: CopperRect::from_center(center, pad.width, pad.height),
+                    width: pad.width,
+                    height: pad.height,
+                    layers,
+                    net_id: pad.net_id,
+                });
+            }
+        }
+        pads
     }
 }
 

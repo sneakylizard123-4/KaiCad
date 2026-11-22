@@ -126,7 +126,7 @@ fn fixture_symbol_library(namespace: &str, name: &str) -> core::SymbolLibrary {
 #[test]
 fn open_in_memory_applies_initial_migration() {
     let store = Store::open_in_memory().expect("open in-memory store");
-    assert_eq!(store.schema_version().expect("schema version"), 3);
+    assert_eq!(store.schema_version().expect("schema version"), 4);
 }
 
 #[test]
@@ -136,11 +136,11 @@ fn migrations_are_idempotent() {
 
     {
         let store = Store::open(&path).expect("first open");
-        assert_eq!(store.schema_version().expect("schema version"), 3);
+        assert_eq!(store.schema_version().expect("schema version"), 4);
     }
     {
         let store = Store::open(&path).expect("second open");
-        assert_eq!(store.schema_version().expect("schema version"), 3);
+        assert_eq!(store.schema_version().expect("schema version"), 4);
     }
 }
 
@@ -460,6 +460,90 @@ fn delete_symbol_library_returns_true_once_then_false() {
     assert!(store.delete_symbol_library(library.id).expect("delete first"));
     assert!(!store.delete_symbol_library(library.id).expect("delete second"));
     assert!(store.load_symbol_library(library.id).expect("load").is_none());
+}
+
+fn fixture_pcb_design() -> pcb::PcbDesign {
+    pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(100.0, 80.0),
+        layers: vec![core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper)],
+        stackup: core::Stackup { layers: vec![0] },
+        tracks: vec![pcb::Track {
+            id: fixed_uuid("design:track"),
+            net_id: fixed_uuid("design:net"),
+            layer: 0,
+            width: 0.3,
+            path: vec![core::Point::new(10.0, 10.0), core::Point::new(40.0, 10.0)],
+        }],
+        rules: pcb::DrcRules { clearance: 0.25, ..pcb::DrcRules::default() },
+        ..pcb::PcbDesign::default()
+    }
+}
+
+#[test]
+fn pcb_design_round_trip() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let project = fixture_project();
+    let design = fixture_pcb_design();
+
+    store.create_project(&project).expect("create project");
+    store.save_pcb_design(project.id, &design).expect("save design");
+
+    let loaded = store.load_pcb_design(project.id).expect("load design").expect("design exists");
+
+    assert_eq!(loaded.id, design.id);
+    assert_eq!(loaded.outline, design.outline);
+    assert_eq!(loaded.rules, design.rules);
+    assert_eq!(loaded.tracks.len(), 1);
+    assert_eq!(loaded.tracks[0].id, design.tracks[0].id);
+    assert_eq!(loaded.tracks[0].width, 0.3);
+    assert_eq!(loaded.tracks[0].path, design.tracks[0].path);
+}
+
+#[test]
+fn pcb_design_upsert_replaces_existing_data() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let project = fixture_project();
+    let mut design = fixture_pcb_design();
+
+    store.create_project(&project).expect("create project");
+    store.save_pcb_design(project.id, &design).expect("save design");
+
+    design.tracks[0].width = 0.5;
+    design.rules.min_track_width = 0.2;
+    store.save_pcb_design(project.id, &design).expect("save updated design");
+
+    let loaded = store.load_pcb_design(project.id).expect("load design").expect("design exists");
+    assert_eq!(loaded.tracks.len(), 1);
+    assert_eq!(loaded.tracks[0].width, 0.5);
+    assert_eq!(loaded.rules.min_track_width, 0.2);
+}
+
+#[test]
+fn pcb_design_delete_and_project_cascade() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let project = fixture_project();
+
+    store.create_project(&project).expect("create project");
+    store.save_pcb_design(project.id, &fixture_pcb_design()).expect("save design");
+
+    assert!(store.delete_pcb_design(project.id).expect("delete design"));
+    assert!(!store.delete_pcb_design(project.id).expect("delete design again"));
+    assert!(store.load_pcb_design(project.id).expect("load design").is_none());
+
+    store.save_pcb_design(project.id, &fixture_pcb_design()).expect("save design again");
+    store.delete_project(project.id).expect("delete project");
+    assert!(store.load_pcb_design(project.id).expect("load after cascade").is_none());
+}
+
+#[test]
+fn saving_pcb_design_for_unknown_project_fails() {
+    let mut store = Store::open_in_memory().expect("open in-memory store");
+    let missing = fixed_uuid("missing:project");
+
+    match store.save_pcb_design(missing, &fixture_pcb_design()) {
+        Err(StoreError::MissingProject(id)) => assert_eq!(id, missing),
+        other => panic!("expected MissingProject, got {other:?}"),
+    }
 }
 
 struct ProjectionCounts {

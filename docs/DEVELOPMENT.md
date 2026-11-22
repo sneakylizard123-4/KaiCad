@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–6 are complete (171 tests, clippy/fmt/doc/release
-> all clean). Week 7 — deterministic single-layer routing — is next; its work
-> order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–7 are complete (188 tests, clippy/fmt/doc/release
+> all clean). Week 8 — multi-layer routing with vias — is next; its work order
+> is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,7 +121,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **171 tests**, all passing:
+`cargo test --workspace` currently runs **188 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -129,11 +129,11 @@ benchmarks; a bare `cargo check` misses them.
 | `collab` (`src/lib.rs`) | 9 |
 | `core` (`src/tests.rs` and inline modules) | 31 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
-| `pcb` (`src/lib.rs`, `drc.rs` and modules) | 44 |
+| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 56 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
-| `store` (`src/tests.rs`) | 19 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 11 |
+| `store` (`src/tests.rs`) | 23 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 12 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -157,11 +157,11 @@ License: GPL-3.0-or-later
 subsystem self-check:
   core: project JSON round trip ok (… bytes)
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
-  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing)
+  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s)
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always
   collab: 1 session(s)
-  store: created, loaded and deleted 1 project (schema v3)
+  store: created, loaded and deleted 1 project with its PCB design (schema v4)
   kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym
 self-check: ok
 ```
@@ -247,8 +247,8 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–6 are finished; Week 7 adds deterministic single-layer grid routing
-with DRC-clean output. Before starting, read
+Weeks 1–7 are finished; Week 8 extends routing across copper layers with
+deterministic via insertion. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -349,10 +349,13 @@ If the output changes between runs, check that no upstream code reintroduced
 produce the same report, sorted by `(rule_id, objects)`. If a result surprises
 you, check these semantics before changing a rule:
 
-- Clearance is measured **edge to edge** on the same copper layer:
-  `segment_distance - width_a / 2 - width_b / 2`, with each unordered pair
-  checked once. Tracks on other layers, non-copper layers and the **same net**
-  are skipped, because same-net copper is an intentional connection.
+- Clearance is measured **edge to edge** on shared copper layers:
+  tracks use `segment_distance - width_a / 2 - width_b / 2`, via-track pairs
+  subtract the via radius, and pads are axis-aligned copper rectangles offset
+  by the footprint position. Tracks on other layers, non-copper layers and the
+  **same net** are skipped, because same-net copper is an intentional
+  connection. Pad-to-track clearance is skipped when `pad.net_id` matches the
+  track's net; pads in one footprint are not compared with each other.
 - Limits live on `PcbDesign::rules` and serialize with the design. Every limit
   must be finite and greater than zero; `DrcRules::validate` checks this and
   `run_drc` reports an invalid set as a `drc-rules` error, then checks with the
@@ -372,10 +375,35 @@ you, check these semantics before changing a rule:
 - Non-finite coordinates are reported by `track-path`; the distance helpers
   return `f64::INFINITY` for them, and clearance ignores non-finite distances
   or widths rather than calling them clear.
+- `pad-size` reports a non-finite or non-positive pad width/height, and
+  `pad-outside-board` checks all four pad corners. Through-hole pads occupy
+  every copper layer in the stackup; surface-mount and tented pads occupy the
+  top copper layer only. Pad copper defaults to 1 mm square and net `None`.
 
 If the report changes between identical runs, look for code that consumes
 `HashMap` iteration order or track insertion order instead of the sorted
 report.
+
+### Routing results look wrong
+
+`pcb::routing::route` snaps both endpoints to an origin-anchored grid (half-grid
+values round away from zero), runs four-neighbour A* and returns one simplified
+track. Check these semantics before changing the router:
+
+- The start and end nodes must be inside the outline and not blocked by
+  existing copper. A blocked endpoint is an `InvalidRequest`, not `NoPath`.
+- Nodes and each moved segment are tested against tracks, vias and pads on the
+  requested layer, using the design's clearance plus half of the route width.
+  Same-net pads are ignored so a route can connect to its own pad.
+- Search ties are broken by `(f, g, y, x, direction)`, and ids are UUIDv5
+  values over the net, layer, width, grid and snapped endpoints. Routing the
+  same request twice must produce identical JSON.
+- `NoPath` means the reachable search space was exhausted; `ExpansionLimit`
+  means `max_expansions` was reached first. A larger limit can turn the latter
+  into a path or into `NoPath`, never into a different successful path for the
+  same limit.
+- Returned points are the snapped lattice coordinates, and collinear points are
+  merged; the track has no vias yet and stays on one layer.
 
 ### Footprint libraries behave unexpectedly
 
@@ -392,8 +420,10 @@ Known limits:
   and reports I/O and JSON errors through `FootprintLibraryError`.
 - `sorted` orders by `(name, reference_designator)` for display only; the
   library keeps insertion order, so `to_json` output follows the vector.
-- Pad outlines are outlines, not copper shapes: DRC geometry does not exist
-  yet.
+- Pad copper is separate from the footprint outline: each `PadPosition` has
+  `width`/`height`, an optional `net_id`, and is placed by
+  `Footprint::position`. Outlines are documentation shapes and are not checked
+  as copper. There is no rotation support yet, so pads are axis-aligned.
 
 ### Build is slow the first time
 

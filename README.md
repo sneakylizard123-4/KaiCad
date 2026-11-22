@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 6 PCB geometry and DRC complete (pre-alpha); Week 7 (deterministic routing) is next
+- **Implementation:** Week 7 deterministic routing complete (pre-alpha); Week 8 (multi-layer routing) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (171 tests across the workspace)
+# Run tests (188 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -120,7 +120,8 @@ KaiCad/
 │   ├── migrations/
 │   │   ├── 0001_initial.sql
 │   │   ├── 0002_projection_primary_keys.sql
-│   │   └── 0003_symbol_libraries.sql
+│   │   ├── 0003_symbol_libraries.sql
+│   │   └── 0004_pcb_designs.sql
 │   └── examples/
 │       └── project_crud.rs
 ├── kicad-parser/               # KiCad symbol-library import (S-expression)
@@ -143,7 +144,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 7)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 8)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -151,16 +152,16 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–6 are complete and verified: **171 tests pass**, `cargo clippy
+Weeks 1–7 are complete and verified: **188 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 6 added shared point/segment
-distance primitives, track width and via diameter/drill dimensions with serde
-defaults, and a deterministic design-rule check whose limits are stored on the
-design, validated before use, and enforced with dedicated via limits.
+clean, and the release build succeeds. Week 7 added deterministic single-layer
+grid routing (`RouterConfig`, `RouteRequest`, `RouteError`, `route`), pad copper
+in the DRC (size, containment and clearance), via-to-track clearance, and
+SQLite persistence of complete PCB designs including their DRC rules.
 
-The next milestone is **Week 7 — deterministic single-layer routing**: a
-configurable grid router that avoids existing copper and the board edge, with
-routes validated by the DRC. The full brief is in
+The next milestone is **Week 8 — multi-layer routing with vias**: extend the
+router across copper layers, insert vias deterministically and keep the result
+DRC-clean. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -177,11 +178,11 @@ What each crate provides today:
   rules: `net-single-pin` and `unconnected-pin` (warnings),
   `duplicate-net-name`, `duplicate-symbol-name` and `self-connection` (errors).
 - 🚧 **pcb** — `PcbDesign` built on `core` types, board-outline geometry,
-  `LayerStack` with validation, `FootprintLibrary` JSON persistence
-  (`to_json`, `from_json`, `save`, `load`), track width and via dimensions,
-  a deterministic nine-rule DRC (`run_drc`) with validated, per-design limits,
-  `Router` configuration and
-  `Footprint`/`OutlineShape` types. No routing algorithm yet.
+  `LayerStack` with validation, `FootprintLibrary` JSON persistence, track and
+  via dimensions, placed footprints with pad copper, a deterministic DRC
+  (`run_drc`) covering tracks, vias and pads with validated per-design limits,
+  and deterministic single-layer A* routing (`route`) with grid/cost
+  configuration. Quadratic multi-layer routing with vias is next.
 - 🚧 **renderer** — `RendererConfig` and `WindowConfig` only. `Renderer::new`
   and `Renderer::render` return `NotImplemented`; no Vulkan objects are created.
 - 🚧 **ai (kAI)** — configuration plus deterministic suggestion validation
@@ -189,15 +190,16 @@ What each crate provides today:
   `kAI::suggest_optimization` returns `NotImplemented`.
 - 🚧 **collab** — `CollabManager` session creation, `VersioningManager`,
   `SharingManager` and `Window`. No transport, merge or real-time sync.
-- ✅ **store** — SQLite engineering database with versioned migrations,
-  project CRUD (`create`, `load`, `list`, `update`, `delete`) and
-  symbol-library CRUD.
+- ✅ **store** — SQLite engineering database (schema v4) with versioned
+  migrations, project CRUD (`create`, `load`, `list`, `update`, `delete`),
+  symbol-library CRUD, and PCB-design CRUD (`save`, `load`, `delete`) storing
+  tracks, vias, footprints and DRC rules as JSON.
 - ✅ **kicad-parser** — deterministic S-expression reader and `.kicad_sym`
   loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
-  round trips a footprint library through a temporary file, and checks that DRC
-  rejects a shorted board and accepts a clean one.
+  round trips a footprint library, routes a track and verifies it is DRC-clean,
+  rejects a blocked route, and stores and reloads a PCB design.
 
 ## Roadmap
 

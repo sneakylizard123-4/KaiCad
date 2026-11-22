@@ -11,7 +11,10 @@ use std::cmp::Ordering;
 
 use uuid::Uuid;
 
-use crate::{PcbDesign, Track, Via};
+use crate::{
+    CopperRect, PadCopper, PcbDesign, Track, Via, rect_distance_to_point, rect_distance_to_rect,
+    rect_distance_to_segment,
+};
 
 /// Minimum copper dimensions enforced by the built-in rules.
 ///
@@ -178,7 +181,13 @@ pub fn run_drc(design: &PcbDesign, rules: &DrcRules) -> DrcReport {
         check_via_drill(via, rules, &mut violations);
     }
 
-    check_clearance(design, rules, &mut violations);
+    let pads = design.pad_copper();
+    for pad in &pads {
+        check_pad_size(pad, &mut violations);
+        check_pad_outside(design, pad, &mut violations);
+    }
+
+    check_clearance(design, rules, &pads, &mut violations);
 
     violations.sort_by(|left, right| {
         left.rule_id
@@ -476,7 +485,44 @@ fn check_via_drill(via: &Via, rules: &DrcRules, violations: &mut Vec<DrcViolatio
     }
 }
 
-fn check_clearance(design: &PcbDesign, rules: &DrcRules, violations: &mut Vec<DrcViolation>) {
+fn check_pad_size(pad: &PadCopper, violations: &mut Vec<DrcViolation>) {
+    if pad.has_valid_size() {
+        return;
+    }
+
+    push(
+        violations,
+        "pad-size",
+        DrcSeverity::Error,
+        format!("pad {} has invalid size {} x {} mm", pad.id, pad.width, pad.height),
+        vec![pad.id],
+        finite_location(&pad.center),
+    );
+}
+
+fn check_pad_outside(design: &PcbDesign, pad: &PadCopper, violations: &mut Vec<DrcViolation>) {
+    if design.outline.points.len() < 3 || !pad.has_valid_size() {
+        return;
+    }
+
+    if pad.rect.corners().iter().any(|corner| !design.outline.contains_point(corner)) {
+        push(
+            violations,
+            "pad-outside-board",
+            DrcSeverity::Error,
+            format!("pad {} extends outside the board outline", pad.id),
+            vec![pad.id],
+            finite_location(&pad.center),
+        );
+    }
+}
+
+fn check_clearance(
+    design: &PcbDesign,
+    rules: &DrcRules,
+    pads: &[PadCopper],
+    violations: &mut Vec<DrcViolation>,
+) {
     for left in 0..design.tracks.len() {
         for right in left + 1..design.tracks.len() {
             let first = &design.tracks[left];
@@ -504,8 +550,7 @@ fn check_clearance(design: &PcbDesign, rules: &DrcRules, violations: &mut Vec<Dr
                 continue;
             }
 
-            let mut objects = vec![first.id, second.id];
-            objects.sort_by_key(|id| id.to_string());
+            let objects = pair_objects(first.id, second.id);
             push(
                 violations,
                 "clearance",
@@ -519,6 +564,189 @@ fn check_clearance(design: &PcbDesign, rules: &DrcRules, violations: &mut Vec<Dr
             );
         }
     }
+
+    for track in &design.tracks {
+        if !is_copper(design, track.layer) || !track.width.is_finite() {
+            continue;
+        }
+
+        for via in &design.vias {
+            if !design.via_covers_layer(via, track.layer) || !via.diameter.is_finite() {
+                continue;
+            }
+
+            let distance = path_point_distance(&track.path, &via.position);
+            if !distance.is_finite() {
+                continue;
+            }
+
+            let gap = distance - track.width / 2.0 - via.diameter / 2.0;
+            if gap >= rules.clearance {
+                continue;
+            }
+
+            let objects = pair_objects(track.id, via.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "track {} and via {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], track.layer, gap, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+    }
+
+    for pad in pads {
+        if !pad.has_valid_size() || pad.layers.is_empty() {
+            continue;
+        }
+
+        for track in &design.tracks {
+            if !pad.layers.contains(&track.layer)
+                || !track.width.is_finite()
+                || pad.net_id == Some(track.net_id)
+            {
+                continue;
+            }
+
+            let distance = rect_distance_to_track(&pad.rect, &track.path);
+            if !distance.is_finite() {
+                continue;
+            }
+
+            let gap = distance - track.width / 2.0;
+            if gap >= rules.clearance {
+                continue;
+            }
+
+            let objects = pair_objects(pad.id, track.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "pad {} and track {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], track.layer, gap, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+
+        for via in &design.vias {
+            if !via.diameter.is_finite() {
+                continue;
+            }
+
+            let Some(layer) =
+                pad.layers.iter().copied().find(|layer| design.via_covers_layer(via, *layer))
+            else {
+                continue;
+            };
+
+            let distance = rect_distance_to_point(&pad.rect, &via.position);
+            if !distance.is_finite() {
+                continue;
+            }
+
+            let gap = distance - via.diameter / 2.0;
+            if gap >= rules.clearance {
+                continue;
+            }
+
+            let objects = pair_objects(pad.id, via.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "pad {} and via {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], layer, gap, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+    }
+
+    for left in 0..pads.len() {
+        for right in left + 1..pads.len() {
+            let first = &pads[left];
+            let second = &pads[right];
+
+            if first.footprint_index == second.footprint_index
+                || !first.has_valid_size()
+                || !second.has_valid_size()
+                || first.layers.is_empty()
+                || second.layers.is_empty()
+                || (first.net_id.is_some() && first.net_id == second.net_id)
+            {
+                continue;
+            }
+
+            let Some(layer) =
+                first.layers.iter().copied().find(|layer| second.layers.contains(layer))
+            else {
+                continue;
+            };
+
+            let distance = rect_distance_to_rect(&first.rect, &second.rect);
+            if !distance.is_finite() || distance >= rules.clearance {
+                continue;
+            }
+
+            let objects = pair_objects(first.id, second.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "pads {} and {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], layer, distance, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+    }
+}
+
+/// Smallest distance between a path and a point.
+fn path_point_distance(path: &[core::Point], point: &core::Point) -> f64 {
+    if path.is_empty() {
+        return f64::INFINITY;
+    }
+    if path.len() == 1 {
+        return point.distance_to(&path[0]);
+    }
+
+    path.windows(2)
+        .map(|window| point.distance_to_segment(&window[0], &window[1]))
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Smallest distance between a rectangle and a path.
+fn rect_distance_to_track(rect: &CopperRect, path: &[core::Point]) -> f64 {
+    if path.is_empty() {
+        return f64::INFINITY;
+    }
+    if path.len() == 1 {
+        return rect_distance_to_point(rect, &path[0]);
+    }
+
+    path.windows(2)
+        .map(|window| rect_distance_to_segment(rect, &window[0], &window[1]))
+        .fold(f64::INFINITY, f64::min)
+}
+
+fn pair_objects(first: Uuid, second: Uuid) -> Vec<Uuid> {
+    let mut objects = vec![first, second];
+    objects.sort_by_key(|id| id.to_string());
+    objects
 }
 
 /// Smallest distance between two track paths, edge to edge before widths are
@@ -557,6 +785,7 @@ fn edge(path: &[core::Point], index: usize) -> (&core::Point, &core::Point) {
 #[cfg(test)]
 mod tests {
     use super::{DrcReport, DrcRules, DrcSeverity, DrcViolation, run_drc};
+    use crate::footprint::{Footprint, PadPosition, PadType};
     use crate::{PcbDesign, Track, Via};
     use core::{LayerKind, PcbLayer, PcbOutline, Point, Stackup};
     use uuid::Uuid;
@@ -590,6 +819,14 @@ mod tests {
 
     fn with_rule<'a>(report: &'a DrcReport, rule_id: &str) -> Vec<&'a DrcViolation> {
         report.violations.iter().filter(|violation| violation.rule_id == rule_id).collect()
+    }
+
+    fn pad(x: f64, y: f64, net_id: Option<Uuid>) -> PadPosition {
+        PadPosition { x, y, pad_type: PadType::SurfaceMount, net_id, ..PadPosition::default() }
+    }
+
+    fn footprint(position: Point, pads: Vec<PadPosition>) -> Footprint {
+        Footprint { position, pad_positions: pads, ..Footprint::default() }
     }
 
     #[test]
@@ -928,5 +1165,110 @@ mod tests {
         assert_eq!(rules.clearance, 0.25);
         assert_eq!(rules.min_annular_ring, DrcRules::default().min_annular_ring);
         assert_eq!(rules.min_via_drill, DrcRules::default().min_via_drill);
+    }
+
+    #[test]
+    fn clearance_rule_covers_via_to_track_pairs() {
+        let track = track(0, 0.25, vec![Point::new(10.0, 10.0), Point::new(30.0, 10.0)]);
+
+        let close = board(vec![track.clone()], vec![via(0, 1, Point::new(20.0, 10.3))]);
+        assert_eq!(count_rule(&run_drc(&close, &DrcRules::default()), "clearance"), 1);
+
+        let far = board(vec![track.clone()], vec![via(0, 1, Point::new(20.0, 15.0))]);
+        assert_eq!(count_rule(&run_drc(&far, &DrcRules::default()), "clearance"), 0);
+
+        let other_layer = board(vec![track], vec![via(1, 1, Point::new(20.0, 10.3))]);
+        assert_eq!(count_rule(&run_drc(&other_layer, &DrcRules::default()), "clearance"), 0);
+    }
+
+    #[test]
+    fn pads_are_checked_for_size_and_board_containment() {
+        let inside = PcbDesign {
+            footprints: vec![footprint(Point::new(20.0, 20.0), vec![pad(0.0, 0.0, None)])],
+            ..board(Vec::new(), Vec::new())
+        };
+        let report = run_drc(&inside, &DrcRules::default());
+        assert_eq!(count_rule(&report, "pad-size"), 0);
+        assert_eq!(count_rule(&report, "pad-outside-board"), 0);
+
+        let outside = PcbDesign {
+            footprints: vec![footprint(Point::new(150.0, 20.0), vec![pad(0.0, 0.0, None)])],
+            ..board(Vec::new(), Vec::new())
+        };
+        let report = run_drc(&outside, &DrcRules::default());
+        assert_eq!(count_rule(&report, "pad-outside-board"), 1);
+
+        let mut invalid = inside;
+        invalid.footprints[0].pad_positions[0].width = 0.0;
+        let report = run_drc(&invalid, &DrcRules::default());
+        assert_eq!(count_rule(&report, "pad-size"), 1);
+        assert_eq!(count_rule(&report, "pad-outside-board"), 0);
+    }
+
+    #[test]
+    fn clearance_rule_covers_pad_to_track_and_pad_to_via() {
+        let net = Uuid::new_v4();
+        let placed = |pad: PadPosition| PcbDesign {
+            footprints: vec![footprint(Point::new(20.0, 10.0), vec![pad])],
+            ..board(Vec::new(), Vec::new())
+        };
+
+        let close_track = PcbDesign {
+            tracks: vec![track(0, 0.25, vec![Point::new(10.0, 10.7), Point::new(30.0, 10.7)])],
+            ..placed(pad(0.0, 0.0, None))
+        };
+        assert_eq!(count_rule(&run_drc(&close_track, &DrcRules::default()), "clearance"), 1);
+
+        let same_net = PcbDesign {
+            tracks: vec![Track {
+                net_id: net,
+                ..track(0, 0.25, vec![Point::new(10.0, 10.7), Point::new(30.0, 10.7)])
+            }],
+            ..placed(pad(0.0, 0.0, Some(net)))
+        };
+        assert_eq!(count_rule(&run_drc(&same_net, &DrcRules::default()), "clearance"), 0);
+
+        let other_layer = PcbDesign {
+            tracks: vec![track(1, 0.25, vec![Point::new(10.0, 10.7), Point::new(30.0, 10.7)])],
+            ..placed(pad(0.0, 0.0, None))
+        };
+        assert_eq!(count_rule(&run_drc(&other_layer, &DrcRules::default()), "clearance"), 0);
+
+        let close_via = PcbDesign {
+            vias: vec![via(0, 1, Point::new(20.0, 10.9))],
+            ..placed(pad(0.0, 0.0, None))
+        };
+        assert_eq!(count_rule(&run_drc(&close_via, &DrcRules::default()), "clearance"), 1);
+    }
+
+    #[test]
+    fn clearance_rule_covers_pads_between_footprints_and_exempts_one_footprint() {
+        let apart = PcbDesign {
+            footprints: vec![
+                footprint(Point::new(20.0, 10.0), vec![pad(0.0, 0.0, None)]),
+                footprint(Point::new(21.0, 10.0), vec![pad(0.0, 0.0, None)]),
+            ],
+            ..board(Vec::new(), Vec::new())
+        };
+        assert_eq!(count_rule(&run_drc(&apart, &DrcRules::default()), "clearance"), 1);
+
+        let same_footprint = PcbDesign {
+            footprints: vec![footprint(
+                Point::new(20.0, 10.0),
+                vec![pad(0.0, 0.0, None), pad(0.5, 0.0, None)],
+            )],
+            ..board(Vec::new(), Vec::new())
+        };
+        assert_eq!(count_rule(&run_drc(&same_footprint, &DrcRules::default()), "clearance"), 0);
+
+        let net = Uuid::new_v4();
+        let same_net = PcbDesign {
+            footprints: vec![
+                footprint(Point::new(20.0, 10.0), vec![pad(0.0, 0.0, Some(net))]),
+                footprint(Point::new(21.0, 10.0), vec![pad(0.0, 0.0, Some(net))]),
+            ],
+            ..board(Vec::new(), Vec::new())
+        };
+        assert_eq!(count_rule(&run_drc(&same_net, &DrcRules::default()), "clearance"), 0);
     }
 }

@@ -210,19 +210,67 @@ fn check_pcb() -> Result<(), String> {
     ensure(clean.is_valid(), "pcb: DRC rejected a clean board")?;
     ensure(clean.violations.is_empty(), "pcb: DRC reported a violation on a clean board")?;
 
+    let route_request = pcb::routing::RouteRequest {
+        net_id: Uuid::new_v4(),
+        start: core::Point::new(5.0, 5.0),
+        end: core::Point::new(95.0, 5.0),
+        layer: 0,
+        width: 0.25,
+    };
+    let router_config = pcb::routing::RouterConfig::default();
+    let routed = pcb::routing::route(&route_request, &design, &router_config)
+        .map_err(|error| format!("pcb: routing failed: {error}"))?;
+    ensure(!routed.is_empty(), "pcb: router returned no tracks")?;
+
+    let mut routed_design = design.clone();
+    routed_design.tracks.extend(routed.clone());
+    let routed_report = pcb::run_drc(&routed_design, &routed_design.rules);
+    ensure(routed_report.is_valid(), "pcb: routed track fails DRC")?;
+
+    let mut blocked_design = design.clone();
+    blocked_design.tracks.push(pcb::Track {
+        id: Uuid::new_v4(),
+        net_id: Uuid::new_v4(),
+        layer: 0,
+        width: 0.25,
+        path: vec![core::Point::new(0.0, 40.0), core::Point::new(100.0, 40.0)],
+    });
+    let blocked_request = pcb::routing::RouteRequest {
+        net_id: Uuid::new_v4(),
+        start: core::Point::new(5.0, 35.0),
+        end: core::Point::new(95.0, 45.0),
+        ..route_request
+    };
+    let blocked_config = pcb::routing::RouterConfig { max_expansions: 20_000, ..router_config };
+    ensure(
+        pcb::routing::route(&blocked_request, &blocked_design, &blocked_config).is_err(),
+        "pcb: router crossed a blocking wall",
+    )?;
+
     let library = pcb::FootprintLibrary {
         name: "self-check".to_string(),
         footprints: vec![pcb::Footprint {
             name: "R_0603".to_string(),
             reference_designator: "R".to_string(),
             pad_positions: vec![
-                pcb::PadPosition { x: -0.8, y: 0.0, pad_type: pcb::PadType::SurfaceMount },
-                pcb::PadPosition { x: 0.8, y: 0.0, pad_type: pcb::PadType::SurfaceMount },
+                pcb::PadPosition {
+                    x: -0.8,
+                    y: 0.0,
+                    pad_type: pcb::PadType::SurfaceMount,
+                    ..pcb::PadPosition::default()
+                },
+                pcb::PadPosition {
+                    x: 0.8,
+                    y: 0.0,
+                    pad_type: pcb::PadType::SurfaceMount,
+                    ..pcb::PadPosition::default()
+                },
             ],
             outline: pcb::footprint::Outline {
                 shape: pcb::footprint::OutlineShape::rounded_rectangle(-1.6, -0.8, 3.2, 1.6, 0.2),
                 copper: false,
             },
+            ..pcb::Footprint::default()
         }],
     };
 
@@ -236,14 +284,15 @@ fn check_pcb() -> Result<(), String> {
     ensure(loaded.footprints[0].pad_positions.len() == 2, "pcb: footprint library lost pads")?;
 
     println!(
-        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s), DRC clean={} ({} violation(s) before fixing)",
+        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s), DRC clean={} ({} violation(s) before fixing), routed {} point(s)",
         design.outline.points.len(),
         design.outline.area(),
         design.layers.len(),
         design.copper_layer_count(),
         loaded.footprints.len(),
         clean.violations.is_empty(),
-        dirty.violations.len()
+        dirty.violations.len(),
+        routed[0].path.len()
     );
     Ok(())
 }
@@ -298,6 +347,25 @@ fn check_store() -> Result<(), String> {
         .create_project(&project)
         .map_err(|error| format!("store: failed to create project: {error}"))?;
 
+    let design = pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(50.0, 40.0),
+        layers: vec![core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper)],
+        stackup: core::Stackup { layers: vec![0] },
+        rules: pcb::DrcRules { clearance: 0.3, ..pcb::DrcRules::default() },
+        ..pcb::PcbDesign::default()
+    };
+    store
+        .save_pcb_design(project.id, &design)
+        .map_err(|error| format!("store: failed to save PCB design: {error}"))?;
+    let loaded_design = store
+        .load_pcb_design(project.id)
+        .map_err(|error| format!("store: failed to load PCB design: {error}"))?
+        .ok_or("store: saved PCB design disappeared")?;
+    ensure(
+        loaded_design.rules == design.rules,
+        "store: PCB design rules changed across a database round trip",
+    )?;
+
     let loaded = store
         .load_project(project.id)
         .map_err(|error| format!("store: failed to load project: {error}"))?
@@ -313,12 +381,21 @@ fn check_store() -> Result<(), String> {
         .delete_project(project.id)
         .map_err(|error| format!("store: failed to delete project: {error}"))?;
     ensure(deleted, "store: project was not deleted")?;
+    ensure(
+        store
+            .load_pcb_design(project.id)
+            .map_err(|error| format!("store: failed to load deleted PCB design: {error}"))?
+            .is_none(),
+        "store: PCB design survived project deletion",
+    )?;
 
     let version = store
         .schema_version()
         .map_err(|error| format!("store: failed to read schema version: {error}"))?;
 
-    println!("  store: created, loaded and deleted 1 project (schema v{version})");
+    println!(
+        "  store: created, loaded and deleted 1 project with its PCB design (schema v{version})"
+    );
     Ok(())
 }
 

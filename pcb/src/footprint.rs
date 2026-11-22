@@ -8,16 +8,50 @@ use std::path::Path;
 pub struct Footprint {
     pub name: String,
     pub reference_designator: String,
+    /// Placement origin on the board in millimetres. Pad coordinates are
+    /// relative to this origin.
+    #[serde(default)]
+    pub position: core::Point,
     pub pad_positions: Vec<PadPosition>,
     pub outline: Outline,
 }
 
+fn default_pad_width() -> f64 {
+    1.0
+}
+
+fn default_pad_height() -> f64 {
+    1.0
+}
+
 /// A single pad position on a footprint.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PadPosition {
     pub x: f64,
     pub y: f64,
     pub pad_type: PadType,
+    /// Copper width of the pad in millimetres.
+    #[serde(default = "default_pad_width")]
+    pub width: f64,
+    /// Copper height of the pad in millimetres.
+    #[serde(default = "default_pad_height")]
+    pub height: f64,
+    /// Net this pad belongs to, when one is assigned.
+    #[serde(default)]
+    pub net_id: Option<uuid::Uuid>,
+}
+
+impl Default for PadPosition {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            pad_type: PadType::default(),
+            width: default_pad_width(),
+            height: default_pad_height(),
+            net_id: None,
+        }
+    }
 }
 
 /// Type of pad (e.g., through-hole, surface-mount, etc.).
@@ -187,13 +221,24 @@ mod tests {
             name: name.to_string(),
             reference_designator: reference_designator.to_string(),
             pad_positions: vec![
-                PadPosition { x: -0.8, y: 0.0, pad_type: PadType::SurfaceMount },
-                PadPosition { x: 0.8, y: 0.0, pad_type: PadType::SurfaceMount },
+                PadPosition {
+                    x: -0.8,
+                    y: 0.0,
+                    pad_type: PadType::SurfaceMount,
+                    ..PadPosition::default()
+                },
+                PadPosition {
+                    x: 0.8,
+                    y: 0.0,
+                    pad_type: PadType::SurfaceMount,
+                    ..PadPosition::default()
+                },
             ],
             outline: super::Outline {
                 shape: OutlineShape::rounded_rectangle(-1.6, -0.8, 3.2, 1.6, 0.2),
                 copper: false,
             },
+            ..Footprint::default()
         }
     }
 
@@ -324,5 +369,23 @@ mod tests {
         assert_eq!(loaded.footprints[0].pad_positions.len(), 2);
 
         std::fs::remove_dir_all(&directory).expect("clean up temp directory");
+    }
+
+    #[test]
+    fn pad_dimensions_default_and_load_from_old_json() {
+        let pad = PadPosition::default();
+        assert_eq!(pad.width, 1.0);
+        assert_eq!(pad.height, 1.0);
+        assert!(pad.net_id.is_none());
+
+        let footprint: Footprint = serde_json::from_str(
+            r#"{"name":"R","reference_designator":"R1","pad_positions":[{"x":0.0,"y":0.0,"pad_type":"SurfaceMount"}],"outline":{"shape":{"Rectangle":{"x":0.0,"y":0.0,"width":1.0,"height":1.0}},"copper":false}}"#,
+        )
+        .expect("old footprint JSON should load");
+
+        assert_eq!(footprint.position, core::Point::default());
+        assert_eq!(footprint.pad_positions[0].width, 1.0);
+        assert_eq!(footprint.pad_positions[0].height, 1.0);
+        assert!(footprint.pad_positions[0].net_id.is_none());
     }
 }

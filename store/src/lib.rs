@@ -19,7 +19,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction};
 mod tests;
 
 /// Highest migration version shipped by this crate.
-const CURRENT_SCHEMA_VERSION: u32 = 3;
+const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 /// Migrations are numbered SQL files embedded with `include_str!`.  Never edit
 /// an applied migration; add a new numbered entry at the end.
@@ -27,6 +27,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
     (2, include_str!("../migrations/0002_projection_primary_keys.sql")),
     (3, include_str!("../migrations/0003_symbol_libraries.sql")),
+    (4, include_str!("../migrations/0004_pcb_designs.sql")),
 ];
 
 /// A synchronous SQLite-backed engineering database.
@@ -55,6 +56,8 @@ pub enum StoreError {
     Io(std::io::Error),
     /// A project with the same id already exists.
     Duplicate(uuid::Uuid),
+    /// A PCB design was saved for a project that does not exist.
+    MissingProject(uuid::Uuid),
     /// The migration runner failed.
     MigrationFailed(String),
 }
@@ -66,6 +69,7 @@ impl fmt::Display for StoreError {
             Self::Json(error) => write!(f, "json error: {error}"),
             Self::Io(error) => write!(f, "io error: {error}"),
             Self::Duplicate(id) => write!(f, "project already exists: {id}"),
+            Self::MissingProject(id) => write!(f, "project does not exist: {id}"),
             Self::MigrationFailed(message) => write!(f, "migration failed: {message}"),
         }
     }
@@ -77,7 +81,7 @@ impl std::error::Error for StoreError {
             Self::Sqlite(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::Io(error) => Some(error),
-            Self::Duplicate(_) | Self::MigrationFailed(_) => None,
+            Self::Duplicate(_) | Self::MissingProject(_) | Self::MigrationFailed(_) => None,
         }
     }
 }
@@ -329,6 +333,56 @@ impl Store {
         let rows_changed = self
             .connection
             .execute("DELETE FROM symbol_libraries WHERE id = ?1", [id.to_string()])?;
+        Ok(rows_changed > 0)
+    }
+
+    /// Insert or replace the PCB design for `project_id`.
+    ///
+    /// Returns [`StoreError::MissingProject`] when the project does not exist.
+    pub fn save_pcb_design(
+        &mut self,
+        project_id: uuid::Uuid,
+        design: &pcb::PcbDesign,
+    ) -> Result<()> {
+        let project = project_id.to_string();
+        let exists = self
+            .connection
+            .query_row("SELECT 1 FROM projects WHERE id = ?1", [&project], |_| Ok(()))
+            .optional()?;
+        if exists.is_none() {
+            return Err(StoreError::MissingProject(project_id));
+        }
+
+        let data = serde_json::to_string_pretty(design)?;
+        self.connection.execute(
+            "INSERT INTO pcb_designs (project_id, data, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(project_id) DO UPDATE
+             SET data = excluded.data, updated_at = excluded.updated_at",
+            rusqlite::params![project, data, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Load the PCB design for `project_id`; `Ok(None)` when none is stored.
+    pub fn load_pcb_design(&self, project_id: uuid::Uuid) -> Result<Option<pcb::PcbDesign>> {
+        let mut statement =
+            self.connection.prepare("SELECT data FROM pcb_designs WHERE project_id = ?1")?;
+        let mut rows = statement.query([project_id.to_string()])?;
+
+        match rows.next()? {
+            Some(row) => {
+                let data: String = row.get(0)?;
+                Ok(Some(serde_json::from_str(&data)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delete a project's PCB design; returns `false` when none was stored.
+    pub fn delete_pcb_design(&mut self, project_id: uuid::Uuid) -> Result<bool> {
+        let rows_changed = self
+            .connection
+            .execute("DELETE FROM pcb_designs WHERE project_id = ?1", [project_id.to_string()])?;
         Ok(rows_changed > 0)
     }
 

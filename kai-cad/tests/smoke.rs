@@ -126,11 +126,13 @@ fn footprint_library_round_trips_through_json() {
                 x: -0.5,
                 y: 0.0,
                 pad_type: pcb::PadType::SurfaceMount,
+                ..pcb::PadPosition::default()
             }],
             outline: pcb::footprint::Outline {
                 shape: pcb::footprint::OutlineShape::rectangle(-1.0, -0.5, 2.0, 1.0),
                 copper: false,
             },
+            ..pcb::Footprint::default()
         }],
     };
 
@@ -249,6 +251,18 @@ fn store_project_crud_round_trip_in_memory() {
 
     store.create_project(&project).expect("create project");
 
+    let design = pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(50.0, 40.0),
+        layers: vec![core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper)],
+        stackup: core::Stackup { layers: vec![0] },
+        rules: pcb::DrcRules { clearance: 0.3, ..pcb::DrcRules::default() },
+        ..pcb::PcbDesign::default()
+    };
+    store.save_pcb_design(project.id, &design).expect("save pcb design");
+    let loaded_design =
+        store.load_pcb_design(project.id).expect("load pcb design").expect("pcb design exists");
+    assert_eq!(loaded_design.rules, design.rules);
+
     let loaded = store.load_project(project.id).expect("load project").expect("project exists");
     assert_eq!(loaded.name, "smoke-crud");
     assert_eq!(loaded.schematic.nets.len(), 1);
@@ -263,6 +277,7 @@ fn store_project_crud_round_trip_in_memory() {
 
     assert!(store.delete_project(project.id).expect("delete project"));
     assert!(store.load_project(project.id).expect("final load").is_none());
+    assert!(store.load_pcb_design(project.id).expect("final design load").is_none());
 }
 
 #[test]
@@ -295,4 +310,75 @@ fn kicad_symbol_library_parses_and_persists() {
     assert_eq!(loaded.symbols.len(), 1);
 
     std::fs::remove_dir_all(&dir).expect("clean up temp dir");
+}
+
+#[test]
+fn routing_produces_a_drc_clean_track_and_reports_a_blocked_path() {
+    let design = pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(40.0, 30.0),
+        layers: vec![
+            core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
+            core::PcbLayer::new(1, "B.Cu", core::LayerKind::Copper),
+        ],
+        stackup: core::Stackup { layers: vec![0, 1] },
+        ..pcb::PcbDesign::default()
+    };
+    let request = pcb::routing::RouteRequest {
+        net_id: Uuid::new_v4(),
+        start: core::Point::new(3.0, 3.0),
+        end: core::Point::new(37.0, 27.0),
+        layer: 0,
+        width: 0.25,
+    };
+    let config = pcb::routing::RouterConfig::default();
+
+    let tracks = pcb::routing::route(&request, &design, &config).expect("route clean board");
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].path.first(), Some(&core::Point::new(3.0, 3.0)));
+    assert_eq!(tracks[0].path.last(), Some(&core::Point::new(37.0, 27.0)));
+
+    let mut routed = design.clone();
+    routed.tracks.extend(tracks);
+    assert!(pcb::run_drc(&routed, &routed.rules).is_valid());
+
+    let mut blocked = pcb::PcbDesign {
+        tracks: vec![
+            pcb::Track {
+                id: Uuid::new_v4(),
+                net_id: Uuid::new_v4(),
+                layer: 0,
+                width: 0.25,
+                path: vec![core::Point::new(5.0, 5.0), core::Point::new(10.0, 5.0)],
+            },
+            pcb::Track {
+                id: Uuid::new_v4(),
+                net_id: Uuid::new_v4(),
+                layer: 0,
+                width: 0.25,
+                path: vec![core::Point::new(10.0, 5.0), core::Point::new(10.0, 10.0)],
+            },
+            pcb::Track {
+                id: Uuid::new_v4(),
+                net_id: Uuid::new_v4(),
+                layer: 0,
+                width: 0.25,
+                path: vec![core::Point::new(10.0, 10.0), core::Point::new(5.0, 10.0)],
+            },
+            pcb::Track {
+                id: Uuid::new_v4(),
+                net_id: Uuid::new_v4(),
+                layer: 0,
+                width: 0.25,
+                path: vec![core::Point::new(5.0, 10.0), core::Point::new(5.0, 5.0)],
+            },
+        ],
+        ..design
+    };
+    let blocked_request = pcb::routing::RouteRequest {
+        start: core::Point::new(7.0, 7.0),
+        end: core::Point::new(30.0, 20.0),
+        ..request
+    };
+    assert!(pcb::routing::route(&blocked_request, &blocked, &config).is_err());
+    let _ = &mut blocked;
 }

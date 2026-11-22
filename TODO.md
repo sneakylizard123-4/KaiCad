@@ -59,15 +59,24 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - DRC wired into the `kai-cad` self-check and cross-crate smoke tests
 - Documentation updated; total tests: 171
 
-## 🚧 Next — Week 7: Deterministic routing
+### Week 7 — Deterministic routing and PCB persistence
+- `RouterConfig` (`grid`, `bend_cost`, `max_expansions`), `RouteRequest`, `RouteError` and deterministic A* `route` in `pcb::routing`
+- Grid snapping, board containment, track/via/pad obstacle avoidance, collinear simplification and UUIDv5 track ids
+- DRC now covers pad copper (`pad-size`, `pad-outside-board`, pad clearance) and via-to-track clearance
+- `PcbDesign` stores placed footprints with pad size, net and position, with serde defaults for older documents
+- Schema v4 `pcb_designs` table and `Store::{save_pcb_design, load_pcb_design, delete_pcb_design}`
+- Routing, pad/via DRC and design persistence wired into the `kai-cad` self-check and smoke tests
+- Documentation updated; total tests: 188
+
+## 🚧 Next — Week 8: Multi-layer routing with vias
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Grid/cost configuration and a `RouteRequest` API in `pcb::routing`
-- [ ] Deterministic A* single-layer router that avoids existing copper and the board edge
-- [ ] Validate routes with `run_drc` and wire them into the `kai-cad` self-check and smoke tests
+- [ ] Extend `route` across copper layers with deterministic via insertion
+- [ ] Check candidate vias with `via-span`, `via-drill` and clearance rules
+- [ ] Wire multi-layer routes into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥187 tests, clippy/fmt/doc/link clean
+- [ ] Target: ≥204 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
@@ -80,7 +89,8 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ⬜ Push-and-shove routing
 - ⬜ Interactive routing
 - ✅ Deterministic DRC (Week 6)
-- 🚧 Deterministic grid routing (Week 7)
+- ✅ Deterministic single-layer grid routing (Week 7)
+- 🚧 Multi-layer routing with vias (Week 8)
 - ⬜ Basic 2D/3D Vulkan renderer
 
 ### Custom GUI (not yet scheduled)

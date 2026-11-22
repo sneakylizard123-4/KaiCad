@@ -7,8 +7,8 @@
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
-> 5 (PCB core) and 6 (PCB geometry and DRC) are complete. The workspace has
-> 171 passing tests.
+> 5 (PCB core), 6 (PCB geometry and DRC) and 7 (deterministic routing) are
+> complete. The workspace has 188 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -179,10 +179,12 @@ Dependencies: `core`, `serde`, `uuid`. Modules:
 
 Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
 
-- `footprint` — `Footprint`, `PadPosition`, `PadType`, `Outline`,
+- `footprint` — `Footprint` (with a board `position`), `PadPosition` (with
+  copper `width`/`height` and optional `net_id`), `PadType`, `Outline`,
   `OutlineShape::{Rectangle, RoundedRectangle}`, plus `FootprintLibrary`
   (`sorted`, `find`, `to_json`, `from_json`, `save`, `load`) and
-  `FootprintLibraryError`. Libraries are KaiCad's own JSON with two-space
+  `FootprintLibraryError`. Missing placement and pad-size fields default, so
+  older libraries still load. Libraries are KaiCad's own JSON with two-space
   indentation and one trailing newline; duplicate names are rejected on load.
   A KiCad `.kicad_mod` parser does not exist.
 - `layer` — `LayerStack` (`new`, `push`, `len`, `is_empty`, `copper_layers`,
@@ -195,7 +197,11 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   pure function implementing the eight geometry rules and the rule-set
   validation listed below.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
-  Hybrid}`, `RoutingOptimization`.
+  Hybrid}`, `RoutingOptimization`, `RouterConfig` (grid, bend cost, expansion
+  limit), `RouteRequest`, `RouteError` and `route`. The router snaps endpoints
+  to a grid, runs four-neighbour A* over nodes inside the outline, avoids
+  tracks, vias and pads with the design's clearance, merges collinear points
+  and derives UUIDv5 track ids. It is single-layer and does not insert vias.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
   `tracks`, `vias`, `rules`) built on `core::PcbOutline`/`core::PcbLayer`/
   `core::Stackup`/`core::Point`, plus `Track` (copper `width`, default
@@ -205,8 +211,9 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
 `PcbDesign::copper_layer_count` is implemented and honours the stackup.
 Outline geometry lives on `core::PcbOutline`: `signed_area`, `area`,
 `perimeter`, `contains_point` (even-odd ray casting with boundary-inclusive
-edges) and `bounding_box`. Design-rule checking lives in `pcb::drc` and is
-implemented; no routing algorithm exists yet.
+edges) and `bounding_box`. Design-rule checking lives in `pcb::drc` and single-
+layer grid routing in `pcb::routing`. Multi-layer routing, via insertion and
+interactive routing do not exist yet.
 
 ### `renderer` — Vulkan rendering engine
 
@@ -255,8 +262,8 @@ No transport, merge algorithm or real-time sync exists yet.
 
 ### `store` — engineering database
 
-Dependencies: `core`, `rusqlite` (with the `bundled` feature), `serde_json`,
-`uuid`, `chrono`. Modules: `lib.rs` plus embedded `migrations/`.
+Dependencies: `core`, `pcb`, `rusqlite` (with the `bundled` feature),
+`serde_json`, `uuid`, `chrono`. Modules: `lib.rs` plus embedded `migrations/`.
 
 - `Store` wraps a `rusqlite::Connection`, enables `PRAGMA foreign_keys = ON`,
   and applies migrations automatically on open.
@@ -266,9 +273,14 @@ Dependencies: `core`, `rusqlite` (with the `bundled` feature), `serde_json`,
 - `Store::{create_symbol_library, load_symbol_library, list_symbol_libraries,
   update_symbol_library, delete_symbol_library}` implement symbol-library CRUD;
   listing is ordered by `name ASC`.
+- `Store::{save_pcb_design, load_pcb_design, delete_pcb_design}` persist a
+  complete `pcb::PcbDesign` (tracks, vias, footprints, pad copper and DRC
+  rules) in `pcb_designs`, keyed by project. Saving is an upsert and requires
+  the project to exist; deleting a project cascades to its design.
 - `ProjectSummary` is returned by `list_projects` and ordered by
   `modified_at DESC, name ASC`.
-- `StoreError` covers SQLite, JSON, I/O, `Duplicate` and migration failures.
+- `StoreError` covers SQLite, JSON, I/O, `Duplicate`, `MissingProject` and
+  migration failures.
 
 **Schema rule:** the canonical record is `projects.document`, a complete JSON
 serialization of `core::Project`. The tables `sheets`, `symbols`, `components`,
@@ -278,7 +290,9 @@ independently of the authoritative document. Their primary key is
 `(project_id, id)`: entity ids are unique within a project rather than
 globally, so a duplicated project may reuse the same entity ids. Symbol
 libraries use the same pattern in `symbol_libraries`: canonical `data` JSON with
-queryable `name` and `source` projections. Migrations are numbered SQL files
+queryable `name` and `source` projections. PCB designs use `pcb_designs`, keyed
+by `project_id` with the complete design JSON in `data`; they cascade with the
+project. Migrations are numbered SQL files
 embedded with `include_str!`; once applied they are immutable — add a new
 numbered file rather than editing an old one.
 
@@ -308,17 +322,17 @@ Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, and with no arguments runs a deterministic self-check:
 it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
 builds a PCB design (outline measurements, layer validation, a footprint
-library round trip and clean/dirty DRC runs), reads the default renderer, AI
-and collaboration configuration,
-exercises the SQLite store with an in-memory database, and parses a hermetic
-`.kicad_sym` fixture with `kicad-parser`. Integration tests live
+library round trip, clean/dirty DRC runs and a DRC-clean route with a blocked-
+route check), reads the default renderer, AI and collaboration configuration,
+exercises the SQLite store with an in-memory database including a PCB-design
+round trip, and parses a hermetic `.kicad_sym` fixture with `kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
 
 ## Data flow: schematic netlist to PCB
 
-The intended pipeline (steps 2 and 3 have real implementations; the rest are
-planned):
+The intended pipeline (steps 2, 3, 5 (single-layer), 6 and 7 (persistence) have
+real implementations; the rest are planned):
 
 ```mermaid
 flowchart LR
@@ -356,13 +370,15 @@ flowchart LR
 5. **Board construction.** The PCB engine takes the netlist plus footprint
    assignments and populates `PcbDesign` (`footprints`, `tracks`, `vias`).
    Tracks reference their net by `net_id`; vias record the layers they span.
-   Only the data types exist today.
-6. **Validation.** ERC runs on the schematic netlist and DRC runs on the PCB
-   geometry, both with deterministic rules (see below). Routing is planned.
+   `route` can add a single-layer track, but automatic symbol-to-footprint
+   binding is still manual.
+6. **Validation and storage.** ERC runs on the schematic netlist and DRC runs on
+   the PCB geometry, both with deterministic rules (see below). `store` can
+   save and reload the complete PCB design with its rules.
 7. **Cross-probing and rendering.** The renderer draws schematic/PCB data, and
    selections are intended to synchronise between views. Not implemented.
 
-There is no code path yet that executes steps 4–7 end to end.
+There is no code path yet that executes steps 4–7 end to end from a netlist.
 
 ## Deterministic validation surfaces
 
@@ -385,7 +401,7 @@ violations. `ERCResult::is_valid()` is the accessor.
 ### Design-rule check (DRC)
 
 `pcb::run_drc(&design, &rules)` is a pure, deterministic function. Violations
-are sorted by `(rule_id, objects)`, each unordered track pair on different nets
+are sorted by `(rule_id, objects)`, each unordered copper pair on different nets
 is reported once, and the report never depends on track order or `HashMap`
 iteration.
 
@@ -393,17 +409,24 @@ iteration.
 |---------|----------|---------|
 | `track-width` | Error for a non-finite or `<= 0` width, Warning below `min_track_width` | Track copper width |
 | `track-layer` | Error | Track layer missing or not copper |
-| `clearance` | Error | Two tracks on one copper layer and different nets are closer than `clearance`, edge to edge |
+| `clearance` | Error | Tracks, vias and pads on a shared copper layer with different nets are closer than `clearance`, edge to edge |
 | `track-outside-board` | Error | A track path point lies outside the outline |
 | `via-outside-board` | Error | A via centre lies outside the outline |
+| `pad-outside-board` | Error | A pad corner lies outside the outline |
+| `pad-size` | Error | A pad width or height is non-finite or `<= 0` |
 | `via-span` | Error | Via ends on the same layer, leaves the top-to-bottom stackup span, or uses a missing/non-copper layer |
 | `via-drill` | Error for a non-finite or non-positive drill/diameter, drill `>=` diameter, or drill below `min_via_drill`; Warning for a ring below `min_annular_ring` | Via drill, diameter and annular ring |
 | `track-path` | Error | A track has fewer than two points or a non-finite coordinate |
 | `drc-rules` | Error | A stored limit is non-finite or `<= 0`; checks then run with the defaults |
 
-An outline with fewer than three points disables the two board-containment
-rules. An empty stackup means layer order is unknown, so `via-span` only
-requires two distinct, existing copper layers. Limits live on
+An outline with fewer than three points disables the board-containment rules.
+An empty stackup means layer order is unknown, so `via-span` only
+requires two distinct, existing copper layers. Pad copper is an axis-aligned
+rectangle centred on `Footprint::position + PadPosition::{x, y}`: through-hole
+pads occupy every copper layer, surface-mount and tented pads the top copper
+layer, and pads in the same footprint are not compared with each other.
+Pad-to-track clearance is skipped when the pad net matches the track net.
+Limits live on
 `PcbDesign::rules` and serialize with the design; `DrcRules` defaults to a
 `0.15` mm minimum width, `0.2` mm clearance, `0.05` mm minimum annular ring
 and `0.2` mm minimum via drill. `DrcRules::validate` rejects non-finite or
@@ -466,24 +489,25 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–6, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–7, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
-database (`store`, schema v3) with migrations plus project and symbol-library
-CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
+database (`store`, schema v4) with migrations plus project, symbol-library and
+PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
 (`kicad-parser`), deterministic netlist generation and KiCad export, graph
 traversal, five-rule ERC, board-outline geometry, layer-stack validation,
-JSON footprint libraries, distance primitives, track/via dimensions,
-nine-rule DRC (eight geometry rules plus limit validation), renderer/AI/collab
-configuration types, the `kai-cad`
-self-check binary, CI (including a Markdown link check and coverage job), and
-documentation.
+JSON footprint libraries, distance primitives, track/via dimensions, pad
+copper, nine-rule DRC (eight geometry rules plus limit validation),
+deterministic single-layer grid routing with UUIDv5 ids, renderer/AI/collab
+configuration types, the `kai-cad` self-check binary, CI (including a Markdown
+link check and coverage job), and documentation.
 
-**Next (Week 7):** deterministic single-layer routing. The planned work is:
+**Next (Week 8):** multi-layer routing with deterministic via insertion. The
+planned work is:
 
-1. A grid/cost configuration and a `RouteRequest` type in `pcb::routing`.
-2. A deterministic A* router that avoids existing copper and the board edge.
-3. Routes validated with `run_drc` and wired into the `kai-cad` self-check and
-   cross-crate smoke tests.
+1. Extend the A* state with the copper layer and allow via transitions.
+2. Validate candidate vias against clearance, `via-span` and `via-drill`.
+3. Return tracks and vias from a new multi-layer entry point, keep `route`
+   single-layer, and wire both into the self-check and smoke tests.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

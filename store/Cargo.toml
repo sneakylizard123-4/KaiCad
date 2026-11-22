@@ -10,6 +10,7 @@ description = "KaiCad engineering database — SQLite persistence and project CR
 
 [dependencies]
 core = { path = "../core" }
+pcb = { path = "../pcb" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
