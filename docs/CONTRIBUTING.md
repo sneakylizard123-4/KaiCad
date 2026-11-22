@@ -1,9 +1,10 @@
 # Contributing to KaiCad
 
-KaiCad is a pre-alpha Rust project. The workspace compiles and the data model
-is tested, but most engine code is a stub. Contributions that move the
-architecture forward — or that honestly document what is missing — are
-welcome.
+KaiCad is a pre-alpha Rust project. The core data model, schematic and PCB
+engines, routing, software renderer, persistence and collaboration primitives
+are implemented and tested, while the GUI, Vulkan GPU backend and some advanced
+engines remain incomplete. Contributions that move the architecture forward —
+or that honestly document what is missing — are welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
@@ -35,10 +36,13 @@ in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
   iteration. Limits live on the design, are validated before use, and same-net
   copper is exempt from clearance because it is an intentional connection.
   Routing breaks A* ties by `(f, g, y, x, direction, layer, vias)` and derives
-track and via ids with UUIDv5, never `Uuid::new_v4`; do not reintroduce heap
-or `HashMap` iteration order into the result. Through vias are deterministic
-for the same stackup, node and config, and generated vias record their net so
-same-net clearance checks stay exempt. Edit transactions derive UUIDv5 ids  over their label and ordered changes, verify `old_value` before writing, and
+track and via ids with UUIDv5, never `Uuid::new_v4`; do not reintroduce heap  or `HashMap` iteration order into the result. Through vias are deterministic
+  for the same stackup, node and config; blind/buried via spans and the
+  push-and-shove candidate order must also be deterministic, and generated
+  vias record their net so same-net clearance checks stay exempt. Interactive
+  routing must keep previews out of the design until commit. Edit transactions
+  derive UUIDv5 ids over their label and ordered changes, verify `old_value`
+  before writing, and
   apply atomically on a clone — do not add partial-write paths. Version
   digests are UUIDv5 over compact project JSON, and sync staging deduplicates
   by transaction id while preserving insertion order. `EditHistory` clears

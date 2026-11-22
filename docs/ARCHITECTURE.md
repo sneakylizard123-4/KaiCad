@@ -1,9 +1,11 @@
 # KaiCad Architecture
 
-> **Status: pre-alpha scaffold.** This document describes the intended
-> architecture and the code that exists today. Most engines are type-level
-> skeletons whose functions return `NotImplemented` or empty values. Do not
-> read this as a description of working EDA functionality.
+> **Status: pre-alpha.** This document describes the intended architecture
+> and the code that exists today. The data model, schematic and PCB engines,
+> DRC, routing, software renderer, persistence and collaboration primitives
+> are implemented and tested; the GUI, Vulkan GPU backend, AI generation and
+> real-time transport remain incomplete. Do not read this as a description of
+> a finished EDA application.
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
@@ -11,12 +13,14 @@
 > routing), 8 (multi-layer routing with vias), 9 (transactional kAI
 > application), 10 (collaborative edit sessions), 11 (multi-step edit
 > history), 12 (plugin manifests and discovery), 13 (SQLite plugin registry),
-> 14 (plugin activation and capability queries) and 15 (plugin CLI) are
-> complete. The workspace has 301 passing tests.
+> 14 (plugin activation and capability queries), 15 (plugin CLI) and the
+> Phase 2 completion pass (rotated pads, blind/buried vias, push-and-shove,
+> interactive routing and the software renderer) are complete. The workspace
+> has 319 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
-a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
-a thin application binary. The long-term goal is a complete EDA application
+a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
+layer and a thin application binary. The long-term goal is a complete EDA application
 that is **not** a wrapper around KiCad (see `PRD.md`).
 
 ## Crate graph
@@ -27,7 +31,7 @@ graph TD
     core["core<br/>shared data model"]
     schematic["schematic<br/>netlist · graph · ERC"]
     pcb["pcb<br/>footprint · layer · drc · routing"]
-    renderer["renderer<br/>Vulkan via ash"]
+    renderer["renderer<br/>software 2D/3D"]
     ai["ai (kAI)<br/>suggest · validate"]
     collab["collab<br/>sessions · versioning · sharing"]
     plugin["plugin<br/>manifests · registry"]
@@ -47,6 +51,7 @@ graph TD
     kicad_parser --> core
     schematic --> core
     pcb --> core
+    renderer --> pcb
     ai --> core
     ai --> schematic
     collab --> core
@@ -56,9 +61,10 @@ graph TD
 
 Arrows mean "depends on". `core` sits at the bottom of the graph and must not
 depend on any other workspace crate. There are no cross-engine edges between
-`schematic` and `pcb`: both depend only on `core`. `renderer` has no workspace
-dependencies at all (only `ash` and `serde`); it is wired into the application
-binary, not into the data model.
+`schematic` and `pcb`: both depend only on `core`. `renderer` depends on `pcb`
+to rasterize a `PcbDesign`; it also keeps `ash` and `serde` for the Vulkan
+configuration skeleton and uses `core` only in dev-dependencies. It is wired
+into the application binary, not into the data model.
 
 ## Application layering
 
@@ -67,7 +73,7 @@ flowchart BT
     data["Data model<br/>core"]
     schematic["Schematic engine<br/>schematic"]
     pcb["PCB engine<br/>pcb"]
-    render["Renderer<br/>renderer (Vulkan)"]
+    render["Renderer<br/>renderer (software 2D/3D)"]
     ai["AI subsystem<br/>ai (kAI)"]
     collab["Collaboration<br/>collab"]
     plugin["Plugin metadata<br/>plugin"]
@@ -161,7 +167,7 @@ boundaries:
 - **Versioning lives in `collab`.** The orphaned `pcb/src/versioning.rs` was
   deleted; `collab::VersioningManager` owns version history.
 - **No copied modules.** `renderer` no longer contains a copy of the `collab`
-  module and declares no workspace dependencies.
+  module; it depends only on `pcb` (and dev-only `core`) for board rendering.
 
 ## What each crate owns
 
@@ -192,7 +198,8 @@ Dependencies: `core`, `serde`, `uuid`. Modules:
 Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
 
 - `footprint` — `Footprint` (with a board `position`), `PadPosition` (with
-  copper `width`/`height` and optional `net_id`), `PadType`, `Outline`,
+  copper `width`/`height`, counter-clockwise `rotation` in degrees and optional
+  `net_id`), `PadType`, `Outline`,
   `OutlineShape::{Rectangle, RoundedRectangle}`, plus `FootprintLibrary`
   (`sorted`, `find`, `to_json`, `from_json`, `save`, `load`) and
   `FootprintLibraryError`. Missing placement and pad-size fields default, so
@@ -206,19 +213,26 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   `NonCopperInStackup`, sorted by `(layer_id, kind)`.
 - `drc` — `DrcRules` (validated, serde-friendly, stored on the design),
   `DrcRulesError`, `DrcSeverity`, `DrcViolation`, `DrcReport` and `run_drc`, a
-  pure function implementing the eight geometry rules and the rule-set
-  validation listed below.
+  pure function implementing clearance, track, via, pad and pad-rotation rules
+  plus rule-set validation. Via spans may be through, blind or buried as long
+  as both endpoints are copper; same-layer and non-copper spans are errors.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
   Hybrid}`, `RoutingOptimization`, `RouterConfig` (grid, bend cost, expansion
-  limit, `allow_vias`, via cost/limit/dimensions), `RouteRequest`, `RouteError`,
-  `Route`, `RouteResult` and `route_multilayer`. A* state is `(node, layer,
-  direction)` plus the via count; in-layer moves avoid tracks, vias and pads
-  with the design's clearance, and a via transition stays on the node, costs
-  `via_cost` and moves to another copper layer. Candidate through vias must
-  clear every spanned layer and satisfy `via-drill` and annular-ring limits.
+  limit, `allow_vias`, via cost/limit/dimensions, `allow_blind_buried` and
+  `max_shoved_tracks`), `RouteRequest`, `RouteError`, `RouteResult`,
+  `route_multilayer`, `route_push_and_shove`, `PushAndShoveResult` and
+  `InteractiveRouter`. A* state is `(node, layer, direction)` plus the via
+  count; in-layer moves avoid tracks, vias and pads with the design's
+  clearance, and a via transition stays on the node, costs `via_cost` and
+  moves to another copper layer. Candidate vias must clear every spanned layer
+  and satisfy `via-drill` and annular-ring limits; they are through vias by
+  default and span only the layer change when `allow_blind_buried` is set.
   Tracks are split at layer changes and simplified per layer; ids are UUIDv5
   values over the request and segment. `route` disables via insertion and
-  returns the tracks only.
+  returns the tracks only. `route_push_and_shove` tries a bounded, id-sorted
+  rip-up and reroute when a direct route returns `NoPath`. `InteractiveRouter`
+  keeps a preview separate from the design until `commit`, with `cancel` and
+  `preview_result` helpers.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
   `tracks`, `vias`, `rules`) built on `core::PcbOutline`/`core::PcbLayer`/
   `core::Stackup`/`core::Point`, plus `Track` (copper `width`, default
@@ -230,22 +244,38 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
 Outline geometry lives on `core::PcbOutline`: `signed_area`, `area`,
 `perimeter`, `contains_point` (even-odd ray casting with boundary-inclusive
 edges) and `bounding_box`. Design-rule checking lives in `pcb::drc`; single-
-layer and multi-layer grid routing live in `pcb::routing`. Interactive routing,
-blind/buried vias and pad rotation do not exist yet.
+layer and multi-layer grid routing, push-and-shove and interactive sessions
+live in `pcb::routing`. Rotated pads use an oriented copper rectangle
+consistently in DRC and routing, and `PcbDesign::via_kind` classifies through,
+blind and buried spans without depending on start/end order.
 
-### `renderer` — Vulkan rendering engine
+### `renderer` — deterministic software renderer
 
-Dependencies: `ash` (Vulkan bindings) and `serde` only. Modules: `window`,
-`device`, `swapchain`, `render_pass`, `pipeline`.
+Dependencies: `pcb`, `ash` and `serde`; `core` is a dev-dependency. Public
+modules: `window`, `framebuffer`, `device`, `swapchain`, `render_pass`,
+`pipeline`; `scene` is private rasterization code.
 
-- `RendererConfig { window: WindowConfig, vsync }`.
-- `WindowConfig { title, width, height, resizable, fullscreen }` with
+- `RendererConfig { window: WindowConfig, vsync, background }` and
+  `WindowConfig { title, width, height, resizable, fullscreen }` with
   `aspect_ratio()`.
-- `Renderer::new()` and `Renderer::render()` return
-  `Err(RendererError::NotImplemented)`; **no Vulkan objects are created yet.**
+- `Color` is RGBA8. `Framebuffer` owns tightly packed RGBA rows, supports
+  `pixel`/`clear` and writes binary PPM with `save_ppm`.
+- `ViewMode::{TwoD, ThreeD}` selects the projection.
+- `Renderer::new` allocates the framebuffer and depth buffer and rejects zero
+  or oversized images. `render` clears the background; `render_pcb` and
+  `render_pcb_with_camera` rasterize a `PcbDesign` synchronously.
+- `Camera` stores eye/target/up, vertical field of view and near plane;
+  `Camera::fit` frames the board automatically for 3D.
 
-`ash` loads the Vulkan loader at runtime, so the workspace builds on machines
-without a Vulkan SDK.
+The 2D view fills the outline, draws copper in stackup order, rotated pad
+copper and vias, then outlines the board. The 3D view extrudes the outline,
+draws copper, pads and via prisms, projects them through the camera and uses
+a depth buffer with flat shading. Output is deterministic for a given design,
+camera and size. No window, GPU or Vulkan loader is used.
+
+The `ash`-based `device`, `swapchain`, `render_pass` and `pipeline` modules
+remain configuration scaffolding for a future Vulkan backend; they are not
+part of the software rendering path.
 
 ### `ai` — kAI subsystem
 
@@ -389,8 +419,10 @@ an optional `--db <path>` registry database, and with no arguments runs a
 deterministic self-check: it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
 builds a PCB design (outline measurements, layer validation, a footprint
 library round trip, clean/dirty DRC runs, a DRC-clean single-layer route, a
-multi-layer route across a full-width wall with through vias, and a blocked-
-route check), applies a validated kAI suggestion and undoes/redoes it, creates
+multi-layer route across a full-width wall with through vias, a blocked-route
+check, a push-and-shove reroute, an interactive preview/commit, and 2D/3D
+software renders), applies a validated kAI suggestion and undoes/redoes it,
+creates
 a collaboration session with roles, records a versioned edit and stages/drains
 its transaction, discovers and registers validated plugin manifests, exercises
 the SQLite store with an in-memory database including plugin persistence and a
@@ -440,13 +472,15 @@ flowchart LR
 5. **Board construction.** The PCB engine takes the netlist plus footprint
    assignments and populates `PcbDesign` (`footprints`, `tracks`, `vias`).
    Tracks reference their net by `net_id`; vias record the layers they span and
-   optionally their net. `route` and `route_multilayer` can add tracks and
-   through vias, but automatic symbol-to-footprint binding is still manual.
+   optionally their net. `route`, `route_multilayer`, `route_push_and_shove`
+   and `InteractiveRouter` can add tracks and vias, but automatic
+   symbol-to-footprint binding is still manual.
 6. **Validation and storage.** ERC runs on the schematic netlist and DRC runs on
    the PCB geometry, both with deterministic rules (see below). `store` can
    save and reload the complete PCB design with its rules.
-7. **Cross-probing and rendering.** The renderer draws schematic/PCB data, and
-   selections are intended to synchronise between views. Not implemented.
+7. **Cross-probing and rendering.** The software renderer draws PCB data to a
+   headless framebuffer. Schematic drawing, cross-probing and view selection
+   synchronization are not implemented.
 
 There is no code path yet that executes steps 4–7 end to end from a netlist.
 
@@ -484,17 +518,19 @@ iteration.
 | `via-outside-board` | Error | A via centre lies outside the outline |
 | `pad-outside-board` | Error | A pad corner lies outside the outline |
 | `pad-size` | Error | A pad width or height is non-finite or `<= 0` |
-| `via-span` | Error | Via ends on the same layer, leaves the top-to-bottom stackup span, or uses a missing/non-copper layer |
+| `pad-rotation` | Error | A pad rotation is non-finite |
+| `via-span` | Error | Via ends on the same layer or uses a missing/non-copper layer; through, blind and buried spans are valid |
 | `via-drill` | Error for a non-finite or non-positive drill/diameter, drill `>=` diameter, or drill below `min_via_drill`; Warning for a ring below `min_annular_ring` | Via drill, diameter and annular ring |
 | `track-path` | Error | A track has fewer than two points or a non-finite coordinate |
 | `drc-rules` | Error | A stored limit is non-finite or `<= 0`; checks then run with the defaults |
 
 An outline with fewer than three points disables the board-containment rules.
-An empty stackup means layer order is unknown, so `via-span` only
-requires two distinct, existing copper layers. Pad copper is an axis-aligned
-rectangle centred on `Footprint::position + PadPosition::{x, y}`: through-hole
-pads occupy every copper layer, surface-mount and tented pads the top copper
-layer, and pads in the same footprint are not compared with each other.
+An empty stackup means layer order is unknown, so `via-span` only requires two
+distinct, existing copper layers. Pad copper is an oriented rectangle centred
+on `Footprint::position + PadPosition::{x, y}` and rotated counter-clockwise by
+`PadPosition::rotation`; through-hole pads occupy every copper layer,
+surface-mount and tented pads the top copper layer, and pads in the same
+footprint are not compared with each other.
 Pad-to-track and track-to-via clearance is skipped when the shared net matches;
 generated vias carry `Some(net_id)`, while older documents load `None` and are
 compared as different nets. Limits live on
@@ -566,23 +602,24 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–15, starting from commit `c864fbb`):** workspace and crate
-graph, shared `core` data model with JSON persistence, SQLite engineering
-database (`store`, schema v6) with migrations plus project, symbol-library,
-PCB-design and plugin CRUD, named symbol libraries and a deterministic
-`.kicad_sym` parser (`kicad-parser`), deterministic netlist generation and
-KiCad export, graph traversal, five-rule ERC, board-outline geometry,
-layer-stack validation, JSON footprint libraries, distance primitives,
-track/via dimensions, pad copper, nine-rule DRC (eight geometry rules plus
-limit validation), deterministic single-layer and multi-layer grid routing
-with through vias and UUIDv5 ids, atomic core edit transactions with validated
-kAI suggestion application and undo/redo, permission-checked collaborative
-sessions with versioned project digests and staged transactions, bounded
-multi-step undo/redo history with branch clearing, validated plugin manifests
-with deterministic registry ordering, local discovery, SQLite persistence,
-activation state, capability filters and CLI management, renderer/AI/collab
-configuration types, the `kai-cad` self-check binary, CI (including a Markdown
-link check and coverage job), and documentation.
+**Complete (Weeks 1–15 and the Phase 2 PCB/renderer scope, starting from commit
+`c864fbb`):** workspace and crate graph, shared `core` data model with JSON
+persistence, SQLite engineering database (`store`, schema v6) with migrations
+plus project, symbol-library, PCB-design and plugin CRUD, named symbol
+libraries and a deterministic `.kicad_sym` parser (`kicad-parser`),
+deterministic netlist generation and KiCad export, graph traversal, five-rule
+ERC, board-outline geometry, layer-stack validation, JSON footprint
+libraries, distance primitives, track/via dimensions, rotated pad copper,
+track/via/pad DRC with validated limits, deterministic single-layer and
+multi-layer grid routing with through, blind and buried vias, push-and-shove
+rip-up/reroute, interactive routing previews, atomic core edit transactions
+with validated kAI suggestion application and undo/redo, permission-checked
+collaborative sessions with versioned project digests and staged transactions,
+bounded multi-step undo/redo history with branch clearing, validated plugin
+manifests with deterministic registry ordering, local discovery, SQLite
+persistence, activation state, capability filters and CLI management, a
+deterministic software 2D/3D renderer, the `kai-cad` self-check binary, CI
+(including a Markdown link check and coverage job), and documentation.
 
 **Next (Week 16):** beta readiness. The planned work is:
 

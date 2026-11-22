@@ -39,54 +39,73 @@ impl Default for PcbDesign {
     }
 }
 
-/// Axis-aligned copper rectangle in board coordinates.
+/// Copper rectangle in board coordinates, optionally rotated about its centre.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CopperRect {
-    pub min: core::Point,
-    pub max: core::Point,
+    center: core::Point,
+    half_width: f64,
+    half_height: f64,
+    /// Rotation in radians, counter-clockwise.
+    rotation: f64,
 }
 
 impl CopperRect {
-    fn from_center(center: core::Point, width: f64, height: f64) -> Self {
-        let half_width = width / 2.0;
-        let half_height = height / 2.0;
+    fn from_center(center: core::Point, width: f64, height: f64, rotation_degrees: f64) -> Self {
         Self {
-            min: core::Point::new(center.x - half_width, center.y - half_height),
-            max: core::Point::new(center.x + half_width, center.y + half_height),
+            center,
+            half_width: width / 2.0,
+            half_height: height / 2.0,
+            rotation: rotation_degrees.to_radians(),
         }
     }
 
+    fn local_point(&self, point: &core::Point) -> core::Point {
+        let dx = point.x - self.center.x;
+        let dy = point.y - self.center.y;
+        let (sin, cos) = self.rotation.sin_cos();
+        core::Point::new(dx * cos + dy * sin, -dx * sin + dy * cos)
+    }
+
     pub(crate) fn corners(&self) -> [core::Point; 4] {
-        [
-            self.min,
-            core::Point::new(self.max.x, self.min.y),
-            self.max,
-            core::Point::new(self.min.x, self.max.y),
-        ]
+        let local = [
+            core::Point::new(-self.half_width, -self.half_height),
+            core::Point::new(self.half_width, -self.half_height),
+            core::Point::new(self.half_width, self.half_height),
+            core::Point::new(-self.half_width, self.half_height),
+        ];
+        let (sin, cos) = self.rotation.sin_cos();
+        local.map(|point| {
+            core::Point::new(
+                self.center.x + point.x * cos - point.y * sin,
+                self.center.y + point.x * sin + point.y * cos,
+            )
+        })
     }
 
     fn contains(&self, point: &core::Point) -> bool {
         if !point.x.is_finite() || !point.y.is_finite() {
             return false;
         }
-        point.x >= self.min.x
-            && point.x <= self.max.x
-            && point.y >= self.min.y
-            && point.y <= self.max.y
+        let local = self.local_point(point);
+        local.x >= -self.half_width
+            && local.x <= self.half_width
+            && local.y >= -self.half_height
+            && local.y <= self.half_height
     }
 }
 
-/// Distance from a finite point to an axis-aligned rectangle.
+/// Distance from a finite point to a rotated rectangle.
 pub(crate) fn rect_distance_to_point(rect: &CopperRect, point: &core::Point) -> f64 {
-    if !point.x.is_finite() || !point.y.is_finite() {
+    if !point.x.is_finite() || !point.y.is_finite() || !rect.rotation.is_finite() {
         return f64::NAN;
     }
-    let dx = (rect.min.x - point.x).max(point.x - rect.max.x).max(0.0);
-    let dy = (rect.min.y - point.y).max(point.y - rect.max.y).max(0.0);
+    let local = rect.local_point(point);
+    let dx = (local.x.abs() - rect.half_width).max(0.0);
+    let dy = (local.y.abs() - rect.half_height).max(0.0);
     (dx * dx + dy * dy).sqrt()
 }
 
-/// Distance from a segment to an axis-aligned rectangle.
+/// Distance from a segment to a rotated rectangle.
 pub(crate) fn rect_distance_to_segment(
     rect: &CopperRect,
     start: &core::Point,
@@ -109,11 +128,11 @@ pub(crate) fn rect_distance_to_segment(
     distance
 }
 
-/// Distance between two axis-aligned rectangles.
+/// Distance between two rotated rectangles.
 pub(crate) fn rect_distance_to_rect(a: &CopperRect, b: &CopperRect) -> f64 {
-    let overlap_x = a.min.x <= b.max.x && b.min.x <= a.max.x;
-    let overlap_y = a.min.y <= b.max.y && b.min.y <= a.max.y;
-    if overlap_x && overlap_y {
+    if a.corners().iter().any(|corner| b.contains(corner))
+        || b.corners().iter().any(|corner| a.contains(corner))
+    {
         return 0.0;
     }
 
@@ -142,6 +161,7 @@ pub(crate) struct PadCopper {
     pub rect: CopperRect,
     pub width: f64,
     pub height: f64,
+    pub rotation: f64,
     pub layers: Vec<u16>,
     pub net_id: Option<uuid::Uuid>,
 }
@@ -149,6 +169,10 @@ pub(crate) struct PadCopper {
 impl PadCopper {
     pub(crate) fn has_valid_size(&self) -> bool {
         self.width.is_finite() && self.width > 0.0 && self.height.is_finite() && self.height > 0.0
+    }
+
+    pub(crate) fn has_valid_rotation(&self) -> bool {
+        self.rotation.is_finite()
     }
 }
 
@@ -193,6 +217,29 @@ impl PcbDesign {
         self.copper_layer_ids().first().copied()
     }
 
+    /// Classify a via as through, blind or buried on this board.
+    ///
+    /// Returns `None` when the start/end are equal or either layer is not in
+    /// the copper stackup. Start/end order does not matter.
+    pub fn via_kind(&self, via: &Via) -> Option<ViaKind> {
+        let copper = self.copper_layer_ids();
+        let start = copper.iter().position(|id| *id == via.layer_start)?;
+        let end = copper.iter().position(|id| *id == via.layer_end)?;
+        if start == end {
+            return None;
+        }
+
+        let low = start.min(end);
+        let high = start.max(end);
+        if low == 0 && high == copper.len() - 1 {
+            Some(ViaKind::Through)
+        } else if low == 0 || high == copper.len() - 1 {
+            Some(ViaKind::Blind)
+        } else {
+            Some(ViaKind::Buried)
+        }
+    }
+
     /// Whether `layer` lies within the via's span.
     pub(crate) fn via_covers_layer(&self, via: &Via, layer: u16) -> bool {
         if via.layer_start == via.layer_end {
@@ -234,7 +281,7 @@ impl PcbDesign {
                     }
                 };
                 let name = format!(
-                    "pad:{}:{}:{}:{}:{}:{}:{}",
+                    "pad:{}:{}:{}:{}:{}:{}:{}:{}",
                     footprint.name,
                     footprint.reference_designator,
                     footprint_index,
@@ -242,14 +289,16 @@ impl PcbDesign {
                     pad.x.to_bits(),
                     pad.y.to_bits(),
                     footprint.position.x.to_bits(),
+                    pad.rotation.to_bits(),
                 );
                 pads.push(PadCopper {
                     id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes()),
                     footprint_index,
                     center,
-                    rect: CopperRect::from_center(center, pad.width, pad.height),
+                    rect: CopperRect::from_center(center, pad.width, pad.height, pad.rotation),
                     width: pad.width,
                     height: pad.height,
+                    rotation: pad.rotation,
                     layers,
                     net_id: pad.net_id,
                 });
@@ -297,6 +346,17 @@ impl Default for Track {
             path: Vec::new(),
         }
     }
+}
+
+/// Kind of via span on a particular board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ViaKind {
+    /// Connects the top and bottom copper layers.
+    Through,
+    /// Connects one outer copper layer to an inner layer.
+    Blind,
+    /// Connects two inner copper layers.
+    Buried,
 }
 
 /// A PCB via (plated hole connecting layers).
@@ -431,6 +491,29 @@ mod tests {
         value.as_object_mut().expect("design is an object").remove("rules");
         let old: PcbDesign = serde_json::from_value(value).expect("old design should parse");
         assert_eq!(old.rules, DrcRules::default());
+    }
+
+    #[test]
+    fn via_kind_classifies_through_blind_and_buried_vias() {
+        let design = PcbDesign {
+            layers: vec![
+                PcbLayer::new(0, "F.Cu", LayerKind::Copper),
+                PcbLayer::new(1, "In1.Cu", LayerKind::Copper),
+                PcbLayer::new(2, "In2.Cu", LayerKind::Copper),
+                PcbLayer::new(3, "B.Cu", LayerKind::Copper),
+            ],
+            stackup: core::Stackup { layers: vec![0, 1, 2, 3] },
+            ..PcbDesign::default()
+        };
+
+        let via = |start, end| Via { layer_start: start, layer_end: end, ..Via::default() };
+        assert_eq!(design.via_kind(&via(0, 3)), Some(super::ViaKind::Through));
+        assert_eq!(design.via_kind(&via(3, 0)), Some(super::ViaKind::Through));
+        assert_eq!(design.via_kind(&via(0, 2)), Some(super::ViaKind::Blind));
+        assert_eq!(design.via_kind(&via(1, 3)), Some(super::ViaKind::Blind));
+        assert_eq!(design.via_kind(&via(1, 2)), Some(super::ViaKind::Buried));
+        assert_eq!(design.via_kind(&via(1, 1)), None);
+        assert_eq!(design.via_kind(&via(0, 9)), None);
     }
 
     #[test]

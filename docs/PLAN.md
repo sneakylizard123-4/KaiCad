@@ -26,7 +26,7 @@
 | **Geometry Engine** | Schematic and PCB geometry, footprints, layers | Rust + custom geometry libs |
 | **Schematic Engine** | Netlist generation, rule checking, cross-probing | Rust |
 | **PCB Engine** | Multi-layer board design, stackups, routing | Rust + custom routing algorithm |
-| **Renderer** | Vulkan-based 3D/2D visualization | Rust + Vulkan API |
+| **Renderer** | Deterministic software 3D/2D visualization; Vulkan backend planned | Rust (Vulkan API planned) |
 | **AI Subsystem (kAI)** | Circuit optimization, design suggestions | Rust + LLM integration |
 | **Collaboration Layer** | Version control, sharing, real-time sync | Rust + WebSocket |
 | **Plugin/Scripting** | Extensible architecture | Rust + Cargo workspace |
@@ -49,7 +49,7 @@
 - **PCB Engine** — Board outline, layers, stackup, footprints
 - **Routing** — Push-and-shove algorithm, interactive routing
 - **Electrical Rule Checking** — Continuous validation during design
-- **Vulkan Renderer** — Basic 2D/3D visualization of schematics and PCBs
+- **Renderer** — Basic 2D/3D visualization of PCBs (software rasterizer complete; Vulkan GPU backend deferred)
 
 ### Phase 3: AI & Collaboration (Weeks 9-12)
 - **kAI Subsystem** — Circuit optimization, design suggestions
@@ -65,19 +65,22 @@
 
 ### Implementation status
 
-**Weeks 1–15 are complete and verified.** The Cargo workspace, CI pipeline,
-toolchain configuration, shared data model, SQLite engineering database, named
-symbol libraries, KiCad `.kicad_sym` import, the basic schematic engine
-(netlist generation and export, graph traversal, ERC), the PCB core (outline
-geometry, layer validation, footprint libraries), PCB geometry/DRC (distance
-primitives, track and via dimensions, pad copper, validated rules),
-deterministic single-layer and multi-layer grid routing with through vias,
-atomic core edit transactions with kAI suggestion application,
-permission-checked collaborative edit sessions with version history, bounded
-multi-step undo/redo history, and a validated plugin manifest registry with
-SQLite persistence, activation state and CLI management are in place. PCB
+**Weeks 1–15 and the Phase 2 PCB/renderer scope are complete and verified.**
+The Cargo workspace, CI pipeline, toolchain configuration, shared data model,
+SQLite engineering database, named symbol libraries, KiCad `.kicad_sym` import,
+the basic schematic engine (netlist generation and export, graph traversal,
+ERC), the PCB core (outline geometry, layer validation, footprint libraries),
+PCB geometry/DRC (distance primitives, track and via dimensions, rotated pad
+copper, validated rules), deterministic single-layer and multi-layer grid
+routing with through/blind/buried vias, deterministic push-and-shove and
+interactive routing, atomic core edit transactions with kAI suggestion
+application, permission-checked collaborative edit sessions with version
+history, bounded multi-step undo/redo history, and a validated plugin manifest
+registry with SQLite persistence, activation state and CLI management are in
+place. A deterministic headless software renderer produces framed 2D top views
+and depth-tested 3D board views; the Vulkan GPU backend remains deferred. PCB
 designs persist with their tracks, vias and DRC rules in SQLite. The workspace
-has **301 passing tests**, clean `cargo clippy --workspace --all-targets -- -D
+has **319 passing tests**, clean `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo fmt --all -- --check`, and a successful release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 16 brief.
@@ -98,7 +101,7 @@ Phase 2 progress:
 | 5 | PCB core: outline geometry, layer-stack validation, footprint libraries | ✅ Complete |
 | 6 | PCB geometry and design-rule checking | ✅ Complete |
 | 7 | Deterministic single-layer routing | ✅ Complete |
-| 8 | Multi-layer routing, vias and renderer integration | ✅ Complete (routing; renderer deferred) |
+| 8 | Multi-layer routing, vias and renderer integration | ✅ Complete (software renderer; Vulkan GPU backend deferred) |
 | 9 | kAI suggestion application and transactional edits | ✅ Complete |
 | 10 | Collaborative edit sessions, permissions and version history | ✅ Complete |
 | 11 | Multi-step edit history and redo branching | ✅ Complete |
@@ -118,7 +121,7 @@ beta readiness and release validation.
 | Milestone | Target | Deliverable |
 |-----------|--------|-------------|
 | **M1** | End of Week 4 | Working engineering database + basic schematic editor |
-| **M2** | End of Week 8 | Full PCB design capabilities + basic renderer |
+| **M2** | End of Week 8 | Phase 2 PCB scope + basic renderer — ✅ complete (software renderer) |
 | **M3** | End of Week 12 | AI optimization features + collaboration layer |
 | **M4** | End of Week 16 | Beta release, documentation, ready for open-source launch |
 
@@ -155,7 +158,8 @@ beta readiness and release validation.
 - [ ] KaiCad can import/export KiCad 9/10 projects
 - [ ] Full schematic design (nets, symbols, rules) works
 - [x] Multi-layer PCB design with routing is functional
-- [ ] Vulkan renderer produces accurate 2D/3D visualizations
+- [x] Software renderer produces deterministic 2D/3D board visualizations
+- [ ] Vulkan GPU renderer produces accelerated 2D/3D visualizations
 - [ ] kAI provides meaningful circuit optimization suggestions
 - [ ] Collaborative features (sharing, versioning) are operational
 - [ ] Code quality meets Rust best practices (clippy pass, test coverage)

@@ -1,10 +1,11 @@
 # Next Agent Prompt — Week 16: Beta Readiness
 
 You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
-`/home/sneak/vscode/KaiCad`. Weeks 13–15 are finished and verified. Your job is
-**Week 16: harden the CLI, document the plugin workflow and release surface,
-add performance baselines, and complete the beta-readiness audit**. Do not add
-dynamic plugin execution or new engineering engines.
+`/home/sneak/vscode/KaiCad`. Weeks 1–15 and the Phase 2 PCB/renderer scope are
+finished and verified. Your job is **Week 16: harden the CLI, document the
+plugin workflow and release surface, add performance baselines, and complete
+the beta-readiness audit**. Do not add dynamic plugin execution or new
+engineering engines.
 
 Read this document fully before writing code.
 
@@ -13,7 +14,7 @@ Read this document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 301 passing, 0 failing
+- **Tests:** 319 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -36,6 +37,17 @@ Read this document fully before writing code.
   `--db <path>` (default `kaicad.db`).
 - Plugin metadata is validated at the plugin boundary and again on store load.
   No plugin code is loaded or executed.
+
+### Phase 2 completion
+
+- Rotated pads use oriented copper rectangles in DRC and routing.
+- Vias are classified as through, blind or buried; routing can emit
+  span-limited vias with `RouterConfig::allow_blind_buried`.
+- `route_push_and_shove` performs bounded deterministic rip-up/reroute, and
+  `InteractiveRouter` provides preview/commit/cancel sessions.
+- `renderer` is a headless software 2D/3D rasterizer with a depth buffer and
+  PPM output. It requires no Vulkan loader. The Vulkan GPU backend remains
+  deferred.
 
 ---
 
@@ -86,8 +98,9 @@ Add `docs/USER_GUIDE.md` covering:
 - Discovery, registration, listing, showing, enabling and disabling plugins.
 - The default `kaicad.db` location and how `--db` changes it.
 - What "enabled" means: registry state only; no code is executed.
-- Current limitations: no GUI, no renderer, no dynamic plugin loading, no
-  network collaboration.
+- Current limitations: no GUI, no Vulkan GPU backend (a headless software
+  renderer is available), no dynamic plugin loading and no network
+  collaboration.
 - A short troubleshooting table for invalid manifests, duplicate ids, unsafe
   entry points and corrupt registry rows.
 
@@ -121,14 +134,14 @@ Add `docs/RELEASE.md` with a beta checklist that records, at minimum:
 - Manual self-check output and exit code.
 - Schema version and migration policy.
 - Plugin registry limitations.
-- Known deferred features (GUI, Vulkan renderer, dynamic plugins, real-time
-  collaboration, KiCad PCB/schematic parsing).
+- Known deferred features (GUI, Vulkan GPU renderer, dynamic plugins,
+  real-time collaboration, KiCad PCB/schematic parsing).
 - Versioning and GPL-3.0-or-later licensing.
 
 The checklist must distinguish verified items from deferred ones; do not mark
 future work complete.
 
-### 3.5 Tests (target: 12–16 new tests)
+### 3.5 Tests (target: 12–16 new tests, at least 331 total)
 
 Cover at least:
 
@@ -153,8 +166,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 301 tests still pass.
-- [ ] Test count rises to at least 313, all passing.
+- [ ] Existing 319 tests still pass.
+- [ ] Test count rises to at least 331, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).

@@ -130,6 +130,15 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Discovery validates all manifests before opening the registry database
 - Four end-to-end CLI tests; total tests: 301
 
+### Phase 2 completion — advanced PCB and renderer
+- Rotated surface-mount pads with oriented copper rectangles and a `pad-rotation` DRC rule
+- Through, blind and buried via classification; `RouterConfig::allow_blind_buried` emits span-limited vias
+- Deterministic `route_push_and_shove` with bounded rip-up and rerouting; `PushAndShoveResult::apply_to`
+- `InteractiveRouter` preview/commit/cancel sessions over `route_multilayer`
+- Deterministic headless software renderer: 2D top view, 3D extrusion, perspective camera, depth buffer, flat shading and PPM output
+- Renderer, push-and-shove and interactive routing wired into the `kai-cad` self-check and cross-crate smoke test
+- 18 new tests; total tests: 319
+
 ## 🚧 Next — Week 16: Beta readiness
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
@@ -138,7 +147,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥317 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥319 tests, clippy/fmt/doc/link/release clean
 
 ## ⬜ Later milestones
 
@@ -153,12 +162,14 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ Deterministic DRC (Week 6)
 - ✅ Deterministic single-layer grid routing (Week 7)
 - ✅ Multi-layer routing with vias (Week 8)
-- ⬜ Basic 2D/3D Vulkan renderer
+- ✅ Pad rotation, blind/buried vias (Phase 2 completion)
+- ✅ Push-and-shove and interactive routing (Phase 2 completion)
+- ✅ Basic 2D/3D software renderer (Phase 2 completion; Vulkan GPU backend deferred)
 
 ### Custom GUI (not yet scheduled)
 - No dedicated GUI week exists in the 16-week plan; the application shell is currently the `kai-cad` CLI.
-- The basic Vulkan renderer (Phase 2, Weeks 5–8) is a prerequisite for any graphical editor.
-- The custom GUI should be scoped and scheduled after basic schematic/PCB rendering is available.
+- Basic PCB rendering is available through the headless software renderer; a Vulkan GPU backend is still deferred.
+- The custom GUI should be scoped and scheduled after the rendering backend and interaction model are chosen.
 - [ ] Decide GUI scope and slot it into the roadmap (likely after Phase 2 or as a new phase)
 
 ### Phase 3 — kAI & collaboration (Weeks 9–12)

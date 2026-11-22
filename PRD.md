@@ -10,8 +10,8 @@
 **Additional platforms:** Windows and macOS  
 **Primary EDA compatibility:** KiCad 10  
 **Secondary EDA compatibility:** KiCad 9  
-**Rendering:** Vulkan  
-**Status:** Architecture decisions finalized; Week 1 scaffold implemented; pre-alpha
+**Rendering:** Vulkan target; deterministic software 2D/3D renderer implemented\
+**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15 and Phase 2 functional scope implemented; pre-alpha
 
 ---
 
@@ -159,12 +159,14 @@ milestones and task breakdowns are maintained separately:
 - [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — the current
   implementation brief.
 
-Implementation status: Weeks 1–15 are complete — scaffolding, the shared data
-model, the SQLite engineering database, symbol management, the schematic
-engine, PCB geometry and DRC, deterministic single-layer and multi-layer
-routing with through vias, PCB-design persistence, atomic kAI suggestion
-application with undo/redo, permission-checked collaborative edit sessions with
-version history and sync staging, bounded multi-step edit history, and a
-validated local plugin registry with SQLite persistence, activation state and
-CLI management. Week 16 (beta readiness) is next. KaiCad is pre-alpha and does
-not yet provide usable schematic or PCB editing.
+Implementation status: Weeks 1–15 and the Phase 2 PCB/renderer scope are
+complete — scaffolding, the shared data model, the SQLite engineering database,
+symbol management, the schematic engine, PCB geometry and DRC, rotated pads,
+deterministic single-layer and multi-layer routing with through/blind/buried
+vias, push-and-shove and interactive routing, PCB-design persistence, a
+headless software 2D/3D renderer, atomic kAI suggestion application with
+undo/redo, permission-checked collaborative edit sessions with version history
+and sync staging, bounded multi-step edit history, and a validated local
+plugin registry with SQLite persistence, activation state and CLI management.
+The Vulkan GPU renderer, GUI and usable end-to-end editing workflow remain
+deferred. Week 16 (beta readiness) is next. KaiCad is pre-alpha.

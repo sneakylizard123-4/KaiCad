@@ -36,6 +36,10 @@ pub struct PadPosition {
     /// Copper height of the pad in millimetres.
     #[serde(default = "default_pad_height")]
     pub height: f64,
+    /// Pad rotation in degrees, counter-clockwise about its centre.
+    /// Older documents load with zero rotation.
+    #[serde(default)]
+    pub rotation: f64,
     /// Net this pad belongs to, when one is assigned.
     #[serde(default)]
     pub net_id: Option<uuid::Uuid>,
@@ -49,6 +53,7 @@ impl Default for PadPosition {
             pad_type: PadType::default(),
             width: default_pad_width(),
             height: default_pad_height(),
+            rotation: 0.0,
             net_id: None,
         }
     }
@@ -387,5 +392,17 @@ mod tests {
         assert_eq!(footprint.pad_positions[0].width, 1.0);
         assert_eq!(footprint.pad_positions[0].height, 1.0);
         assert!(footprint.pad_positions[0].net_id.is_none());
+        assert_eq!(footprint.pad_positions[0].rotation, 0.0);
+    }
+
+    #[test]
+    fn pad_rotation_round_trips_and_defaults_to_zero() {
+        let pad = PadPosition { rotation: 45.0, ..PadPosition::default() };
+        let json = serde_json::to_string(&pad).expect("pad serializes");
+        let restored: PadPosition = serde_json::from_str(&json).expect("pad parses");
+        assert_eq!(restored.rotation, 45.0);
+
+        let legacy = PadPosition::default();
+        assert_eq!(legacy.rotation, 0.0);
     }
 }

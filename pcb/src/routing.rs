@@ -3,7 +3,10 @@
 //! [`route`] snaps the requested endpoints to a grid, runs four-neighbour A*
 //! over nodes inside the board outline, avoids existing copper and returns
 //! simplified single-layer tracks. [`route_multilayer`] uses the same search
-//! but may insert through vias and continue on other copper layers.
+//! but may insert vias and continue on other copper layers.
+//! [`route_push_and_shove`] retries a blocked route after removing a bounded
+//! set of conflicting tracks and rerouting them around the result, and
+//! [`InteractiveRouter`] holds a preview that can be committed or cancelled.
 //!
 //! All ties are broken deterministically and every id is a UUIDv5 value
 //! derived from the request and the corresponding path segment, so repeated
@@ -83,6 +86,14 @@ fn default_via_drill() -> f64 {
     0.3
 }
 
+fn default_allow_blind_buried() -> bool {
+    false
+}
+
+fn default_max_shoved_tracks() -> usize {
+    8
+}
+
 /// Costs and limits for the grid router.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RouterConfig {
@@ -95,7 +106,8 @@ pub struct RouterConfig {
     /// Maximum number of grid nodes the search may expand.
     #[serde(default = "default_max_expansions")]
     pub max_expansions: usize,
-    /// Whether [`route_multilayer`] may insert through vias.
+    /// Whether [`route_multilayer`] may insert vias. Generated vias are
+    /// through vias unless [`RouterConfig::allow_blind_buried`] is also set.
     #[serde(default = "default_allow_vias")]
     pub allow_vias: bool,
     /// Cost of one layer transition, in grid steps.
@@ -110,6 +122,14 @@ pub struct RouterConfig {
     /// Finished drill diameter of generated vias, in millimetres.
     #[serde(default = "default_via_drill")]
     pub via_drill: f64,
+    /// Whether layer changes may use blind and buried vias instead of always
+    /// spanning the full copper stackup.
+    #[serde(default = "default_allow_blind_buried")]
+    pub allow_blind_buried: bool,
+    /// Maximum number of existing tracks [`route_push_and_shove`] may remove
+    /// in one attempt. Zero disables rip-up.
+    #[serde(default = "default_max_shoved_tracks")]
+    pub max_shoved_tracks: usize,
 }
 
 impl Default for RouterConfig {
@@ -123,6 +143,8 @@ impl Default for RouterConfig {
             max_vias: default_max_vias(),
             via_diameter: default_via_diameter(),
             via_drill: default_via_drill(),
+            allow_blind_buried: default_allow_blind_buried(),
+            max_shoved_tracks: default_max_shoved_tracks(),
         }
     }
 }
@@ -208,7 +230,7 @@ pub fn route(
     route_multilayer(request, design, &single_layer).map(|result| result.tracks)
 }
 
-/// Route one net, optionally changing copper layers through through-vias.
+/// Route one net, optionally changing copper layers through vias.
 ///
 /// The search state is `(node, layer, direction)` plus the number of vias used
 /// so far. In-layer moves cost one grid step, with `config.bend_cost` added on
@@ -217,11 +239,12 @@ pub fn route(
 ///
 /// A candidate via is only used when its diameter/drill satisfy the design's
 /// `via-drill` and annular-ring limits, and when it clears every track, pad and
-/// via on every copper layer it spans. Generated vias are through vias from
-/// the top to the bottom copper layer. Tracks are split at each layer change
-/// and simplified independently; every track uses `request.net_id` and
-/// `request.width`. With `allow_vias == false` this is equivalent to
-/// [`route`].
+/// via on the copper layers it spans. Generated vias are through vias from the
+/// top to the bottom copper layer unless `config.allow_blind_buried` is set,
+/// in which case they span only the layers used by the layer change. Tracks
+/// are split at each layer change and simplified independently; every track
+/// uses `request.net_id` and `request.width`. With `allow_vias == false` this
+/// is equivalent to [`route`].
 pub fn route_multilayer(
     request: &RouteRequest,
     design: &PcbDesign,
@@ -335,11 +358,7 @@ pub fn route_multilayer(
             relax(&mut open, &mut best, &mut came, item.state, state, g, end_node);
         }
 
-        if !config.allow_vias
-            || copper.len() < 2
-            || item.state.vias as usize >= config.max_vias
-            || !context.via_allowed(&current_point, config)
-        {
+        if !config.allow_vias || copper.len() < 2 || item.state.vias as usize >= config.max_vias {
             continue;
         }
 
@@ -349,6 +368,14 @@ pub fn route_multilayer(
         for offset in 1..copper.len() {
             let target = copper[(from_index + offset) % copper.len()];
             if context.point_blocked(&current_point, target) {
+                continue;
+            }
+            let (via_start, via_end) = if config.allow_blind_buried {
+                (item.state.layer, target)
+            } else {
+                (*copper.first().unwrap_or(&item.state.layer), *copper.last().unwrap_or(&target))
+            };
+            if !context.via_allowed(&current_point, config, via_start, via_end) {
                 continue;
             }
 
@@ -366,6 +393,188 @@ pub fn route_multilayer(
     let goal = goal.ok_or(RouteError::NoPath)?;
     let states = reconstruct(goal, &came);
     Ok(build_result(request, config, &copper, &states))
+}
+
+/// Tracks removed and rerouted by [`route_push_and_shove`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PushAndShoveResult {
+    /// The requested route through the cleared area.
+    pub route: RouteResult,
+    /// Existing tracks removed from the design, ordered by id.
+    pub removed_track_ids: Vec<Uuid>,
+    /// Replacements for the removed tracks.
+    pub rerouted: RouteResult,
+}
+
+impl PushAndShoveResult {
+    /// Apply this result to `design`, removing the ripped-up tracks and adding
+    /// both the new route and its rerouted replacements.
+    pub fn apply_to(&self, design: &mut PcbDesign) {
+        let removed: HashSet<Uuid> = self.removed_track_ids.iter().copied().collect();
+        design.tracks.retain(|track| !removed.contains(&track.id));
+        design.tracks.extend(self.route.tracks.iter().cloned());
+        design.vias.extend(self.route.vias.iter().cloned());
+        design.tracks.extend(self.rerouted.tracks.iter().cloned());
+        design.vias.extend(self.rerouted.vias.iter().cloned());
+    }
+}
+
+/// Route one net, removing a bounded deterministic set of conflicting tracks
+/// and rerouting them around the new path when a direct route fails.
+///
+/// Candidates are existing tracks on other nets, ordered by id and limited by
+/// [`RouterConfig::max_shoved_tracks`]. For each cumulative prefix of that
+/// list, the function removes the prefix from a copy of the design, routes the
+/// request, then tries to reroute every removed track around the new copper.
+/// The first prefix for which every reroute succeeds is returned; nothing is
+/// applied to `design` until [`PushAndShoveResult::apply_to`] is called.
+///
+/// A direct route is always preferred and returns empty removed/rerouted
+/// results. Requests or configurations rejected by [`route_multilayer`] keep
+/// their error, while an exhausted candidate list returns
+/// [`RouteError::NoPath`].
+pub fn route_push_and_shove(
+    request: &RouteRequest,
+    design: &PcbDesign,
+    config: &RouterConfig,
+) -> Result<PushAndShoveResult, RouteError> {
+    match route_multilayer(request, design, config) {
+        Ok(route) => {
+            return Ok(PushAndShoveResult {
+                route,
+                removed_track_ids: Vec::new(),
+                rerouted: RouteResult { tracks: Vec::new(), vias: Vec::new() },
+            });
+        }
+        Err(RouteError::NoPath) => {}
+        Err(error) => return Err(error),
+    }
+
+    let mut candidates: Vec<Track> = design
+        .tracks
+        .iter()
+        .filter(|track| {
+            track.net_id != request.net_id
+                && track.path.len() >= 2
+                && track.width.is_finite()
+                && track.width > 0.0
+                && design.copper_layer_ids().contains(&track.layer)
+        })
+        .cloned()
+        .collect();
+    candidates.sort_by_key(|track| track.id);
+    candidates.truncate(config.max_shoved_tracks);
+
+    'removed: for count in 1..=candidates.len() {
+        let removed = &candidates[..count];
+        let removed_ids: HashSet<Uuid> = removed.iter().map(|track| track.id).collect();
+        let mut trial = design.clone();
+        trial.tracks.retain(|track| !removed_ids.contains(&track.id));
+
+        let Ok(route) = route_multilayer(request, &trial, config) else {
+            continue;
+        };
+        trial.tracks.extend(route.tracks.iter().cloned());
+        trial.vias.extend(route.vias.iter().cloned());
+
+        let mut rerouted = RouteResult { tracks: Vec::new(), vias: Vec::new() };
+        for track in removed {
+            let replacement = RouteRequest {
+                net_id: track.net_id,
+                start: track.path[0],
+                end: *track.path.last().unwrap(),
+                layer: track.layer,
+                width: track.width,
+            };
+            let Ok(replacement_route) = route_multilayer(&replacement, &trial, config) else {
+                continue 'removed;
+            };
+            trial.tracks.extend(replacement_route.tracks.iter().cloned());
+            trial.vias.extend(replacement_route.vias.iter().cloned());
+            rerouted.tracks.extend(replacement_route.tracks);
+            rerouted.vias.extend(replacement_route.vias);
+        }
+
+        return Ok(PushAndShoveResult {
+            route,
+            removed_track_ids: removed.iter().map(|track| track.id).collect(),
+            rerouted,
+        });
+    }
+
+    Err(RouteError::NoPath)
+}
+
+/// Stateful interactive routing session with a preview that can be committed
+/// or cancelled.
+///
+/// Each call to [`preview`](Self::preview) replaces the previous preview and
+/// leaves the design untouched. [`commit`](Self::commit) adds the preview's
+/// tracks and vias to the design exactly once. The design must not change
+/// between the final preview and the commit; start a new session after any
+/// unrelated edit.
+#[derive(Debug, Clone)]
+pub struct InteractiveRouter {
+    request: RouteRequest,
+    config: RouterConfig,
+    preview: Option<RouteResult>,
+}
+
+impl InteractiveRouter {
+    /// Start a session at `start` on `layer`, routing `net_id` with `width`.
+    pub fn new(
+        net_id: Uuid,
+        start: core::Point,
+        layer: u16,
+        width: f64,
+        config: RouterConfig,
+    ) -> Self {
+        Self {
+            request: RouteRequest { net_id, start, end: start, layer, width },
+            config,
+            preview: None,
+        }
+    }
+
+    /// The request whose start, net, layer and width are held by this session.
+    pub fn request(&self) -> &RouteRequest {
+        &self.request
+    }
+
+    /// The current preview, if the last preview attempt succeeded.
+    pub fn preview_result(&self) -> Option<&RouteResult> {
+        self.preview.as_ref()
+    }
+
+    /// Route from the session start to `end`, replacing the preview.
+    ///
+    /// On failure the previous preview is cleared and the error is returned.
+    pub fn preview(
+        &mut self,
+        design: &PcbDesign,
+        end: core::Point,
+    ) -> Result<&RouteResult, RouteError> {
+        self.request.end = end;
+        self.preview = None;
+        let result = route_multilayer(&self.request, design, &self.config)?;
+        self.preview = Some(result);
+        Ok(self.preview.as_ref().expect("preview was just assigned"))
+    }
+
+    /// Add the current preview to `design` and end the preview.
+    ///
+    /// Returns [`RouteError::NoPath`] when there is no preview.
+    pub fn commit(&mut self, design: &mut PcbDesign) -> Result<RouteResult, RouteError> {
+        let result = self.preview.take().ok_or(RouteError::NoPath)?;
+        design.tracks.extend(result.tracks.iter().cloned());
+        design.vias.extend(result.vias.iter().cloned());
+        Ok(result)
+    }
+
+    /// Discard the current preview without changing the design.
+    pub fn cancel(&mut self) {
+        self.preview = None;
+    }
 }
 
 fn relax(
@@ -579,10 +788,18 @@ impl SearchContext<'_> {
         false
     }
 
-    /// Whether a through via centred on `point` clears every spanned layer and
-    /// satisfies the design's via limits.
-    fn via_allowed(&self, point: &core::Point, config: &RouterConfig) -> bool {
-        if self.copper.len() < 2 {
+    /// Whether a via centred on `point` and spanning `from` to `to` clears
+    /// every layer it covers and satisfies the design's via limits.
+    fn via_allowed(&self, point: &core::Point, config: &RouterConfig, from: u16, to: u16) -> bool {
+        let (Some(from_index), Some(to_index)) = (
+            self.copper.iter().position(|id| *id == from),
+            self.copper.iter().position(|id| *id == to),
+        ) else {
+            return false;
+        };
+        let (low, high) =
+            if from_index <= to_index { (from_index, to_index) } else { (to_index, from_index) };
+        if low == high {
             return false;
         }
 
@@ -593,7 +810,7 @@ impl SearchContext<'_> {
         }
 
         let radius = config.via_diameter / 2.0;
-        for layer in self.copper {
+        for layer in &self.copper[low..=high] {
             for track in &self.design.tracks {
                 if track.layer != *layer || !track.width.is_finite() || track.net_id == self.net_id
                 {
@@ -719,21 +936,25 @@ fn build_result(
         })
         .collect();
 
-    let (layer_start, layer_end) = (
+    let (through_start, through_end) = (
         copper.first().copied().unwrap_or(request.layer),
         copper.last().copied().unwrap_or(request.layer),
     );
     let vias = transitions
         .into_iter()
         .enumerate()
-        .map(|(index, (node, from, to))| Via {
-            id: via_id(request, config, node, from, to, index),
-            net_id: Some(request.net_id),
-            position: node_point(node, config.grid),
-            layer_start,
-            layer_end,
-            diameter: config.via_diameter,
-            drill: config.via_drill,
+        .map(|(index, (node, from, to))| {
+            let (layer_start, layer_end) =
+                if config.allow_blind_buried { (from, to) } else { (through_start, through_end) };
+            Via {
+                id: via_id(request, config, node, from, to, index),
+                net_id: Some(request.net_id),
+                position: node_point(node, config.grid),
+                layer_start,
+                layer_end,
+                diameter: config.via_diameter,
+                drill: config.via_drill,
+            }
         })
         .collect();
 
@@ -826,7 +1047,8 @@ fn via_id(
 #[cfg(test)]
 mod tests {
     use super::{
-        RouteError, RouteRequest, RouteResult, Router, RouterConfig, route, route_multilayer,
+        InteractiveRouter, RouteError, RouteRequest, RouteResult, Router, RouterConfig, route,
+        route_multilayer, route_push_and_shove,
     };
     use crate::{PcbDesign, Track, Via, run_drc};
     use core::{LayerKind, PcbLayer, PcbOutline, Point, Stackup};
@@ -933,6 +1155,8 @@ mod tests {
         assert_eq!(router.config.max_vias, 64);
         assert_eq!(router.config.via_diameter, 0.6);
         assert_eq!(router.config.via_drill, 0.3);
+        assert!(!router.config.allow_blind_buried);
+        assert_eq!(router.config.max_shoved_tracks, 8);
 
         let json = serde_json::to_string(&router).expect("router serializes");
         let restored: Router = serde_json::from_str(&json).expect("router parses");
@@ -1083,6 +1307,7 @@ mod tests {
                 pad_type: crate::PadType::SurfaceMount,
                 width: 2.0,
                 height: 2.0,
+                rotation: 0.0,
                 net_id: None,
             }],
             ..crate::Footprint::default()
@@ -1105,6 +1330,8 @@ mod tests {
         assert_eq!(config.max_vias, 64);
         assert_eq!(config.via_diameter, 0.6);
         assert_eq!(config.via_drill, 0.3);
+        assert!(!config.allow_blind_buried);
+        assert_eq!(config.max_shoved_tracks, 8);
 
         let json = serde_json::to_string(&config).expect("config serializes");
         let restored: RouterConfig = serde_json::from_str(&json).expect("config parses");
@@ -1116,6 +1343,8 @@ mod tests {
         assert_eq!(legacy.grid, 0.25);
         assert!(legacy.allow_vias);
         assert_eq!(legacy.via_cost, 5.0);
+        assert!(!legacy.allow_blind_buried);
+        assert_eq!(legacy.max_shoved_tracks, 8);
     }
 
     #[test]
@@ -1312,6 +1541,86 @@ mod tests {
         assert!(result.tracks.iter().any(|track| track.layer == 2));
         assert!(result.vias.iter().all(|via| via.layer_start == 0 && via.layer_end == 3));
         assert_drc_clean(&design, &result);
+    }
+
+    #[test]
+    fn multilayer_uses_blind_vias_when_enabled() {
+        let mut design = four_layer_design();
+        wall_on(&mut design, 0, Point::new(0.0, 10.0), Point::new(20.0, 10.0));
+        wall_on(&mut design, 1, Point::new(0.0, 10.0), Point::new(20.0, 10.0));
+        wall_on(&mut design, 3, Point::new(0.0, 10.0), Point::new(20.0, 10.0));
+
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let blind = RouterConfig { allow_blind_buried: true, ..config() };
+        let result = route_multilayer(&request, &design, &blind)
+            .expect("inner layer should be reachable with a blind via");
+
+        assert!(result.tracks.iter().any(|track| track.layer == 2));
+        assert!(result.vias.iter().any(|via| via.layer_start == 0 && via.layer_end == 2));
+        assert!(
+            result.vias.iter().all(|via| !(via.layer_start == 0 && via.layer_end == 3)),
+            "blind routing should not fall back to a through via"
+        );
+        assert_drc_clean(&design, &result);
+    }
+
+    #[test]
+    fn push_and_shove_rips_up_and_reroutes_a_blocking_track() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let no_vias = RouterConfig { allow_vias: false, ..config() };
+        assert!(matches!(route_multilayer(&request, &design, &no_vias), Err(RouteError::NoPath)));
+
+        let shoved =
+            route_push_and_shove(&request, &design, &no_vias).expect("shove should clear the wall");
+        assert_eq!(shoved.removed_track_ids.len(), 1);
+        assert!(!shoved.route.tracks.is_empty());
+        assert!(!shoved.rerouted.tracks.is_empty());
+
+        let mut routed = design;
+        shoved.apply_to(&mut routed);
+        assert_eq!(routed.tracks.len(), 2, "wall should be replaced by one track");
+        let report = run_drc(&routed, &routed.rules);
+        assert!(report.is_valid(), "shove produced DRC errors: {:?}", report.violations);
+    }
+
+    #[test]
+    fn push_and_shove_prefers_a_direct_route() {
+        let design = design();
+        let request = request(Point::new(2.0, 2.0), Point::new(17.0, 17.0));
+        let result = route_push_and_shove(&request, &design, &config()).expect("direct route");
+
+        assert!(result.removed_track_ids.is_empty());
+        assert!(result.rerouted.tracks.is_empty());
+        assert!(result.rerouted.vias.is_empty());
+    }
+
+    #[test]
+    fn interactive_router_previews_commits_and_cancels() {
+        let design = crossing_design();
+        let before = serde_json::to_string(&design).expect("design serializes");
+        let net = Uuid::from_u128(7);
+        let mut router = InteractiveRouter::new(net, Point::new(5.0, 5.0), 0, 0.25, config());
+
+        assert!(router.preview_result().is_none());
+        assert_eq!(router.request().end, Point::new(5.0, 5.0));
+        let preview = router.preview(&design, Point::new(15.0, 15.0)).expect("preview");
+        assert!(!preview.tracks.is_empty());
+        assert_eq!(before, serde_json::to_string(&design).expect("design serializes"));
+
+        router.cancel();
+        assert!(router.preview_result().is_none());
+        assert_eq!(router.request().end, Point::new(15.0, 15.0));
+        assert!(matches!(router.commit(&mut PcbDesign::default()), Err(RouteError::NoPath)));
+
+        router.preview(&design, Point::new(14.0, 16.0)).expect("second preview");
+        let mut routed = design;
+        let committed = router.commit(&mut routed).expect("commit");
+        assert!(!committed.tracks.is_empty());
+        assert!(router.preview_result().is_none());
+        assert!(!routed.tracks.is_empty());
+        let report = run_drc(&routed, &routed.rules);
+        assert!(report.is_valid(), "commit produced DRC errors: {:?}", report.violations);
     }
 
     #[test]

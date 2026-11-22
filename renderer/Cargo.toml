@@ -6,10 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "KaiCad Vulkan-based rendering engine"
+description = "KaiCad deterministic software 2D/3D renderer"
 
 [dependencies]
 ash = "0.38"
+pcb = { path = "../pcb" }
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+core = { path = "../core" }
+
 [lints]
 workspace = true

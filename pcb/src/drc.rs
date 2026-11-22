@@ -166,7 +166,6 @@ pub fn run_drc(design: &PcbDesign, rules: &DrcRules) -> DrcReport {
         }
     };
     let rules = &active_rules;
-    let stackup_copper = stackup_copper_ids(design);
 
     for track in &design.tracks {
         check_track_width(track, rules, &mut violations);
@@ -177,13 +176,14 @@ pub fn run_drc(design: &PcbDesign, rules: &DrcRules) -> DrcReport {
 
     for via in &design.vias {
         check_via_outside(design, via, &mut violations);
-        check_via_span(design, &stackup_copper, via, &mut violations);
+        check_via_span(design, via, &mut violations);
         check_via_drill(via, rules, &mut violations);
     }
 
     let pads = design.pad_copper();
     for pad in &pads {
         check_pad_size(pad, &mut violations);
+        check_pad_rotation(pad, &mut violations);
         check_pad_outside(design, pad, &mut violations);
     }
 
@@ -201,20 +201,6 @@ pub fn run_drc(design: &PcbDesign, rules: &DrcRules) -> DrcReport {
 /// Whether `layer` is defined and made of copper.
 fn is_copper(design: &PcbDesign, layer: u16) -> bool {
     design.layers.iter().any(|candidate| candidate.id == layer && candidate.is_copper())
-}
-
-/// Copper layer ids in stackup order, without duplicates.
-///
-/// Returns an empty list when the stackup is empty, which means layer order is
-/// unknown rather than "no copper layers".
-fn stackup_copper_ids(design: &PcbDesign) -> Vec<u16> {
-    let mut ids = Vec::new();
-    for id in &design.stackup.layers {
-        if !ids.contains(id) && is_copper(design, *id) {
-            ids.push(*id);
-        }
-    }
-    ids
 }
 
 /// Compare object id lists by their string form.
@@ -349,12 +335,7 @@ fn check_via_outside(design: &PcbDesign, via: &Via, violations: &mut Vec<DrcViol
     }
 }
 
-fn check_via_span(
-    design: &PcbDesign,
-    stackup_copper: &[u16],
-    via: &Via,
-    violations: &mut Vec<DrcViolation>,
-) {
+fn check_via_span(design: &PcbDesign, via: &Via, violations: &mut Vec<DrcViolation>) {
     let location = finite_location(&via.position);
 
     if via.layer_start == via.layer_end {
@@ -384,30 +365,22 @@ fn check_via_span(
             vec![via.id],
             location,
         );
+    }
+}
+
+fn check_pad_rotation(pad: &PadCopper, violations: &mut Vec<DrcViolation>) {
+    if pad.has_valid_rotation() {
         return;
     }
 
-    if !design.stackup.layers.is_empty() {
-        let top = stackup_copper.first().copied();
-        let bottom = stackup_copper.last().copied();
-        if top != Some(via.layer_start) || bottom != Some(via.layer_end) {
-            push(
-                violations,
-                "via-span",
-                DrcSeverity::Error,
-                format!(
-                    "via {} spans layers {}-{}, not the full top-to-bottom stackup {}-{}",
-                    via.id,
-                    via.layer_start,
-                    via.layer_end,
-                    top.map_or_else(|| "none".to_string(), |id| id.to_string()),
-                    bottom.map_or_else(|| "none".to_string(), |id| id.to_string()),
-                ),
-                vec![via.id],
-                location,
-            );
-        }
-    }
+    push(
+        violations,
+        "pad-rotation",
+        DrcSeverity::Error,
+        format!("pad {} has non-finite rotation {}", pad.id, pad.rotation),
+        vec![pad.id],
+        finite_location(&pad.center),
+    );
 }
 
 fn check_via_drill(via: &Via, rules: &DrcRules, violations: &mut Vec<DrcViolation>) {
@@ -501,7 +474,7 @@ fn check_pad_size(pad: &PadCopper, violations: &mut Vec<DrcViolation>) {
 }
 
 fn check_pad_outside(design: &PcbDesign, pad: &PadCopper, violations: &mut Vec<DrcViolation>) {
-    if design.outline.points.len() < 3 || !pad.has_valid_size() {
+    if design.outline.points.len() < 3 || !pad.has_valid_size() || !pad.has_valid_rotation() {
         return;
     }
 
@@ -944,22 +917,80 @@ mod tests {
 
     #[test]
     fn via_span_rule_covers_same_reversed_unknown_and_non_copper_layers() {
-        let cases = [
+        let invalid = [
             via(0, 0, Point::new(50.0, 40.0)),
-            via(1, 0, Point::new(50.0, 40.0)),
             via(0, 9, Point::new(50.0, 40.0)),
             via(0, 2, Point::new(50.0, 40.0)),
         ];
 
-        for case in cases {
+        for case in invalid {
             let design = board(Vec::new(), vec![case]);
             let report = run_drc(&design, &DrcRules::default());
             assert_eq!(count_rule(&report, "via-span"), 1);
             assert_eq!(count_rule(&report, "via-drill"), 0);
         }
 
-        let valid = board(Vec::new(), vec![via(0, 1, Point::new(50.0, 40.0))]);
-        assert_eq!(count_rule(&run_drc(&valid, &DrcRules::default()), "via-span"), 0);
+        for case in [via(0, 1, Point::new(50.0, 40.0)), via(1, 0, Point::new(50.0, 40.0))] {
+            let design = board(Vec::new(), vec![case]);
+            assert_eq!(count_rule(&run_drc(&design, &DrcRules::default()), "via-span"), 0);
+        }
+    }
+
+    #[test]
+    fn via_span_rule_accepts_blind_and_buried_vias() {
+        let mut design = PcbDesign {
+            layers: vec![
+                PcbLayer::new(0, "F.Cu", LayerKind::Copper),
+                PcbLayer::new(1, "In1.Cu", LayerKind::Copper),
+                PcbLayer::new(2, "In2.Cu", LayerKind::Copper),
+                PcbLayer::new(3, "B.Cu", LayerKind::Copper),
+            ],
+            stackup: Stackup { layers: vec![0, 1, 2, 3] },
+            ..board(Vec::new(), Vec::new())
+        };
+        design.vias = vec![
+            via(0, 1, Point::new(50.0, 40.0)),
+            via(2, 3, Point::new(40.0, 40.0)),
+            via(1, 2, Point::new(60.0, 40.0)),
+        ];
+
+        let report = run_drc(&design, &DrcRules::default());
+        assert_eq!(count_rule(&report, "via-span"), 0);
+        assert!(report.is_valid());
+    }
+
+    #[test]
+    fn rotated_pads_use_oriented_copper_for_containment_and_clearance() {
+        let mut unrotated = pad(0.0, 0.0, None);
+        unrotated.width = 4.0;
+        unrotated.height = 0.4;
+        let track = track(0, 0.25, vec![Point::new(46.0, 40.0), Point::new(48.0, 40.0)]);
+        let design = PcbDesign {
+            footprints: vec![footprint(Point::new(50.0, 40.0), vec![unrotated])],
+            tracks: vec![track.clone()],
+            ..board(Vec::new(), Vec::new())
+        };
+        assert_eq!(count_rule(&run_drc(&design, &DrcRules::default()), "clearance"), 1);
+
+        let mut rotated = pad(0.0, 0.0, None);
+        rotated.width = 4.0;
+        rotated.height = 0.4;
+        rotated.rotation = 90.0;
+        let design = PcbDesign {
+            footprints: vec![footprint(Point::new(50.0, 40.0), vec![rotated.clone()])],
+            tracks: vec![track],
+            ..board(Vec::new(), Vec::new())
+        };
+        assert_eq!(count_rule(&run_drc(&design, &DrcRules::default()), "clearance"), 0);
+
+        let mut invalid_rotation = rotated;
+        invalid_rotation.rotation = f64::NAN;
+        let design = PcbDesign {
+            footprints: vec![footprint(Point::new(50.0, 40.0), vec![invalid_rotation])],
+            ..board(Vec::new(), Vec::new())
+        };
+        let report = run_drc(&design, &DrcRules::default());
+        assert_eq!(count_rule(&report, "pad-rotation"), 1);
     }
 
     #[test]

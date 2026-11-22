@@ -2,12 +2,14 @@
 
 Practical instructions for building, testing and hacking on KaiCad.
 
-> KaiCad is a **pre-alpha scaffold**. Crates compile and the data model is
-> exercised by tests, but most engine functions are stubs. See
-> [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
+> KaiCad is **pre-alpha**. The data model, schematic and PCB engines, routing,
+> software renderer, persistence and collaboration primitives are implemented
+> and tested; the GUI, Vulkan GPU backend, AI generation and real-time
+> transport are not. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 >
-> **Current state:** Weeks 1–15 are complete (301 tests, clippy/fmt/doc/release
-> all clean). Week 16 — beta readiness — is next; its work order is in
+> **Current state:** Weeks 1–15 and the Phase 2 PCB/renderer scope are complete
+> (319 tests, clippy/fmt/doc/release all clean). Week 16 — beta readiness — is
+> next; its work order is in
 > [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
@@ -45,8 +47,8 @@ sudo pacman -S base-devel pkgconf openssl systemd-libs \
 ```
 
 `libssl`/`libudev` are not linked by any crate today; they are listed because
-the renderer and future OS integration will need them. The current workspace
-itself is pure Rust.
+future OS integration and the Vulkan GPU backend will need them. The current
+software renderer is pure Rust and needs no Vulkan runtime.
 
 ### macOS
 
@@ -55,21 +57,21 @@ brew install pkg-config openssl
 ```
 
 Install the Vulkan SDK (which provides MoltenVK) from
-<https://vulkan.lunarg.com/> if you intend to work on the renderer.
+<https://vulkan.lunarg.com/> only if you intend to work on the future GPU
+backend; the current software renderer does not need it.
 
 ### Windows
 
 - Visual Studio Build Tools with the "Desktop development with C++" workload.
-- The Vulkan SDK from <https://vulkan.lunarg.com/> for renderer work.
+- The Vulkan SDK from <https://vulkan.lunarg.com/> only for future GPU-backend work.
 - Rustup using the `stable-x86_64-pc-windows-msvc` toolchain.
 
 ### Vulkan runtime
 
-`renderer` depends on `ash`, which loads the Vulkan loader (`libvulkan.so.1`,
-`vulkan-1.dll`, `libvulkan.dylib`) **at runtime**. Building the workspace does
-not require a Vulkan SDK; running renderer code eventually will. Install a
-loader plus an ICD (Mesa, NVIDIA, AMD or MoltenVK) and verify with
-`vulkaninfo --summary`.
+`renderer` keeps `ash` for the future Vulkan backend, but its current software
+rendering path never loads the loader. Building and running the renderer need
+no Vulkan SDK. For future GPU work, install a loader plus an ICD (Mesa, NVIDIA,
+AMD or MoltenVK) and verify with `vulkaninfo --summary`.
 
 ## Toolchain
 
@@ -121,7 +123,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **301 tests**, all passing:
+`cargo test --workspace` currently runs **319 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -129,12 +131,12 @@ benchmarks; a bare `cargo check` misses them.
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
-| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 72 |
+| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 80 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
-| `renderer` (`src/lib.rs` and modules) | 5 |
+| `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 14 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 38 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 21 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 22 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -159,8 +161,8 @@ subsystem self-check:
   core: project JSON round trip ok (500 bytes), history 3 undo / 0 redo, limit 2
   plugin: discovered 2, registered 2, deterministic order and validation ok
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
-  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s), multi-layer 2 track(s)/2 via(s)
-  renderer: window 1920x1080, vsync=true
+  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s), multi-layer 2 track(s)/2 via(s), shoved 1 track(s), interactive 1 track(s)
+  renderer: software 2D/3D 640x480, 204020 / 71789 foreground pixels, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always, applied 1 change(s), undo/redo ok (tx 97f81c80)
   collab: 1 session(s), 3 participant(s), session version 1, history 1 entry, staged 1 -> 0
   store: created, loaded and deleted 1 project with its PCB design (schema v6), 2 plugin(s) persisted/2 enabled
@@ -263,8 +265,9 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–15 are finished; Week 16 hardens the CLI, adds user documentation and
-performance baselines, and completes the release checklist. Before starting, read
+Weeks 1–15 and the Phase 2 PCB/renderer scope are finished; Week 16 hardens
+the CLI, adds user documentation and performance baselines, and completes the
+release checklist. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -291,8 +294,9 @@ package cache`) while Cargo downloads dependencies.
 
 ### Vulkan loader or driver not found
 
-Symptoms include `vulkaninfo` failing, or (once the renderer is implemented)
-`ash` failing to load `libvulkan.so.1` / `vulkan-1.dll` / `libvulkan.dylib`.
+Symptoms include `vulkaninfo` failing, or (once the Vulkan GPU backend is
+implemented) `ash` failing to load `libvulkan.so.1` / `vulkan-1.dll` /
+`libvulkan.dylib`. The current software renderer does not use the loader.
 Install a Vulkan loader and an ICD, then check:
 
 ```bash
@@ -367,8 +371,9 @@ you, check these semantics before changing a rule:
 
 - Clearance is measured **edge to edge** on shared copper layers:
   tracks use `segment_distance - width_a / 2 - width_b / 2`, via-track pairs
-  subtract the via radius, and pads are axis-aligned copper rectangles offset
-  by the footprint position. Tracks on other layers, non-copper layers and the
+  subtract the via radius, and pads are oriented copper rectangles offset by
+  the footprint position and rotated by `PadPosition::rotation`. Tracks on
+  other layers, non-copper layers and the
   **same net** are skipped, because same-net copper is an intentional
   connection. Pad-to-track and pad-to-via clearance is skipped when the nets
   match, and track-to-via clearance is skipped when `via.net_id` matches the
@@ -486,7 +491,8 @@ before changing it:
 
 `pcb::routing::route` snaps both endpoints to an origin-anchored grid (half-grid
 values round away from zero), runs four-neighbour A* and returns simplified
-tracks; `route_multilayer` uses the same search and may insert through vias.
+tracks; `route_multilayer` uses the same search and may insert through vias,
+or blind/buried vias when `allow_blind_buried` is enabled.
 Check these semantics before changing the router:
 
 - The start and end nodes must be inside the outline and not blocked by
@@ -505,9 +511,11 @@ Check these semantics before changing the router:
   adds a via transition at the same snapped node, costs `via_cost` and moves to
   another layer in stackup order; `allow_vias: false` reproduces `route`.
 - A candidate via must clear every copper layer it spans and satisfy
-  `min_via_drill` and `min_annular_ring`. It is a through via from the first to
-  the last stackup layer; `max_vias` caps transitions. Generated vias carry the
-  requested net so their own tracks are not reported as clearance violations.
+  `min_via_drill` and `min_annular_ring`. By default it is a through via from
+  the first to the last stackup layer; with `allow_blind_buried: true` it spans
+  only the two layers of the transition. `max_vias` caps transitions. Generated
+  vias carry the requested net so their own tracks are not reported as
+  clearance violations.
 - Returned points are the snapped lattice coordinates, and collinear points are
   merged within each layer run. Tracks are split at every layer change, so each
   track is single-layer and at least two points long.
@@ -528,9 +536,10 @@ Known limits:
 - `sorted` orders by `(name, reference_designator)` for display only; the
   library keeps insertion order, so `to_json` output follows the vector.
 - Pad copper is separate from the footprint outline: each `PadPosition` has
-  `width`/`height`, an optional `net_id`, and is placed by
-  `Footprint::position`. Outlines are documentation shapes and are not checked
-  as copper. There is no rotation support yet, so pads are axis-aligned.
+  `width`/`height`, a counter-clockwise `rotation` in degrees, an optional
+  `net_id`, and is placed by `Footprint::position`. Outlines are documentation
+  shapes and are not checked as copper. DRC and routing use the rotated copper
+  rectangle, not an axis-aligned approximation.
 
 ### Build is slow the first time
 

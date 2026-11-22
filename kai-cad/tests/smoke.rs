@@ -842,6 +842,72 @@ fn plugin_cli_rejects_invalid_discovery_directory() {
 }
 
 #[test]
+fn phase_two_routing_and_renderer_work_together() {
+    let design = pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(20.0, 20.0),
+        layers: vec![
+            core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
+            core::PcbLayer::new(1, "B.Cu", core::LayerKind::Copper),
+        ],
+        stackup: core::Stackup { layers: vec![0, 1] },
+        tracks: vec![pcb::Track {
+            id: Uuid::from_u128(99),
+            net_id: Uuid::from_u128(100),
+            layer: 0,
+            width: 0.25,
+            path: vec![core::Point::new(0.0, 10.0), core::Point::new(20.0, 10.0)],
+        }],
+        ..pcb::PcbDesign::default()
+    };
+    let request = pcb::routing::RouteRequest {
+        net_id: Uuid::from_u128(2),
+        start: core::Point::new(5.0, 5.0),
+        end: core::Point::new(15.0, 15.0),
+        layer: 0,
+        width: 0.25,
+    };
+    let config = pcb::routing::RouterConfig {
+        grid: 1.0,
+        allow_vias: false,
+        ..pcb::routing::RouterConfig::default()
+    };
+
+    assert!(pcb::routing::route(&request, &design, &config).is_err());
+    let shoved = pcb::routing::route_push_and_shove(&request, &design, &config)
+        .expect("push-and-shove should clear the wall");
+    assert_eq!(shoved.removed_track_ids, vec![Uuid::from_u128(99)]);
+
+    let mut shoved_design = design.clone();
+    shoved.apply_to(&mut shoved_design);
+    assert!(pcb::run_drc(&shoved_design, &shoved_design.rules).is_valid());
+
+    let mut interactive_design = design;
+    let mut session = pcb::routing::InteractiveRouter::new(
+        Uuid::from_u128(2),
+        core::Point::new(5.0, 5.0),
+        0,
+        0.25,
+        pcb::routing::RouterConfig::default(),
+    );
+    session.preview(&interactive_design, core::Point::new(15.0, 15.0)).expect("preview");
+    let committed = session.commit(&mut interactive_design).expect("commit");
+    assert!(!committed.tracks.is_empty());
+
+    let mut renderer = renderer::Renderer::new(renderer::RendererConfig {
+        window: renderer::WindowConfig::new("smoke", 160, 120),
+        ..renderer::RendererConfig::default()
+    })
+    .expect("renderer");
+    renderer.render_pcb(&interactive_design, renderer::ViewMode::TwoD).expect("2D render");
+    let two_d = renderer.framebuffer().pixels().to_vec();
+    renderer.render_pcb(&interactive_design, renderer::ViewMode::ThreeD).expect("3D render");
+    assert_ne!(two_d, renderer.framebuffer().pixels());
+    assert!(
+        renderer.framebuffer().pixels().chunks_exact(4).any(|pixel| pixel[..3] != [10, 13, 19])
+    );
+}
+
+#[test]
 fn plugin_cli_help_lists_management_commands() {
     let output = run_cli(&["plugins", "--help"]);
     assert!(output.status.success());

@@ -637,11 +637,46 @@ fn check_pcb() -> Result<(), String> {
         end: core::Point::new(95.0, 45.0),
         ..route_request
     };
-    let blocked_config = pcb::routing::RouterConfig { max_expansions: 20_000, ..router_config };
+    let blocked_config = pcb::routing::RouterConfig {
+        max_expansions: 20_000,
+        allow_vias: false,
+        ..router_config.clone()
+    };
     ensure(
         pcb::routing::route(&blocked_request, &blocked_design, &blocked_config).is_err(),
         "pcb: router crossed a blocking wall",
     )?;
+
+    let shove_config = pcb::routing::RouterConfig { allow_vias: false, ..router_config.clone() };
+    let shoved =
+        pcb::routing::route_push_and_shove(&blocked_request, &blocked_design, &shove_config)
+            .map_err(|error| format!("pcb: push-and-shove routing failed: {error}"))?;
+    ensure(
+        !shoved.removed_track_ids.is_empty() && !shoved.rerouted.tracks.is_empty(),
+        "pcb: push-and-shove did not rip up and reroute the blocking track",
+    )?;
+    let mut shoved_design = blocked_design.clone();
+    shoved.apply_to(&mut shoved_design);
+    let shoved_report = pcb::run_drc(&shoved_design, &shoved_design.rules);
+    ensure(shoved_report.is_valid(), "pcb: push-and-shove result fails DRC")?;
+
+    let mut interactive_design = design.clone();
+    let mut interactive = pcb::routing::InteractiveRouter::new(
+        Uuid::new_v4(),
+        core::Point::new(5.0, 30.0),
+        0,
+        0.25,
+        router_config.clone(),
+    );
+    interactive
+        .preview(&interactive_design, core::Point::new(95.0, 50.0))
+        .map_err(|error| format!("pcb: interactive routing preview failed: {error}"))?;
+    let interactive_route = interactive
+        .commit(&mut interactive_design)
+        .map_err(|error| format!("pcb: interactive routing commit failed: {error}"))?;
+    ensure(!interactive_route.tracks.is_empty(), "pcb: interactive router committed no tracks")?;
+    let interactive_report = pcb::run_drc(&interactive_design, &interactive_design.rules);
+    ensure(interactive_report.is_valid(), "pcb: interactive route fails DRC")?;
 
     let library = pcb::FootprintLibrary {
         name: "self-check".to_string(),
@@ -680,7 +715,7 @@ fn check_pcb() -> Result<(), String> {
     ensure(loaded.footprints[0].pad_positions.len() == 2, "pcb: footprint library lost pads")?;
 
     println!(
-        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s), DRC clean={} ({} violation(s) before fixing), routed {} point(s), multi-layer {} track(s)/{} via(s)",
+        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s), DRC clean={} ({} violation(s) before fixing), routed {} point(s), multi-layer {} track(s)/{} via(s), shoved {} track(s), interactive {} track(s)",
         design.outline.points.len(),
         design.outline.area(),
         design.layers.len(),
@@ -690,22 +725,83 @@ fn check_pcb() -> Result<(), String> {
         dirty.violations.len(),
         routed[0].path.len(),
         multilayer.tracks.len(),
-        multilayer.vias.len()
+        multilayer.vias.len(),
+        shoved.removed_track_ids.len(),
+        interactive_route.tracks.len()
     );
     Ok(())
 }
 
 fn check_renderer() -> Result<(), String> {
-    let config = renderer::RendererConfig::default();
-
+    let config = renderer::RendererConfig {
+        window: renderer::WindowConfig::new("self-check", 640, 480),
+        ..renderer::RendererConfig::default()
+    };
     ensure(
         config.window.width > 0 && config.window.height > 0,
-        "renderer: default window size must be non-zero",
+        "renderer: window size must be non-zero",
     )?;
 
+    let design = pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(100.0, 80.0),
+        layers: vec![
+            core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
+            core::PcbLayer::new(1, "B.Cu", core::LayerKind::Copper),
+        ],
+        stackup: core::Stackup { layers: vec![0, 1] },
+        footprints: vec![pcb::Footprint {
+            name: "R_0603".to_string(),
+            reference_designator: "R".to_string(),
+            position: core::Point::new(50.0, 40.0),
+            pad_positions: vec![pcb::PadPosition {
+                x: -0.8,
+                y: 0.0,
+                width: 1.4,
+                height: 0.8,
+                rotation: 30.0,
+                ..pcb::PadPosition::default()
+            }],
+            ..pcb::Footprint::default()
+        }],
+        tracks: vec![pcb::Track {
+            layer: 0,
+            width: 0.4,
+            path: vec![core::Point::new(10.0, 20.0), core::Point::new(90.0, 60.0)],
+            ..pcb::Track::default()
+        }],
+        vias: vec![pcb::Via {
+            position: core::Point::new(50.0, 40.0),
+            layer_start: 0,
+            layer_end: 1,
+            ..pcb::Via::default()
+        }],
+        ..pcb::PcbDesign::default()
+    };
+
+    let background = [config.background.r, config.background.g, config.background.b];
+    let mut renderer = renderer::Renderer::new(config.clone())
+        .map_err(|error| format!("renderer: initialization failed: {error}"))?;
+    let count_foreground =
+        |pixels: &[u8]| pixels.chunks_exact(4).filter(|pixel| pixel[..3] != background).count();
+
+    renderer
+        .render_pcb(&design, renderer::ViewMode::TwoD)
+        .map_err(|error| format!("renderer: 2D rendering failed: {error}"))?;
+    let two_d = renderer.framebuffer().pixels().to_vec();
+    let two_d_pixels = count_foreground(&two_d);
+    ensure(two_d_pixels > 1_000, "renderer: 2D view drew almost nothing")?;
+
+    renderer
+        .render_pcb(&design, renderer::ViewMode::ThreeD)
+        .map_err(|error| format!("renderer: 3D rendering failed: {error}"))?;
+    let three_d = renderer.framebuffer().pixels();
+    let three_d_pixels = count_foreground(three_d);
+    ensure(three_d_pixels > 1_000, "renderer: 3D view drew almost nothing")?;
+    ensure(two_d != three_d, "renderer: 2D and 3D views produced identical frames")?;
+
     println!(
-        "  renderer: window {}x{}, vsync={}",
-        config.window.width, config.window.height, config.vsync
+        "  renderer: software 2D/3D {}x{}, {} / {} foreground pixels, vsync={}",
+        config.window.width, config.window.height, two_d_pixels, three_d_pixels, config.vsync
     );
     Ok(())
 }

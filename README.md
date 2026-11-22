@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 15 plugin management CLI complete (pre-alpha); Week 16 (beta readiness) is next
+- **Implementation:** Phase 2 (PCB core + basic software renderer) complete (pre-alpha); Week 16 (beta readiness) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -16,7 +16,7 @@ tool yet.
 
 ## Features
 - Custom GUI
-- Vulkan-based rendering engine
+- Deterministic software 2D/3D rendering (Vulkan GPU backend planned)
 - Native KiCad 9/10 bidirectional compatibility
 - Full schematic and PCB design capabilities
 - Integrated design-rule and electrical-rule checking
@@ -30,7 +30,7 @@ tool yet.
 ### Prerequisites
 - Rust toolchain (stable channel, 1.85+; `rust-toolchain.toml` selects it)
 - Git
-- Vulkan SDK / loader (for rendering)
+- Vulkan SDK / loader (optional; only the future GPU backend needs it)
 - Dependencies for your OS:
   - Ubuntu/Debian: `sudo apt-get install pkg-config libssl-dev libudev-dev libvulkan-dev vulkan-tools`
   - Fedora: `sudo dnf install pkgconf-pkg-config openssl-devel systemd-devel vulkan-loader-devel vulkan-tools`
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (301 tests across the workspace)
+# Run tests (319 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -111,7 +111,7 @@ KaiCad/
 ├── pcb/                        # footprints, layers, routing
 │   └── examples/
 │       └── board_outline.rs
-├── renderer/                   # Vulkan renderer skeleton (ash)
+├── renderer/                   # software 2D/3D renderer + Vulkan config skeleton
 ├── ai/                         # kAI subsystem
 ├── collab/                     # collaboration layer
 ├── plugin/                     # plugin manifests, registry and discovery
@@ -155,16 +155,21 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–15 are complete and verified: **301 tests pass**, `cargo clippy
---workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Weeks 13–15 added SQLite-backed plugin
+Weeks 1–15 and the Phase 2 PCB/renderer scope are complete and verified:
+**319 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+and `cargo fmt --all -- --check` are clean, and the release build succeeds.
+Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
+routing, interactive route previews, and a headless software 2D/3D renderer
+with a depth buffer and PPM output. Weeks 13–15 added SQLite-backed plugin
 persistence (schema v6), activation state and deterministic capability
 filters, plus `kai-cad plugins list|show|enable|disable|discover`. Manifests
 never load or execute plugin code.
 
-The next milestone is **Week 16 — beta readiness**: CLI hardening, user
-documentation, performance baselines and the release checklist. The full brief
-is in [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
+The Vulkan GPU backend remains deferred; the current renderer is deterministic
+software rasterization with no window or GPU requirement. The next milestone is
+**Week 16 — beta readiness**: CLI hardening, user documentation, performance
+baselines and the release checklist. The full brief is in
+[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
 
@@ -182,16 +187,20 @@ What each crate provides today:
   neighbour/connectivity/component queries, and deterministic ERC with five
   rules: `net-single-pin` and `unconnected-pin` (warnings),
   `duplicate-net-name`, `duplicate-symbol-name` and `self-connection` (errors).
-- 🚧 **pcb** — `PcbDesign` built on `core` types, board-outline geometry,
-  `LayerStack` with validation, `FootprintLibrary` JSON persistence, track and
-  via dimensions, placed footprints with pad copper, a deterministic DRC
-  (`run_drc`) covering tracks, vias and pads with validated per-design limits,
-  and deterministic single-layer and multi-layer A* routing (`route`,
-  `route_multilayer`) with grid/cost configuration, through-via insertion and
-  via-aware clearance checks. Pad rotation, interactive routing and blind or
-  buried vias are not implemented.
-- 🚧 **renderer** — `RendererConfig` and `WindowConfig` only. `Renderer::new`
-  and `Renderer::render` return `NotImplemented`; no Vulkan objects are created.
+- ✅ **pcb (Phase 2 scope)** — `PcbDesign` built on `core` types, board-outline
+  geometry, `LayerStack` with validation, `FootprintLibrary` JSON persistence,
+  track and via dimensions, placed footprints with rotated pad copper, and a
+  deterministic DRC (`run_drc`) covering tracks, vias and pads. Routing includes
+  deterministic single-layer and multi-layer A* (`route`, `route_multilayer`),
+  optional blind/buried vias, bounded push-and-shove rip-up/reroute, and an
+  `InteractiveRouter` preview/commit/cancel session. Through vias remain the
+  default; blind/buried vias are opt-in via `RouterConfig::allow_blind_buried`.
+- ✅ **renderer (basic)** — deterministic CPU rasterizer for `PcbDesign` values.
+  `ViewMode::TwoD` draws the board, copper, pads and vias; `ViewMode::ThreeD`
+  extrudes the board and renders it through a fitted perspective camera with a
+  depth buffer and flat shading. It is headless, needs no Vulkan loader and
+  writes binary PPM via `Framebuffer::save_ppm`. A Vulkan GPU backend is not
+  implemented.
 - 🚧 **ai (kAI)** — configuration, deterministic suggestion validation
   (confidence range, empty changes, no-op changes, negative constraints) and
   atomic `apply_suggestion` with undoable `core::edit` transactions. Every
@@ -220,15 +229,15 @@ What each crate provides today:
   a bounded multi-step undo/redo history, discovers and registers validated
   plugin manifests, manages the persisted plugin registry through `plugins
   list|show|enable|disable|discover`, creates a session and enforces roles,
-  records a versioned edit, stages/drains it, and stores and reloads a PCB
-  design.
+  records a versioned edit, stages/drains it, stores and reloads a PCB design,
+  shoves and interactively routes copper, and renders the board in 2D and 3D.
 
 ## Roadmap
 
 | Phase | Weeks | Focus | Status |
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
-| 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 PCB core complete; renderer deferred |
+| 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ✅ Complete (basic software renderer; Vulkan GPU backend deferred) |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 Week 12 complete; kAI generation, real-time sync and plugin execution deferred |
 | 4 | 13–16 | Plugin persistence and management, polish, beta and KiCad 9/10 compatibility QA | 🚧 Weeks 13–15 complete; release readiness next |
 

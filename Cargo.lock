@@ -664,6 +664,8 @@ name = "renderer"
 version = "0.1.0"
 dependencies = [
  "ash",
+ "core",
+ "pcb",
  "serde",
 ]
 
