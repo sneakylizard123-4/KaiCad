@@ -223,6 +223,102 @@ fn ai_validation_accepts_good_and_rejects_bad_suggestion() {
 }
 
 #[test]
+fn edit_history_supports_multi_step_undo_redo_and_branching() {
+    let mut project = core::Project::new("smoke-history");
+    project.schematic.components.push(core::Component {
+        id: Uuid::from_u128(500),
+        reference_designator: "R1".to_string(),
+        properties: vec![core::ComponentProperty {
+            name: "Value".to_string(),
+            value: "10k".to_string(),
+        }],
+        ..core::Component::default()
+    });
+    let mut history = core::EditHistory::default();
+    for (label, old, new) in [("one", "10k", "22k"), ("two", "22k", "33k"), ("three", "33k", "47k")]
+    {
+        history
+            .apply(
+                &mut project,
+                label,
+                &[core::ChangeProposal::new(
+                    "component:R1",
+                    "value",
+                    serde_json::json!(old),
+                    serde_json::json!(new),
+                )],
+            )
+            .expect("history apply");
+    }
+
+    history.undo(&mut project).expect("undo three");
+    history.undo(&mut project).expect("undo two");
+    assert_eq!(project.schematic.components[0].properties[0].value, "22k");
+    assert_eq!(history.undo_len(), 1);
+    assert_eq!(history.redo_len(), 2);
+
+    history.redo(&mut project).expect("redo two");
+    assert_eq!(project.schematic.components[0].properties[0].value, "33k");
+
+    history
+        .apply(
+            &mut project,
+            "branch",
+            &[core::ChangeProposal::new(
+                "component:R1",
+                "value",
+                serde_json::json!("33k"),
+                serde_json::json!("56k"),
+            )],
+        )
+        .expect("branch apply");
+    assert_eq!(history.redo_len(), 0);
+    assert_eq!(history.undo_label(), Some("branch"));
+
+    let undo_len = history.undo_len();
+    assert!(
+        history
+            .apply(
+                &mut project,
+                "stale",
+                &[core::ChangeProposal::new(
+                    "component:R1",
+                    "value",
+                    serde_json::json!("99k"),
+                    serde_json::json!("1k"),
+                )],
+            )
+            .is_err()
+    );
+    assert_eq!(history.undo_len(), undo_len);
+
+    let mut bounded = core::EditHistory::new(2).expect("valid limit");
+    for (label, old, new) in
+        [("bounded-1", "56k", "68k"), ("bounded-2", "68k", "82k"), ("bounded-3", "82k", "91k")]
+    {
+        bounded
+            .apply(
+                &mut project,
+                label,
+                &[core::ChangeProposal::new(
+                    "component:R1",
+                    "value",
+                    serde_json::json!(old),
+                    serde_json::json!(new),
+                )],
+            )
+            .expect("bounded apply");
+    }
+    assert_eq!(bounded.undo_len(), 2);
+    assert_eq!(bounded.undo_label(), Some("bounded-3"));
+    bounded.undo(&mut project).expect("undo bounded three");
+    bounded.undo(&mut project).expect("undo bounded two");
+    assert_eq!(project.schematic.components[0].properties[0].value, "68k");
+    assert!(!bounded.can_undo());
+    assert_eq!(bounded.redo_len(), 2);
+}
+
+#[test]
 fn collab_edits_enforce_roles_and_track_versions() {
     let owner = Uuid::from_u128(10);
     let editor = Uuid::from_u128(11);

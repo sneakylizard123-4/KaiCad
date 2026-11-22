@@ -9,8 +9,8 @@
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
 > 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
 > routing), 8 (multi-layer routing with vias), 9 (transactional kAI
-> application) and 10 (collaborative edit sessions) are complete. The
-> workspace has 244 passing tests.
+> application), 10 (collaborative edit sessions) and 11 (multi-step edit
+> history) are complete. The workspace has 263 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -98,6 +98,7 @@ network access or external services (`PRD.md` §1.2, §1.3).
 |--------|--------------------------|---------|
 | `component` | `Component`, `ComponentProperty` | Instance linking a symbol to a footprint |
 | `edit` | `EditTransaction`, `AppliedChange`, `EditError`, `apply`, `undo`, `redo` | Atomic field edits with stale-value checks and reversible transactions |
+| `history` | `EditHistory`, `HistoryError` | Bounded undo/redo stacks with redo-branch clearing and capacity eviction |
 | `geometry` | `Point`, `segment_distance` | 2D point in millimetres with `distance_to` and `distance_to_segment`; segment-to-segment distance |
 | `net` | `Net`, `NetClass` | Named connectivity and design-rule class |
 | `pcb` | `PcbOutline`, `BoundingBox`, `PcbLayer`, `LayerKind`, `Stackup` | Board outline with area/perimeter/contains-point/bounds, layers and layer order |
@@ -500,8 +501,9 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
    must be preserved or reported, never dropped silently (`PRD.md` §1.3.10).
 6. **Transactional editing.** Design mutations are grouped into reversible
    `core::edit` transactions with stale-value checks (`PRD.md` §1.3.7).
-   Collaborative sessions and version history build on these transactions;
-   multi-step history, merge and PCB-object edits are not implemented yet.
+   Collaborative sessions and version history build on these transactions, and
+   `core::history::EditHistory` adds bounded multi-step undo/redo. Merge,
+   history persistence and PCB-object edits are not implemented yet.
 7. **GPU-accelerated rendering.** Vulkan is the target rendering API on all
    platforms (`PRD.md` §1.1).
 8. **Modular, testable subsystems.** Each subsystem is a crate with a narrow
@@ -517,7 +519,7 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–10, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–11, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v4) with migrations plus project, symbol-library and
 PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
@@ -528,17 +530,18 @@ copper, nine-rule DRC (eight geometry rules plus limit validation),
 deterministic single-layer and multi-layer grid routing with through vias and
 UUIDv5 ids, atomic core edit transactions with validated kAI suggestion
 application and undo/redo, permission-checked collaborative sessions with
-versioned project digests and staged transactions, renderer/AI/collab
-configuration types, the `kai-cad` self-check binary, CI (including a Markdown
-link check and coverage job), and documentation.
+versioned project digests and staged transactions, bounded multi-step undo/redo
+history with branch clearing, renderer/AI/collab configuration types, the
+`kai-cad` self-check binary, CI (including a Markdown link check and coverage
+job), and documentation.
 
-**Next (Week 11):** multi-step edit history and redo branching. The planned
-work is:
+**Next (Week 12):** plugin manifest registry and deterministic discovery. The
+planned work is:
 
-1. Add a bounded undo/redo stack over `core::edit` transactions.
-2. Clear the redo branch on a new edit and evict the oldest undo entry at the
-   capacity limit.
-3. Wire multi-step history into the self-check and smoke tests.
+1. Add a validated local plugin manifest format.
+2. Add a registry with deterministic ordering and duplicate rejection.
+3. Wire manifest loading and registry checks into the self-check and smoke
+   tests.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

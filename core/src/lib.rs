@@ -3,6 +3,7 @@
 pub mod component;
 pub mod edit;
 pub mod geometry;
+pub mod history;
 pub mod net;
 pub mod pcb;
 pub mod project;
@@ -15,6 +16,7 @@ pub mod symbol_library;
 pub use component::{Component, ComponentProperty};
 pub use edit::{AppliedChange, EditError, EditTransaction};
 pub use geometry::Point;
+pub use history::{EditHistory, HistoryError};
 pub use net::{Net, NetClass};
 pub use pcb::{BoundingBox, LayerKind, PcbLayer, PcbOutline, Stackup};
 pub use project::{PcbData, Project, ProjectMetadata, SchematicData};

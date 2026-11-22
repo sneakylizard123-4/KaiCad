@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–10 are complete (244 tests, clippy/fmt/doc/release
-> all clean). Week 11 — multi-step edit history and redo branching — is next;
-> its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–11 are complete (263 tests, clippy/fmt/doc/release
+> all clean). Week 12 — plugin manifest registry and deterministic discovery —
+> is next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,19 +121,19 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **244 tests**, all passing:
+`cargo test --workspace` currently runs **263 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 27 |
-| `core` (`src/tests.rs`, `edit.rs` and inline modules) | 45 |
+| `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 72 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 23 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 15 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 16 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -155,7 +155,7 @@ Version: 0.1.0 (pre-alpha)
 License: GPL-3.0-or-later
 
 subsystem self-check:
-  core: project JSON round trip ok (… bytes)
+  core: project JSON round trip ok (500 bytes), history 3 undo / 0 redo, limit 2
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
   pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s), multi-layer 2 track(s)/2 via(s)
   renderer: window 1920x1080, vsync=true
@@ -247,8 +247,8 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–10 are finished; Week 11 adds a bounded multi-step undo/redo history
-with redo-branch clearing. Before starting, read
+Weeks 1–11 are finished; Week 12 adds a validated local plugin manifest format
+and a deterministic registry. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -384,6 +384,22 @@ you, check these semantics before changing a rule:
 If the report changes between identical runs, look for code that consumes
 `HashMap` iteration order or track insertion order instead of the sorted
 report.
+
+### Edit history looks wrong
+
+`core::history::EditHistory` wraps `core::edit`; check these rules before
+changing it:
+
+- `apply` pushes onto undo only after the underlying edit succeeds, clears the
+  redo stack, and evicts the oldest undo entry when the configured limit is
+  exceeded. History starts at 100 by default; `new(0)` is rejected.
+- `undo` and `redo` move a transaction between stacks only after the underlying
+  edit succeeds. Empty operations return `EmptyUndo`/`EmptyRedo`.
+- New edits always discard the redo branch. Undo and redo preserve their
+  relative order (newest undo first, newest redo first).
+- Labels and `can_undo`/`can_redo` are read-only views of the stack tops.
+- History is in memory only; it is not serialized, persisted or shared across
+  collaborators.
 
 ### Collaborative edits look wrong
 

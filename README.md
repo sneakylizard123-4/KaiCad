@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 10 collaborative edit sessions complete (pre-alpha); Week 11 (multi-step edit history) is next
+- **Implementation:** Week 11 multi-step edit history complete (pre-alpha); Week 12 (plugin manifest registry) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (244 tests across the workspace)
+# Run tests (263 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -144,7 +144,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 11)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 12)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -152,15 +152,14 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–10 are complete and verified: **244 tests pass**, `cargo clippy
+Weeks 1–11 are complete and verified: **263 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 10 added owner/editor/viewer
-permissions, permission-checked atomic collaborative edits,
-transaction-linked version entries with deterministic UUIDv5 project digests,
-and deterministic staged-transaction queues for sync.
+clean, and the release build succeeds. Week 11 added bounded multi-step
+undo/redo (`core::history::EditHistory`), redo-branch clearing, capacity
+eviction, failure-atomic stack updates, and deterministic labels/predicates.
 
-The next milestone is **Week 11 — multi-step edit history and redo
-branching**: an undo/redo history with bounded capacity and branch clearing.
+The next milestone is **Week 12 — plugin manifest registry and deterministic
+discovery**: validated local plugin manifests and a deterministic registry.
 The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
@@ -169,10 +168,11 @@ What each crate provides today:
 - ✅ **core** — `Project`/`SchematicData`/`PcbData`/`ProjectMetadata`, symbols,
   nets, sheets, components, PCB outline/layer/stackup types (with outline area,
   perimeter, contains-point and bounding-box queries), `Point`, the shared
-  `ChangeProposal`, named symbol libraries, and atomic `edit` transactions
-  (`apply`, `undo`, `redo`, stale-value checks, UUIDv5 transaction ids). Real
-  JSON serialization: `to_json`, `to_json_pretty`, `from_json`, `save`, `load`
-  plus `Project::{to_json, from_json, save, load}`.
+  `ChangeProposal`, named symbol libraries, atomic `edit` transactions
+  (`apply`, `undo`, `redo`, stale-value checks, UUIDv5 transaction ids) and
+  bounded `history` stacks (`EditHistory`, redo-branch clearing, capacity
+  limits). Real JSON serialization: `to_json`, `to_json_pretty`, `from_json`,
+  `save`, `load` plus `Project::{to_json, from_json, save, load}`.
 - ✅ **schematic** — real netlist generation (`generate_netlist` maps pin ids to
   `PinRef`s and emits connections for adjacent pins), deterministic KiCad
   netlist export (`to_kicad_netlist`), a connectivity `Graph` with
@@ -208,9 +208,10 @@ What each crate provides today:
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,
   crosses a full-width top-layer wall using deterministic through vias, rejects
-  a blocked route, applies a validated suggestion and undoes/redoes it, creates
-  a session and enforces roles, records a versioned edit, stages/drains it, and
-  stores and reloads a PCB design.
+  a blocked route, applies a validated suggestion and undoes/redoes it, drives
+  a bounded multi-step undo/redo history, creates a session and enforces roles,
+  records a versioned edit, stages/drains it, and stores and reloads a PCB
+  design.
 
 ## Roadmap
 
@@ -218,7 +219,7 @@ What each crate provides today:
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 PCB core complete; renderer deferred |
-| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 In progress (kAI + collaboration) |
+| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 In progress (kAI + collaboration + history) |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and

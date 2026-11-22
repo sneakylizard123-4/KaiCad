@@ -89,7 +89,88 @@ fn check_core() -> Result<(), String> {
     ensure(restored.id == project.id, "core: project id changed across a JSON round trip")?;
     ensure(restored.name == project.name, "core: project name changed across a JSON round trip")?;
 
-    println!("  core: project JSON round trip ok ({} bytes)", json.len());
+    let mut history_project = core::Project::new("history-self-check");
+    history_project.schematic.components.push(core::Component {
+        id: Uuid::new_v4(),
+        reference_designator: "R1".to_string(),
+        properties: vec![core::ComponentProperty {
+            name: "Value".to_string(),
+            value: "10k".to_string(),
+        }],
+        ..core::Component::default()
+    });
+    let mut history = core::EditHistory::default();
+    for (label, old, new) in [("one", "10k", "22k"), ("two", "22k", "33k"), ("three", "33k", "47k")]
+    {
+        history
+            .apply(
+                &mut history_project,
+                label,
+                &[core::ChangeProposal::new(
+                    "component:R1",
+                    "value",
+                    serde_json::json!(old),
+                    serde_json::json!(new),
+                )],
+            )
+            .map_err(|error| format!("core: history apply failed: {error}"))?;
+    }
+    history.undo(&mut history_project).map_err(|error| format!("core: undo failed: {error}"))?;
+    history.undo(&mut history_project).map_err(|error| format!("core: undo failed: {error}"))?;
+    ensure(
+        history_project.schematic.components[0].properties[0].value == "22k",
+        "core: two undos did not restore the earlier value",
+    )?;
+    history.redo(&mut history_project).map_err(|error| format!("core: redo failed: {error}"))?;
+    ensure(
+        history_project.schematic.components[0].properties[0].value == "33k",
+        "core: redo did not advance the value",
+    )?;
+    history
+        .apply(
+            &mut history_project,
+            "branch",
+            &[core::ChangeProposal::new(
+                "component:R1",
+                "value",
+                serde_json::json!("33k"),
+                serde_json::json!("56k"),
+            )],
+        )
+        .map_err(|error| format!("core: branch apply failed: {error}"))?;
+    ensure(history.redo_len() == 0, "core: new edit did not clear the redo branch")?;
+    ensure(history.undo_label() == Some("branch"), "core: undo label is not the branch edit")?;
+
+    let mut bounded = core::EditHistory::new(2)
+        .map_err(|error| format!("core: invalid history limit: {error}"))?;
+    for (label, old, new) in
+        [("bounded-1", "56k", "68k"), ("bounded-2", "68k", "82k"), ("bounded-3", "82k", "91k")]
+    {
+        bounded
+            .apply(
+                &mut history_project,
+                label,
+                &[core::ChangeProposal::new(
+                    "component:R1",
+                    "value",
+                    serde_json::json!(old),
+                    serde_json::json!(new),
+                )],
+            )
+            .map_err(|error| format!("core: bounded history apply failed: {error}"))?;
+    }
+    ensure(bounded.undo_len() == 2, "core: history limit did not bound the undo stack")?;
+    bounded.undo(&mut history_project).map_err(|error| format!("core: undo failed: {error}"))?;
+    bounded.undo(&mut history_project).map_err(|error| format!("core: undo failed: {error}"))?;
+    ensure(!bounded.can_undo(), "core: evicted history entry was still undoable")?;
+
+    println!(
+        "  core: project JSON round trip ok ({} bytes), history {} undo / {} redo, limit {}",
+        json.len(),
+        history.undo_len(),
+        history.redo_len(),
+        bounded.limit()
+    );
     Ok(())
 }
 

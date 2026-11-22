@@ -7,8 +7,8 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 11, multi-step edit
-history with redo branching — is in
+instructions. The current implementation brief — Week 12, plugin manifest
+registry and deterministic discovery — is in
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
@@ -38,7 +38,9 @@ for the same stackup, node and config, and generated vias record their net so
 same-net clearance checks stay exempt. Edit transactions derive UUIDv5 ids  over their label and ordered changes, verify `old_value` before writing, and
   apply atomically on a clone — do not add partial-write paths. Version
   digests are UUIDv5 over compact project JSON, and sync staging deduplicates
-  by transaction id while preserving insertion order.
+  by transaction id while preserving insertion order. `EditHistory` clears
+  redo on every new edit, evicts only the oldest undo entry at the limit, and
+  changes stacks only after the underlying edit succeeds.
 - **No silent data loss.** Report or preserve data you cannot represent.
 - **Never edit an applied migration.** Migrations live in
   `store/migrations/<version>_<name>.sql` and are embedded with `include_str!`.

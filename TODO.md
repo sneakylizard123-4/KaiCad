@@ -94,15 +94,24 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Session permissions, version history and staging wired into the `kai-cad` self-check and smoke tests
 - Documentation updated; total tests: 244
 
-## 🚧 Next — Week 11: Multi-step edit history and redo branching
+### Week 11 — Multi-step edit history and redo branching
+- `core::history::EditHistory` with bounded undo/redo stacks and `HistoryError`
+- New edits clear redo; capacity eviction drops the oldest undo entry
+- Failure-atomic apply, undo and redo with `EmptyUndo`/`EmptyRedo` reporting
+- `undo_label`, `redo_label`, `can_undo`, `can_redo` and clear support
+- Multi-step history wired into the `kai-cad` self-check and smoke tests
+- Documentation updated; total tests: 263
+
+## 🚧 Next — Week 12: Plugin manifest registry and deterministic discovery
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Add a bounded undo/redo stack over `core::edit` transactions
-- [ ] Clear the redo branch on a new edit and evict the oldest undo entry at the limit
-- [ ] Wire multi-step history into the `kai-cad` self-check and smoke tests
+- [ ] Add a validated local plugin manifest format
+- [ ] Add a deterministic registry with duplicate and API-version rejection
+- [ ] Add deterministic manifest discovery for a local directory
+- [ ] Wire plugin loading into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥260 tests, clippy/fmt/doc/link clean
+- [ ] Target: ≥279 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
@@ -128,7 +137,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 ### Phase 3 — kAI & collaboration (Weeks 9–12)
 - ✅ Transactional kAI suggestion application (Week 9)
 - ✅ Permission-checked collaborative edits and version history (Week 10)
-- ⬜ Multi-step edit history and redo branching (Week 11)
+- ✅ Multi-step edit history and redo branching (Week 11)
 - ⬜ Circuit optimization suggestion generation
 - ⬜ Project sharing and real-time sync transport
 - ⬜ Plugin architecture
