@@ -89,13 +89,16 @@ fn populated_project(symbol_count: usize, net_count: usize) -> Project {
                 WirePoint { x: 25.4, y: 0.0 },
                 WirePoint { x: 25.4, y: 12.7 },
             ],
+            ..Default::default()
         }],
         labels: vec![Label {
             id: Uuid::new_v4(),
             name: "VCC".to_string(),
             label_type: LabelType::Global,
             position: LabelPosition::default(),
+            ..Default::default()
         }],
+        ..Default::default()
     });
 
     project

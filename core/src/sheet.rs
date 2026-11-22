@@ -13,6 +13,44 @@ pub struct Sheet {
     pub components: Vec<Uuid>,
     pub wires: Vec<Wire>,
     pub labels: Vec<Label>,
+    /// Source schematic filename for a child sheet; empty for the root sheet.
+    #[serde(default)]
+    pub file_name: String,
+    /// Sheet-symbol placement in schematic millimetres.
+    #[serde(default)]
+    pub position: crate::geometry::Point,
+    /// Sheet-symbol size in schematic millimetres.
+    #[serde(default)]
+    pub size: crate::geometry::Point,
+    /// Electrical junctions on this sheet.
+    #[serde(default)]
+    pub junctions: Vec<Junction>,
+    /// Explicit no-connect markers on this sheet.
+    #[serde(default)]
+    pub no_connects: Vec<NoConnect>,
+    /// Source constructs with no KaiCad model field, retained for export.
+    #[serde(default)]
+    pub preserved: Vec<crate::PreservedNode>,
+}
+
+/// An electrical junction where three or more wires meet.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Junction {
+    pub id: Uuid,
+    pub position: crate::geometry::Point,
+    /// Source diameter, colour and other unmodelled fields.
+    #[serde(default)]
+    pub preserved: Vec<crate::PreservedNode>,
+}
+
+/// An explicit no-connect marker.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NoConnect {
+    pub id: Uuid,
+    pub position: crate::geometry::Point,
+    /// Source unmodelled fields.
+    #[serde(default)]
+    pub preserved: Vec<crate::PreservedNode>,
 }
 
 /// A wire connecting two points on a schematic sheet.
@@ -20,6 +58,9 @@ pub struct Sheet {
 pub struct Wire {
     pub id: uuid::Uuid,
     pub points: Vec<WirePoint>,
+    /// Source stroke and other unmodelled fields.
+    #[serde(default)]
+    pub preserved: Vec<crate::PreservedNode>,
 }
 
 /// A point on a wire.
@@ -32,6 +73,9 @@ pub struct Label {
     pub name: String,
     pub label_type: LabelType,
     pub position: LabelPosition,
+    /// Source effects and other unmodelled fields.
+    #[serde(default)]
+    pub preserved: Vec<crate::PreservedNode>,
 }
 
 /// Type of label.

@@ -15,6 +15,10 @@ const PLUGIN_USAGE: &str =
     "kai-cad plugins <list|show|enable|disable|discover> [arguments] [--db <path>]";
 const PCB_USAGE: &str =
     "kai-cad pcb <import <input.kicad_pcb> <output.json> | export <input.json> <output.kicad_pcb>>";
+const SCH_USAGE: &str =
+    "kai-cad sch <import <input.kicad_sch> <output.json> | export <input.json> <output.kicad_sch>>";
+const FOOTPRINT_USAGE: &str = "kai-cad footprint <import <input.kicad_mod> <output.json> | export <input.json> <output.kicad_mod>>";
+const PROJECT_USAGE: &str = "kai-cad project <import <input.kicad_pro> <output.json> | export <input.json> <output.kicad_pro>>";
 const DEFAULT_DB_PATH: &str = "kaicad.db";
 
 fn main() -> ExitCode {
@@ -32,6 +36,9 @@ fn main() -> ExitCode {
         }
         [command, rest @ ..] if command == "plugins" => run_plugins(rest),
         [command, rest @ ..] if command == "pcb" => run_pcb(rest),
+        [command, rest @ ..] if command == "sch" => run_sch(rest),
+        [command, rest @ ..] if command == "footprint" => run_footprint(rest),
+        [command, rest @ ..] if command == "project" => run_project(rest),
         _ => {
             eprintln!("error: unrecognized arguments: {}", args.join(" "));
             eprintln!("usage: {USAGE}");
@@ -47,6 +54,9 @@ fn print_help() {
     println!("  {USAGE}");
     println!("  {PLUGIN_USAGE}");
     println!("  {PCB_USAGE}");
+    println!("  {SCH_USAGE}");
+    println!("  {FOOTPRINT_USAGE}");
+    println!("  {PROJECT_USAGE}");
     println!();
     println!("  -h, --help     print this help and exit");
     println!("  -V, --version  print the version and exit");
@@ -56,6 +66,11 @@ fn print_help() {
     println!();
     println!("PCB compatibility commands:");
     print_pcb_help();
+    println!();
+    println!("Schematic, footprint and project compatibility commands:");
+    print_sch_help();
+    print_footprint_help();
+    print_project_help();
     println!();
     println!("With no arguments, runs a deterministic self-check of every workspace subsystem.");
 }
@@ -77,6 +92,194 @@ fn print_pcb_help() {
     println!(
         "  Import reports skipped KiCad constructs on stderr; it does not claim full round-trip fidelity."
     );
+}
+
+fn print_sch_help() {
+    println!("  sch import <input.kicad_sch> <output.json>      import supported schematic data");
+    println!("  sch export <input.json> <output.kicad_sch>      write supported schematic data");
+}
+
+fn print_footprint_help() {
+    println!("  footprint import <input.kicad_mod> <output.json> read a KiCad footprint");
+    println!("  footprint export <input.json> <output.kicad_mod> write a KiCad footprint");
+}
+
+fn print_project_help() {
+    println!("  project import <input.kicad_pro> <output.json>  preserve project JSON");
+    println!("  project export <input.json> <output.kicad_pro>  write project JSON");
+}
+
+fn run_sch(args: &[String]) -> ExitCode {
+    match sch_command(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            eprintln!("usage: {SCH_USAGE}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn sch_command(args: &[String]) -> Result<(), String> {
+    match args {
+        [] => {
+            print_sch_help();
+            Ok(())
+        }
+        [command] if command == "help" || command == "--help" || command == "-h" => {
+            print_sch_help();
+            Ok(())
+        }
+        [command, input, output] if command == "import" => {
+            let imported = kicad_parser::load_schematic(input)
+                .map_err(|error| format!("failed to import {input}: {error}"))?;
+            for warning in &imported.warnings {
+                eprintln!("warning: {warning}");
+            }
+            let mut json = serde_json::to_string_pretty(&imported.data)
+                .map_err(|error| format!("failed to serialize imported schematic: {error}"))?;
+            json.push('\n');
+            write_output(output, &json)?;
+            println!(
+                "imported {} into {} ({} component(s), {} sheet(s), {} wire(s), {} warning(s))",
+                input,
+                output,
+                imported.data.components.len(),
+                imported.data.sheets.len(),
+                imported.data.sheets.iter().map(|sheet| sheet.wires.len()).sum::<usize>(),
+                imported.warnings.len()
+            );
+            Ok(())
+        }
+        [command, input, output] if command == "export" => {
+            let json = std::fs::read_to_string(input)
+                .map_err(|error| format!("failed to read {input}: {error}"))?;
+            let data: core::project::SchematicData = serde_json::from_str(&json)
+                .map_err(|error| format!("invalid KaiCad schematic JSON in {input}: {error}"))?;
+            let document = kicad_parser::write_schematic(&data)
+                .map_err(|error| format!("failed to export {input}: {error}"))?;
+            write_output(output, &document)?;
+            println!(
+                "exported {} to {} ({} component(s), {} sheet(s))",
+                input,
+                output,
+                data.components.len(),
+                data.sheets.len()
+            );
+            Ok(())
+        }
+        [command, ..] if command == "import" || command == "export" => {
+            Err(format!("sch {command} expects an input and an output path"))
+        }
+        [command, ..] => Err(format!("unknown sch command: {command}")),
+    }
+}
+
+fn run_footprint(args: &[String]) -> ExitCode {
+    match footprint_command(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            eprintln!("usage: {FOOTPRINT_USAGE}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn footprint_command(args: &[String]) -> Result<(), String> {
+    match args {
+        [] => {
+            print_footprint_help();
+            Ok(())
+        }
+        [command] if command == "help" || command == "--help" || command == "-h" => {
+            print_footprint_help();
+            Ok(())
+        }
+        [command, input, output] if command == "import" => {
+            let imported = kicad_parser::load_footprint(input)
+                .map_err(|error| format!("failed to import {input}: {error}"))?;
+            for warning in &imported.warnings {
+                eprintln!("warning: {warning}");
+            }
+            let mut json = serde_json::to_string_pretty(&imported.footprint)
+                .map_err(|error| format!("failed to serialize imported footprint: {error}"))?;
+            json.push('\n');
+            write_output(output, &json)?;
+            println!(
+                "imported {} into {} ({} pad(s), {} warning(s))",
+                input,
+                output,
+                imported.footprint.pad_positions.len(),
+                imported.warnings.len()
+            );
+            Ok(())
+        }
+        [command, input, output] if command == "export" => {
+            let json = std::fs::read_to_string(input)
+                .map_err(|error| format!("failed to read {input}: {error}"))?;
+            let footprint: pcb::Footprint = serde_json::from_str(&json)
+                .map_err(|error| format!("invalid KaiCad footprint JSON in {input}: {error}"))?;
+            let document = kicad_parser::write_footprint(&footprint)
+                .map_err(|error| format!("failed to export {input}: {error}"))?;
+            write_output(output, &document)?;
+            println!("exported {} to {} ({} pad(s))", input, output, footprint.pad_positions.len());
+            Ok(())
+        }
+        [command, ..] if command == "import" || command == "export" => {
+            Err(format!("footprint {command} expects an input and an output path"))
+        }
+        [command, ..] => Err(format!("unknown footprint command: {command}")),
+    }
+}
+
+fn run_project(args: &[String]) -> ExitCode {
+    match project_command(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            eprintln!("usage: {PROJECT_USAGE}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn project_command(args: &[String]) -> Result<(), String> {
+    match args {
+        [] => {
+            print_project_help();
+            Ok(())
+        }
+        [command] if command == "help" || command == "--help" || command == "-h" => {
+            print_project_help();
+            Ok(())
+        }
+        [command, input, output] if command == "import" => {
+            let project = kicad_parser::ProjectFile::load(input)
+                .map_err(|error| format!("failed to import {input}: {error}"))?;
+            project.save(output).map_err(|error| format!("failed to write {output}: {error}"))?;
+            println!(
+                "imported {} into {} ({} top-level setting(s))",
+                input,
+                output,
+                project.value.as_object().map(|object| object.len()).unwrap_or(0)
+            );
+            Ok(())
+        }
+        [command, input, output] if command == "export" => {
+            let json = std::fs::read_to_string(input)
+                .map_err(|error| format!("failed to read {input}: {error}"))?;
+            let project = kicad_parser::ProjectFile::parse(&json)
+                .map_err(|error| format!("invalid project JSON in {input}: {error}"))?;
+            project.save(output).map_err(|error| format!("failed to write {output}: {error}"))?;
+            println!("exported {} to {}", input, output);
+            Ok(())
+        }
+        [command, ..] if command == "import" || command == "export" => {
+            Err(format!("project {command} expects an input and an output path"))
+        }
+        [command, ..] => Err(format!("unknown project command: {command}")),
+    }
 }
 
 fn run_pcb(args: &[String]) -> ExitCode {
@@ -1295,8 +1498,50 @@ fn check_kicad_parser() -> Result<(), String> {
         "kicad-parser: exported PCB lost copper objects",
     )?;
 
+    const SCH_FIXTURE: &str = r#"(kicad_sch (version 20231120) (generator eeschema)
+      (uuid "00000000-0000-0000-0000-000000000011")
+      (paper "A4")
+      (lib_symbols (symbol "Device:R"))
+      (wire (pts (xy 10 10) (xy 20 10)) (stroke (width 0) (type default)) (uuid "00000000-0000-0000-0000-000000000012"))
+      (symbol (lib_id "Device:R") (at 30 20 90) (unit 1)
+        (property "Reference" "R1" (at 30 20 0))
+        (property "Value" "10k" (at 30 20 0))
+        (uuid "00000000-0000-0000-0000-000000000013"))
+      (sheet_instances (path "/" (page "1")))
+    )"#;
+    let schematic = kicad_parser::parse_schematic(SCH_FIXTURE)
+        .map_err(|error| format!("kicad-parser: schematic import failed: {error}"))?;
+    ensure(
+        schematic.data.components.len() == 1,
+        "kicad-parser: schematic import lost its component",
+    )?;
+    let schematic_export = kicad_parser::write_schematic(&schematic.data)
+        .map_err(|error| format!("kicad-parser: schematic export failed: {error}"))?;
+    let schematic_round_trip = kicad_parser::parse_schematic(&schematic_export)
+        .map_err(|error| format!("kicad-parser: exported schematic did not parse: {error}"))?;
+    ensure(
+        schematic_round_trip.data.components.len() == 1,
+        "kicad-parser: exported schematic lost its component",
+    )?;
+
+    const MOD_FIXTURE: &str = r#"(footprint "R_0603" (version 20240108) (generator pcbnew)
+      (layer "F.Cu")
+      (fp_line (start -1 0) (end 1 0) (stroke (width 0.1) (type solid)) (layer "F.SilkS"))
+      (pad "1" smd roundrect (at -0.8 0) (size 1.4 0.8) (layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2))
+    )"#;
+    let footprint = kicad_parser::parse_footprint(MOD_FIXTURE)
+        .map_err(|error| format!("kicad-parser: footprint import failed: {error}"))?;
+    let footprint_export = kicad_parser::write_footprint(&footprint.footprint)
+        .map_err(|error| format!("kicad-parser: footprint export failed: {error}"))?;
+    let footprint_round_trip = kicad_parser::parse_footprint(&footprint_export)
+        .map_err(|error| format!("kicad-parser: exported footprint did not parse: {error}"))?;
+    ensure(
+        footprint_round_trip.footprint.pad_positions.len() == 1,
+        "kicad-parser: exported footprint lost its pad",
+    )?;
+
     println!(
-        "  kicad-parser: loaded {} symbol(s) from {}, PCB round trip 1 track / 1 via",
+        "  kicad-parser: loaded {} symbol(s) from {}, PCB/schematic/footprint round trips ok",
         library.symbols.len(),
         path.display()
     );

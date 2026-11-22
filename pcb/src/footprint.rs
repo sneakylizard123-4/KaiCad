@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 /// A PCB footprint representing a component's physical dimensions and properties.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Footprint {
     pub name: String,
     pub reference_designator: String,
@@ -12,8 +12,36 @@ pub struct Footprint {
     /// relative to this origin.
     #[serde(default)]
     pub position: core::Point,
+    /// Footprint rotation in degrees, counter-clockwise about [`Self::position`].
+    #[serde(default)]
+    pub rotation: f64,
+    /// Board side the footprint is placed on, for example `F.Cu` or `B.Cu`.
+    #[serde(default = "default_footprint_layer")]
+    pub layer: String,
     pub pad_positions: Vec<PadPosition>,
     pub outline: Outline,
+    /// Source constructs with no KaiCad model field, retained for export.
+    #[serde(default)]
+    pub preserved: Vec<core::PreservedNode>,
+}
+
+fn default_footprint_layer() -> String {
+    "F.Cu".to_string()
+}
+
+impl Default for Footprint {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            reference_designator: String::new(),
+            position: core::Point::default(),
+            rotation: 0.0,
+            layer: default_footprint_layer(),
+            pad_positions: Vec::new(),
+            outline: Outline::default(),
+            preserved: Vec::new(),
+        }
+    }
 }
 
 fn default_pad_width() -> f64 {
@@ -49,6 +77,20 @@ pub struct PadPosition {
     /// Net this pad belongs to, when one is assigned.
     #[serde(default)]
     pub net_id: Option<uuid::Uuid>,
+    /// Source pad shape, for example `rect`, `roundrect` or `custom`.
+    #[serde(default = "default_pad_shape")]
+    pub shape: String,
+    /// Source pad kind, for example `smd`, `thru_hole` or `np_thru_hole`.
+    /// An empty value is derived from [`PadPosition::pad_type`].
+    #[serde(default)]
+    pub kind: String,
+    /// Source constructs with no KaiCad model field, retained for export.
+    #[serde(default)]
+    pub preserved: Vec<core::PreservedNode>,
+}
+
+fn default_pad_shape() -> String {
+    "rect".to_string()
 }
 
 impl Default for PadPosition {
@@ -62,6 +104,9 @@ impl Default for PadPosition {
             height: default_pad_height(),
             rotation: 0.0,
             net_id: None,
+            shape: default_pad_shape(),
+            kind: String::new(),
+            preserved: Vec::new(),
         }
     }
 }
@@ -109,8 +154,8 @@ impl OutlineShape {
 
 /// A named collection of footprints stored as KaiCad's own JSON.
 ///
-/// This is deliberately not a KiCad `.kicad_mod` reader: importing KiCad
-/// footprints is separate work, and the in-memory types stay authoritative.
+/// This is KaiCad's library container; KiCad `.kicad_mod` interchange lives in
+/// the `kicad-parser` crate, and the in-memory types stay authoritative.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct FootprintLibrary {
     pub name: String,

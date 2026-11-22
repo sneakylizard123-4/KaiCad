@@ -363,6 +363,7 @@ mod tests {
                 height: 0.8,
                 rotation: 0.0,
                 net_id: Some(net),
+                ..PadPosition::default()
             }],
             ..Footprint::default()
         });
@@ -428,6 +429,7 @@ mod tests {
                     height: 0.8,
                     rotation: 0.0,
                     net_id: Some(first_net),
+                    ..PadPosition::default()
                 },
                 PadPosition {
                     number: "2".to_string(),
@@ -438,6 +440,7 @@ mod tests {
                     height: 0.8,
                     rotation: 0.0,
                     net_id: Some(second_net),
+                    ..PadPosition::default()
                 },
             ],
             ..Footprint::default()

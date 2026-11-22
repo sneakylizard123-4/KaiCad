@@ -56,6 +56,7 @@ fn fixture_project_with_namespace(namespace: &str) -> core::Project {
         components: vec![component_id],
         wires: Vec::new(),
         labels: Vec::new(),
+        ..Default::default()
     });
 
     project.schematic.symbols.push(core::Symbol {
@@ -87,6 +88,7 @@ fn fixture_project_with_namespace(namespace: &str) -> core::Project {
             name: "value".to_string(),
             value: "10k".to_string(),
         }],
+        ..core::Component::default()
     });
 
     project.schematic.nets.push(core::Net {

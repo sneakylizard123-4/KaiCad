@@ -1,0 +1,31 @@
+{
+  "meta": {
+    "filename": "compat.kicad_pro",
+    "version": 3
+  },
+  "board": {
+    "design_settings": {
+      "rules": {
+        "min_clearance": 0.2,
+        "min_track_width": 0.2
+      }
+    }
+  },
+  "libraries": {
+    "pinned_footprint_libs": [],
+    "pinned_symbol_libs": []
+  },
+  "schematic": {
+    "legacy_lib_dir": "",
+    "legacy_lib_list": []
+  },
+  "sheets": [
+    [
+      "11111111-1111-1111-1111-111111111111",
+      "Root"
+    ]
+  ],
+  "text_variables": {
+    "KICAD8_3DMODEL_DIR": "/usr/share/kicad/3dmodels"
+  }
+}

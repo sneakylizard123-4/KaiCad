@@ -5,14 +5,14 @@ Practical instructions for building, testing and hacking on KaiCad.
 > KaiCad is **pre-alpha**. The data model, schematic and PCB engines, routing,
 > software renderer, persistence, collaboration primitives and a desktop GUI
 > editor/inspection shell are implemented and tested, together with a supported
-> `.kicad_pcb` import/export subset. Full board and schematic editing, full
-> KiCad project-file compatibility, the Vulkan GPU backend, AI generation and
-> real-time transport are not. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for
+> `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange.
+> Full semantic KiCad project compatibility, full board/schematic editing, the
+> Vulkan GPU backend, AI generation and real-time transport are not. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for
 > details.
 >
 > **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
-> Studio editing increment and the `.kicad_pcb` subset I/O are complete (353
-> tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
+> Studio editing increment and the KiCad file-interchange layer are complete
+> (363 tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
 > described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md); full KiCad parity is tracked
 > separately in [`KICAD_PARITY.md`](KICAD_PARITY.md).
 
@@ -125,6 +125,9 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Open a board in the GUI | `cargo run -p gui -- path/to/board.kaicad.json` |
 | Import a supported KiCad PCB | `cargo run -p kai-cad -- pcb import board.kicad_pcb board.json` |
 | Export a board as KiCad PCB | `cargo run -p kai-cad -- pcb export board.json board.kicad_pcb` |
+| Import/export a KiCad schematic | `cargo run -p kai-cad -- sch import main.kicad_sch main.json` |
+| Import/export a KiCad footprint | `cargo run -p kai-cad -- footprint import part.kicad_mod part.json` |
+| Preserve a KiCad project file | `cargo run -p kai-cad -- project import project.kicad_pro project.json` |
 | Print CLI usage | `cargo run -p kai-cad -- --help` |
 | Print the version | `cargo run -p kai-cad -- --version` |
 | Build a release binary | `cargo build --workspace --release` |
@@ -138,7 +141,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **353 tests**, all passing:
+`cargo test --workspace` currently runs **363 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -146,7 +149,7 @@ benchmarks; a bare `cargo check` misses them.
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
 | `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 19 |
-| `kicad-parser` (`src/lib.rs`, `pcb.rs` and inline modules) | 21 |
+| `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, corpus tests) | 31 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 84 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
 | `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 16 |
@@ -182,7 +185,7 @@ subsystem self-check:
   ai: endpoint=http://localhost:11434, deterministic validation=always, applied 1 change(s), undo/redo ok (tx 97f81c80)
   collab: 1 session(s), 3 participant(s), session version 1, history 1 entry, staged 1 -> 0
   store: created, loaded and deleted 1 project with its PCB design (schema v6), 2 plugin(s) persisted/2 enabled
-  kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym, PCB round trip 1 track / 1 via
+  kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym, PCB/schematic/footprint round trips ok
 self-check: ok
 ```
 
@@ -397,9 +400,10 @@ and Windows/macOS builds self-contained.
 
 ### KiCad import or export looks wrong
 
-`kicad-parser` reads `.kicad_sym` symbol libraries and the supported subset of
-`.kicad_pcb` boards. It does not read `.kicad_sch` or `.kicad_pro` files, and
-it is not a full-fidelity `.kicad_pcb` converter. Convert boards through:
+`kicad-parser` reads `.kicad_sym` symbol libraries, `.kicad_pcb` boards,
+`.kicad_sch` schematics, `.kicad_mod` footprints and `.kicad_pro` project JSON.
+It preserves many constructs it does not model, but it is not a full-fidelity
+converter and does not recursively load a sheet hierarchy. Convert files through:
 
 ```bash
 cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
@@ -409,13 +413,11 @@ cargo run -p kai-cad -- pcb export board.json board.kicad_pcb
 Import warnings on stderr are part of the result, not noise. Known limits:
 
 - Zones, arcs, top-level drawings/text, groups, dimensions, images, targets,
-  rule areas, footprint graphics, non-reference properties and 3D models are
-  skipped with warnings. DRC setup is not imported; KaiCad's default rules
-  apply.
-- Non-rectangular pads, including roundrects, are imported as their bounding
-  rectangles and warned about. Rotated footprints are flattened into rotated
-  pad coordinates because the current `Footprint` model has no placement-angle
-  field. Back-side SMD copper is reported and placed on the top copper layer.
+  rule areas, footprint graphics, properties and 3D models are retained in the
+  source document and re-emitted. They are not semantically editable, and DRC
+  setup is preserved rather than applied.
+- Non-rectangular pads retain their source shape, but DRC and routing use their
+  bounding rectangles. Footprint rotation and side are preserved.
 - Pad numbers, net names, layer tables and track/via UUIDs are preserved where
   KiCad supplies them. Net UUIDs are derived from net names because KiCad's net
   table has no UUID.
@@ -429,10 +431,11 @@ Malformed S-expressions return `ParseError::Syntax`; unreadable files return
 `ParseError::Io`; valid but unrepresentable data is warned about through
 `PcbImport::warnings`. None of these paths panics.
 
-The exporter has been smoke-validated with KiCad 10.0.6 (`kicad-cli pcb export
-svg` parsed and plotted a generated fixture). KiCad DRC may still report the
-documented simplified-footprint and omitted-DRC-setup warnings. A full KiCad
-compatibility corpus is still required before claiming file-format parity.
+The file layer has been validated with KiCad 10.0.6: `kicad-cli sch export svg`
+and `kicad-cli fp export svg` plotted generated files, and `sch erc` / `pcb drc`
+parsed the generated schematic and board. The four-fixture corpus is structural
+evidence only; a broad KiCad compatibility corpus and semantic zone/DRC models
+are still required before claiming file-format parity.
 
 ### KiCad netlist export looks wrong
 

@@ -160,10 +160,20 @@ see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 ### KiCad PCB compatibility subset
 - `kicad-parser` now reads and writes `.kicad_pcb` boards for the subset represented by `PcbDesign`
 - Preserves layers, named nets (`PcbNet`), Edge.Cuts outlines, footprints/pads (including pad numbers and rotated placement), tracks and vias
-- Reports skipped zones, arcs, graphics, 3D models and approximated pad shapes as explicit warnings instead of claiming lossless conversion
+- Retains zones, arcs, graphics, 3D models and pad shapes in the source document and re-emits them; DRC still treats pads as rectangles
 - Added `kai-cad pcb import <input.kicad_pcb> <output.json>` and `kai-cad pcb export <input.json> <output.kicad_pcb>`
 - Added named-net and pad-number fields with serde defaults for older board documents
 - 9 parser tests and 2 PCB-model tests; total tests: 353
+
+### KiCad file-interchange layer
+- `.kicad_pcb` unknown constructs (zones, arcs, graphics, text, model, setup) are retained in `PcbDesign::source` and re-emitted
+- `.kicad_sch` subset read/write for components, wires, labels, junctions, no-connects and sheet symbols; `lib_symbols` and unknown nodes retained
+- `.kicad_mod` read/write with pad shapes, graphics, text and models preserved
+- `.kicad_pro` JSON preserved through the CLI
+- `kai-cad pcb|sch|footprint|project import|export` commands and CLI self-check round trips
+- Four-file compatibility corpus and structural round-trip tests
+- KiCad 10.0.6 plotted the generated schematic and footprint; ERC/DRC parsed the generated schematic/board
+- 10 new tests (5 schematic, 1 standalone footprint, 4 corpus); total tests: 363
 
 ## 🚧 Next — Week 16: Foundation release readiness
 
@@ -173,7 +183,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥354 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥364 tests, clippy/fmt/doc/link/release clean
 
 ## 🚧 Full KiCad parity — post-beta program
 
@@ -182,8 +192,9 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 
 - [ ] Integrated project document owning schematic and PCB
 - [ ] Schematic capture, annotation, hierarchy and geometry-based connectivity
-- [x] `.kicad_pcb` supported-subset read/write, CLI conversion and explicit loss warnings
-- [ ] Full-fidelity `.kicad_pcb` round trip, `.kicad_pro` / `.kicad_sch` read/write and a KiCad 9/10 compatibility corpus
+- [x] `.kicad_pcb` supported-subset read/write, CLI conversion and unknown-construct preservation
+- [x] `.kicad_pro` / `.kicad_sch` / `.kicad_mod` file-level read/write and unknown-node preservation
+- [ ] Semantic zones/arcs/graphics/DRC rules, recursive project bundles, library tables and a broad KiCad 9/10 corpus
 - [ ] Footprint placement/editing, zones, net classes, differential pairs and length matching
 - [ ] Gerber, drill, BOM and pick-and-place outputs
 - [ ] Symbol/footprint editors, scripting, collaboration transport and complete kAI
@@ -229,7 +240,7 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - ✅ SQLite plugin registry, activation state and CLI (Weeks 13–15; schema v6)
 - ⬜ Performance baselines
 - ⬜ User guides and API reference
-- 🚧 KiCad 9/10 board-subset import/export QA; project files remain deferred
+- 🚧 KiCad 9/10 file-interchange QA; semantic project compatibility remains deferred
 - ⬜ Beta release
 
 ## 🏠 Housekeeping

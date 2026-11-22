@@ -18,14 +18,14 @@ not yet have a complete EDA workflow.
 
 | Area | Implemented now | Missing for parity |
 |------|-----------------|--------------------|
-| **Project model** | `core::Project` with schematic and board metadata; `PcbDesign` JSON; SQLite project/board persistence | One project document that owns schematic and board together; project manager; KiCad `.kicad_pro` compatibility |
-| **Schematic** | Symbols, sheets, nets, wires/labels data types; netlist generation; connectivity graph; five ERC rules; KiCad netlist export | Schematic canvas; symbol placement; wire/bus drawing; junctions; hierarchy and sheet pins; annotation; symbol chooser; geometry-based connectivity and full ERC |
-| **PCB** | Outline geometry; layer stack validation; footprint libraries; pads, tracks and vias; DRC; single/multi-layer A* routing; push-and-shove; blind/buried vias; click-to-route track editor with undo | Footprint placement and editing; pad/via editing; copper zones and keepouts; net classes and impedance rules; differential pairs; length matching; ratsnest; stackup editor; selection and measurement |
+| **Project model** | `core::Project` with schematic and board metadata; `PcbDesign` JSON; SQLite project/board persistence; `.kicad_pro` JSON preserved by the CLI | One project document that owns schematic and board together; automatic project/sheet discovery; project manager |
+| **Schematic** | Symbols, sheets, nets, wires/labels data types; netlist generation; connectivity graph; five ERC rules; KiCad netlist export; `.kicad_sch` subset read/write with opaque source preservation | Schematic canvas; symbol placement; wire/bus drawing; annotation; symbol chooser; geometry-based connectivity and full ERC |
+| **PCB** | Outline geometry; layer stack validation; footprint libraries; pads, tracks and vias; DRC; single/multi-layer A* routing; push-and-shove; blind/buried vias; click-to-route track editor with undo | Footprint placement and editing; pad/via editing; semantic copper zones and keepouts; net classes and impedance rules; differential pairs; length matching; ratsnest; stackup editor; selection and measurement |
 | **Manufacturing** | None | Gerber, Excellon drill, BOM, pick-and-place, 3D models and enclosure/manufacturing packages |
-| **Libraries** | KiCad `.kicad_sym` import; KaiCad JSON footprint libraries | KiCad `.kicad_mod` import; symbol and footprint editors; library tables and versioned libraries |
-| **Board compatibility** | `.kicad_pcb` supported-subset import and export, including layer tables, named nets, Edge.Cuts outlines, footprints/pads, tracks and vias; explicit warnings for skipped constructs; `kai-cad pcb import|export` | Full-fidelity `.kicad_pcb` round trip, preservation of unknown fields, zones, arcs, graphics, 3D models, DRC setup and a KiCad 9/10 compatibility corpus |
+| **Libraries** | KiCad `.kicad_sym` import; `.kicad_mod` import/export; KaiCad JSON footprint libraries | Symbol and footprint editors; `sym-lib-table`/`fp-lib-table` handling and versioned libraries |
+| **Board compatibility** | `.kicad_pcb` subset import/export; unknown constructs (zones, arcs, graphics, text, models, setup) retained and re-emitted; footprint rotation and side preserved; explicit warnings; `kai-cad pcb import|export` | Semantic models for zones, arcs, graphics and DRC setup; full-fidelity round trip and a broad KiCad 9/10 corpus |
 | **User interface** | Native Studio window; 2D/3D software viewport; board open/save; DRC inspector; 2D track routing; undo/redo; typed file paths | Project workspace; schematic editor; footprint placement; native file picker; pan/zoom; copy/paste; preferences; complete editing commands and keyboard workflow |
-| **Compatibility** | Export-only KiCad netlist; one-way `.kicad_sym` import; `.kicad_pcb` supported-subset read/write | Full `.kicad_sch` and `.kicad_pcb` read/write; `.kicad_pro`; preservation of unknown fields; round-trip compatibility corpus for KiCad 9 and 10 |
+| **Compatibility** | Export-only KiCad netlist; `.kicad_sym` import; `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file-level read/write; unknown-node preservation; four-fixture compatibility corpus | Full semantic `.kicad_sch`/`.kicad_pcb` support, recursive project bundles, library tables and a broad KiCad 9/10 compatibility corpus |
 | **Ecosystem** | kAI suggestion validation; collaboration data structures; local plugin metadata registry | Model-backed kAI generation; network sync transport; plugin execution and sandboxing; Python/scripting compatibility; SPICE/simulation integration |
 | **Rendering** | Deterministic CPU 2D/3D rasterizer | Vulkan GPU backend and larger-scene performance work |
 
@@ -56,37 +56,48 @@ run DRC and save the result.
 Exit criterion: a small circuit can be captured, ERC-checked and transferred
 to a routed board entirely inside KaiCad.
 
-### P2 — KiCad interoperability (partially started)
+### P2 — KiCad interoperability (file layer landed; exit criterion open)
 
 - [x] Read and write the `.kicad_pcb` subset KaiCad's board model represents.
-- [ ] Read and write `.kicad_pro` and `.kicad_sch` for KiCad 9 and 10.
-- [ ] Extend `.kicad_pcb` support to zones, arcs, pad shapes, graphics, 3D
-  models and DRC setup.
-- [ ] Preserve unknown/unsupported constructs on round trip.
-- [ ] Build a corpus of representative projects and compare structural output.
-- [ ] Add library-table and `.kicad_mod` handling.
+- [x] Read and write a `.kicad_sch` subset: components, wires, labels,
+  junctions, no-connects and sheet symbols, with `lib_symbols` and unmodelled
+  constructs retained for export.
+- [x] Preserve `.kicad_pro` JSON, including settings KaiCad does not model.
+- [x] Read and write `.kicad_mod` footprints with pad shapes, graphics, text and
+  3D models retained.
+- [x] Preserve unknown `.kicad_pcb` constructs (zones, arcs, drawings, text,
+  models, setup) and unknown schematic constructs on round trip.
+- [x] Build a small compatibility corpus (board, schematic, footprint, project)
+  and validate exported files with KiCad 10.0.6 command-line tools.
+- [ ] Give zones, arcs, graphics, non-rectangular pad shapes and DRC setup
+  semantic models; today they round-trip but DRC still treats pads as
+  rectangles and ignores zone copper.
+- [ ] Load a whole project bundle recursively across hierarchical sheet files.
+- [ ] Handle `sym-lib-table` and `fp-lib-table`.
+- [ ] Broaden the corpus and exercise edit/save/reopen on a complete hierarchy.
 
 Exit criterion: representative KiCad projects open, edit, save and reopen
-without silent loss of design data.
+without silent loss of design data. **This is not yet met.** The file layer
+now survives structural round trips, but the semantic and hierarchy gaps above
+mean P2 remains open.
 
 ### Supported `.kicad_pcb` subset today
 
 The exporter and importer are deliberately honest about their boundary:
 
 - **Preserved:** board layer table and copper stackup order, named nets, pad
-  numbers, `Edge.Cuts` line/rectangle/polygon outlines, footprint placement and
-  reference designators, pad position/size/rotation/net/type, track geometry,
+  numbers, `Edge.Cuts` line/rectangle/polygon outlines, footprint placement,
+  rotation and side, pad position/size/rotation/net/type/shape, track geometry,
   width, layer and net, and via position/size/drill/span/net.
-- **Approximated:** non-rectangular pads use their bounding rectangle; a
-  rotated footprint is flattened into rotated pad coordinates because
-  `Footprint` has no placement-angle field; back-side SMD copper is warned
-  because the current pad model only places SMD copper on the top layer.
-- **Skipped with a warning:** copper zones and fills, copper/graphical arcs,
-  top-level drawings and text, groups, dimensions, images, targets, rule areas,
-  footprint graphics, non-reference footprint properties and 3D models. DRC
-  setup is not imported and KaiCad's default rules are used.
-- **Not claimed:** byte-for-byte preservation, unknown-field retention or
-  opening arbitrary KiCad projects without structural changes.
+- **Retained opaquely:** zones and fills, copper/graphical arcs, top-level
+  drawings and text, groups, dimensions, images, targets, rule areas, footprint
+  graphics, properties, UUIDs, 3D models, setup/title blocks and unknown root
+  nodes. They are stored in `PcbDesign::source` or `Footprint::preserved` and
+  re-emitted.
+- **Approximated for checking only:** non-rectangular pads retain their source
+  shape, but DRC and routing still use rectangular copper.
+- **Not claimed:** semantic editing of zones/arcs/graphics, DRC-rule import or
+  byte-for-byte preservation.
 
 Use the CLI for conversion; Studio currently opens KaiCad board JSON:
 
@@ -97,8 +108,50 @@ cargo run -p kai-cad -- pcb export board.kaicad.json board.kicad_pcb
 
 Import warnings are printed to stderr and counted in the summary. The library
 API is `kicad_parser::{load_pcb, parse_pcb, save_pcb, write_pcb}`; `parse_pcb`
-returns `PcbImport { design, warnings }` so callers cannot mistake a partial
-import for a lossless one.
+returns `PcbImport { design, warnings }`.
+
+### Supported `.kicad_sch`, `.kicad_mod` and `.kicad_pro` subset
+
+- Schematic components map to `core::Component` with placement, unit, library
+  id and properties. Junctions, no-connects, wires and the four label types map
+  to the sheet model. Child sheet symbols record their file name and placement.
+- `lib_symbols`, property effects, pin uuid blocks, instance paths, buses, text,
+  images and unknown nodes are retained in `SchematicData::source` or on the
+  owning component/sheet.
+- Standalone footprints map to `pcb::Footprint`, including layer, pad shape/kind,
+  graphics, text and models.
+- `.kicad_pro` is treated as preserved JSON; no project settings are
+  interpreted yet.
+
+```bash
+cargo run -p kai-cad -- sch import main.kicad_sch main.kaicad.json
+cargo run -p kai-cad -- sch export main.kaicad.json main.kicad_sch
+cargo run -p kai-cad -- footprint import part.kicad_mod part.json
+cargo run -p kai-cad -- footprint export part.json part.kicad_mod
+cargo run -p kai-cad -- project import project.kicad_pro project.json
+cargo run -p kai-cad -- project export project.json project.kicad_pro
+```
+
+The schematic writer only emits one sheet file. It does not recursively discover
+or rewrite child sheet files.
+
+### Compatibility corpus and validation
+
+`kicad-parser/tests/fixtures/` contains one representative `.kicad_sch`,
+`.kicad_pcb`, `.kicad_mod` and `.kicad_pro`. `kicad-parser/tests/compatibility.rs`
+round-trips each file and checks that components, pads, zones, arcs, graphics,
+models and unknown nodes survive.
+
+KiCad 10.0.6 validation performed on generated files:
+
+- `kicad-cli sch export svg` plotted the exported schematic.
+- `kicad-cli fp export svg` plotted the exported footprint.
+- `kicad-cli sch erc` and `kicad-cli pcb drc` parsed the exported files and
+  reported the expected fixture connectivity/geometry warnings, not syntax
+  errors.
+
+The corpus is intentionally small. It is evidence for the structural round trip,
+not for arbitrary KiCad projects.
 
 ### P3 — Manufacturing and advanced PCB
 
@@ -128,27 +181,28 @@ Exit criterion: a board can be fabricated from outputs generated by KaiCad.
 
 ## Current increment
 
-This change adds a real, bounded KiCad PCB compatibility path:
+This change adds a real, bounded KiCad file-interchange layer:
 
 - `kicad_parser::parse_pcb`/`load_pcb` import supported `.kicad_pcb` data into
-  `pcb::PcbDesign` and return deterministic warnings for skipped constructs.
-- `kicad_parser::write_pcb`/`save_pcb` export the same subset in a KiCad-openable
-  S-expression document.
-- `PcbDesign` now carries named `PcbNet` entries, and `PadPosition` carries its
-  footprint pad number; both fields default for older JSON documents.
-- The CLI adds `kai-cad pcb import` and `kai-cad pcb export`, with warning and
-  object-count summaries.
-- The self-check imports and exports a small PCB fixture, including a named net,
-  a segment and a via.
-- The exporter was smoke-validated with KiCad 10.0.6: `kicad-cli pcb export
-  svg` parsed and plotted the generated board. KiCad's DRC still reports the
-  expected simplified-footprint and test-geometry warnings; this is not a
-  compatibility-corpus or DRC-clean guarantee.
-- The previous increment's `gui::TrackEditor` and `renderer::BoardTransform`
-  remain in place.
+  `pcb::PcbDesign` and retain unmodelled constructs in `PcbDesign::source`.
+- `kicad_parser::write_pcb`/`save_pcb` re-emit the supported data and the
+  preserved constructs. Footprint rotation, side and original pad kind/shape
+  survive the round trip.
+- `kicad_parser::parse_schematic`/`write_schematic` cover components, wires,
+  labels, junctions, no-connects and sheet symbols, with opaque preservation of
+  library symbols and unmodelled nodes.
+- `kicad_parser::parse_footprint`/`write_footprint` cover standalone
+  `.kicad_mod` files.
+- `ProjectFile` preserves `.kicad_pro` JSON.
+- The CLI adds `pcb`, `sch`, `footprint` and `project` import/export commands,
+  with warning and object-count summaries. The self-check round-trips board,
+  schematic and footprint fixtures.
+- The corpus fixtures and structural round-trip tests live under
+  `kicad-parser/tests/`.
+- KiCad 10.0.6's `sch export svg` and `fp export svg` plotted generated files;
+  `sch erc` and `pcb drc` parsed them and reported only fixture-level warnings.
 
-Full `.kicad_pcb` fidelity, `.kicad_sch`, `.kicad_pro`, schematic capture,
-manufacturing outputs and the compatibility corpus remain future work. The
-implementation is validated by unit tests and fixtures, not by a full KiCad
-compatibility corpus. Do not mark the P2 exit criterion complete until that
-corpus passes.
+Full semantic PCB, recursive project/sheet loading, library tables, schematic
+capture, manufacturing outputs and a broad compatibility corpus remain future
+work. Do not mark the P2 exit criterion complete until those are in place and a
+representative hierarchy passes edit/save/reopen under KiCad.

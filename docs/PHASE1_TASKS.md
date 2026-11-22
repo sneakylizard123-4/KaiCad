@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 353 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 363 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -157,8 +157,8 @@
   including JSON project save/load. `kicad-parser` now imports/exports the
   supported `.kicad_pcb` subset, reports skipped constructs as warnings, and
   has fixture coverage for layers, nets, pads, tracks, vias and outlines.
-- **Remaining:** `.kicad_sch`/`.kicad_pro` round trips, full-fidelity
-  `.kicad_pcb` preservation and a KiCad 9/10 compatibility corpus.
+- **Remaining:** recursive project/sheet bundles, library tables, semantic
+  zones/arcs/graphics/DRC rules and a broad KiCad 9/10 compatibility corpus.
 
 ## Phase 1 Completion Criteria
 
@@ -225,12 +225,16 @@ route preview/commit/cancel, and a deterministic headless software 2D/3D
 renderer. These additions brought the total to **319 passing tests**. A later
 post-Phase-2 Studio GUI shell added 12 more, for **331 passing tests**; a
 further interactive track-routing increment added 11, for **342 passing
-tests**. The KiCad PCB compatibility increment added 9 parser tests and 2
-PCB-model tests, for a total of **353 passing tests**. Studio provides board
+tests**. The KiCad PCB compatibility increment added 9 parser tests and 2 PCB-model
+tests, for a total of **353 passing tests**. The subsequent KiCad file-
+interchange increment added 6 schematic tests, 1 standalone-footprint test and
+4 corpus tests, for **363 passing tests**. Studio provides board
 viewing, open/save, DRC and undoable track routing, but not yet footprint
 placement or schematic capture. The CLI imports/exports the documented
-`.kicad_pcb` subset and warns about skipped data; `.kicad_sch`, `.kicad_pro`
-and full-fidelity board round trips remain deferred. The Vulkan GPU backend is
+`.kicad_pcb` subset and preserves unmodelled board/schematic constructs;
+`.kicad_sch`, `.kicad_mod` and `.kicad_pro` file-level conversion is available.
+Semantic zones, recursive hierarchies, library tables and full-fidelity board
+round trips remain deferred. The Vulkan GPU backend is
 still deferred; the renderer is CPU software rasterization. Week 16 release
 hardening is next; full KiCad parity is tracked separately in
 [`KICAD_PARITY.md`](KICAD_PARITY.md).

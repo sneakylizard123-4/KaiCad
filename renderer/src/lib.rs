@@ -324,11 +324,13 @@ mod tests {
                     height: 0.8,
                     rotation: 30.0,
                     net_id: None,
+                    ..PadPosition::default()
                 }],
                 outline: Outline {
                     shape: OutlineShape::rectangle(-2.0, -1.0, 4.0, 2.0),
                     copper: false,
                 },
+                ..Footprint::default()
             }],
             tracks: vec![pcb::Track {
                 layer: 0,

@@ -2,14 +2,16 @@
 //!
 //! KiCad's file format is an import/export target only; it never becomes
 //! KaiCad's internal representation. This crate reads `.kicad_sym` symbol
-//! libraries into [`core::SymbolLibrary`] and reads/writes the supported
-//! subset of `.kicad_pcb` boards through [`pcb`].
+//! libraries into [`core::SymbolLibrary`], and reads/writes the supported
+//! subsets of `.kicad_pcb` boards and `.kicad_sch` schematics through [`pcb`]
+//! and [`schematic`].
 //!
 //! The parser deliberately implements only the S-expression constructs KaiCad
 //! can represent. It never panics on malformed input and performs no I/O
 //! beyond the requested file.
 
 pub mod pcb;
+pub mod schematic;
 
 use std::fmt;
 use std::path::Path;
@@ -18,7 +20,13 @@ use core::symbol::{Pin, PinDirection, PinPosition, PinType, Symbol};
 use core::symbol_library::{SymbolLibrary, SymbolLibrarySource};
 use uuid::Uuid;
 
-pub use pcb::{PcbImport, load_pcb, parse_pcb, save_pcb, write_pcb};
+pub use pcb::{
+    FootprintImport, PcbImport, load_footprint, load_pcb, parse_footprint, parse_pcb,
+    save_footprint, save_pcb, write_footprint, write_pcb,
+};
+pub use schematic::{
+    ProjectFile, SchematicImport, load_schematic, parse_schematic, save_schematic, write_schematic,
+};
 
 /// Errors raised while reading a KiCad symbol library.
 #[derive(Debug)]
@@ -240,35 +248,60 @@ fn pin_type(kicad: &str) -> PinType {
     }
 }
 
-/// A parsed S-expression: either an atom or a list of expressions.
+/// A parsed S-expression: an atom, a quoted string or a list of expressions.
 #[derive(Debug, PartialEq)]
-enum SExpr {
+pub(crate) enum SExpr {
     Atom(String),
+    Quoted(String),
     List(Vec<SExpr>),
 }
 
 impl SExpr {
-    fn atom(&self) -> Option<&str> {
+    pub(crate) fn atom(&self) -> Option<&str> {
         match self {
-            Self::Atom(value) => Some(value),
+            Self::Atom(value) | Self::Quoted(value) => Some(value),
             Self::List(_) => None,
         }
     }
 
-    fn items(&self) -> Option<&[SExpr]> {
+    pub(crate) fn items(&self) -> Option<&[SExpr]> {
         match self {
             Self::List(items) => Some(items),
-            Self::Atom(_) => None,
+            Self::Atom(_) | Self::Quoted(_) => None,
+        }
+    }
+
+    /// Render this expression as canonical S-expression source.
+    pub(crate) fn to_source(&self) -> String {
+        let mut output = String::new();
+        self.write_source(&mut output);
+        output
+    }
+
+    fn write_source(&self, output: &mut String) {
+        match self {
+            Self::Atom(value) => output.push_str(value),
+            Self::Quoted(value) => write_quoted(output, value),
+            Self::List(items) => {
+                output.push('(');
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        output.push(' ');
+                    }
+                    item.write_source(output);
+                }
+                output.push(')');
+            }
         }
     }
 
     /// First atom of a list, i.e. the expression's keyword.
-    fn head(&self) -> Option<&str> {
+    pub(crate) fn head(&self) -> Option<&str> {
         self.items()?.first()?.atom()
     }
 
     /// First direct child list whose keyword is `name`.
-    fn child(&self, name: &str) -> Option<&[SExpr]> {
+    pub(crate) fn child(&self, name: &str) -> Option<&[SExpr]> {
         self.items()?.iter().find_map(|item| {
             let items = item.items()?;
             (items.first()?.atom()? == name).then_some(items)
@@ -276,11 +309,28 @@ impl SExpr {
     }
 }
 
+/// Write a KiCad quoted string with the escapes its reader accepts.
+pub(crate) fn write_quoted(output: &mut String, value: &str) {
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            other => output.push(other),
+        }
+    }
+    output.push('"');
+}
+
 #[derive(Debug, PartialEq)]
 enum Token {
     Open,
     Close,
     Atom(String),
+    Quoted(String),
 }
 
 fn parse_document(input: &str) -> Result<SExpr, ParseError> {
@@ -319,6 +369,10 @@ fn parse_expression(tokens: &[Token], index: &mut usize) -> Result<SExpr, ParseE
             *index += 1;
             Ok(SExpr::Atom(value.clone()))
         }
+        Some(Token::Quoted(value)) => {
+            *index += 1;
+            Ok(SExpr::Quoted(value.clone()))
+        }
         Some(Token::Close) => Err(ParseError::Syntax("unexpected ')'".to_string())),
         None => Err(ParseError::Syntax("unexpected end of document".to_string())),
     }
@@ -333,7 +387,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, ParseError> {
             '(' => tokens.push(Token::Open),
             ')' => tokens.push(Token::Close),
             character if character.is_whitespace() => {}
-            '"' => tokens.push(Token::Atom(read_string(&mut chars)?)),
+            '"' => tokens.push(Token::Quoted(read_string(&mut chars)?)),
             character => {
                 let mut atom = String::from(character);
                 while let Some(&next) = chars.peek() {
@@ -400,7 +454,7 @@ mod tests {
             vec![
                 Token::Open,
                 Token::Atom("a".to_string()),
-                Token::Atom("b c".to_string()),
+                Token::Quoted("b c".to_string()),
                 Token::Open,
                 Token::Atom("d".to_string()),
                 Token::Atom("1".to_string()),

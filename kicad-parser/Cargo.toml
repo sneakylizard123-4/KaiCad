@@ -11,6 +11,7 @@ description = "KiCad symbol-library and PCB file parser for KaiCad import/export
 [dependencies]
 core = { path = "../core" }
 pcb = { path = "../pcb" }
+serde_json = "1"
 uuid = { version = "1", features = ["v5"] }
 
 [dev-dependencies]

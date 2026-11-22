@@ -3,9 +3,9 @@
 KaiCad is a pre-alpha Rust project. The core data model, schematic and PCB
 engines, routing, software renderer, persistence, collaboration primitives and
 a desktop GUI editor/inspection shell are implemented and tested, along with
-the supported `.kicad_pcb` import/export subset, while full board and schematic
-editing, full KiCad project-file compatibility, the Vulkan GPU backend and some
-advanced engines remain incomplete. Contributions that move
+`.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange,
+while full board and schematic editing, semantic KiCad project compatibility,
+the Vulkan GPU backend and some advanced engines remain incomplete. Contributions that move
 the architecture forward — or that honestly document what is missing — are
 welcome.
 
@@ -18,15 +18,16 @@ delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md).
 ## Ground rules
 
 - **No KiCad wrapping.** KaiCad implements its own engines. KiCad file formats
-  are an import/export target only: `kicad-parser` maps `.kicad_sym` and the
-  supported `.kicad_pcb` subset into `core`/`pcb` types, and those types remain
-  the internal representation. KiCad netlist output from
+  are an import/export target only: `kicad-parser` maps `.kicad_sym`, `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
+  `.kicad_pro` data into `core`/`pcb` types, retaining unmodelled constructs as
+  opaque source, and those types remain the internal representation. KiCad netlist output from
   `schematic::to_kicad_netlist` is likewise export-only and must never become
   the internal representation or gain a parser in the same layer.
-  `pcb::FootprintLibrary` persists KaiCad's own JSON; a KiCad `.kicad_mod`
-  reader is separate import work and must not become the storage format.
-  Board import must return explicit warnings for skipped constructs rather
-  than claim a lossless round trip.
+  `pcb::FootprintLibrary` persists KaiCad's own JSON; the KiCad `.kicad_mod`
+  reader/writer is separate interchange code and must not become the storage
+  format.
+  Board and schematic import must report approximated semantics even when
+  unknown constructs are preserved.
 - **Local-first.** No change may make a network connection, cloud service or
   AI model mandatory for normal editing.
 - **AI output is untrusted.** Any AI-proposed change must pass deterministic

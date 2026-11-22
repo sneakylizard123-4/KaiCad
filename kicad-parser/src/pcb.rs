@@ -13,12 +13,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use core::Point;
+use core::{Point, PreservedNode, SourceDocument};
 use pcb::footprint::{Outline, OutlineShape, PadPosition, PadType};
 use pcb::{Footprint, PcbDesign, PcbNet, Track, Via};
 use uuid::Uuid;
 
-use super::{ParseError, SExpr, parse_document};
+use super::{ParseError, SExpr, parse_document, write_quoted};
+
+/// A KaiCad footprint imported from a KiCad `.kicad_mod`, plus warnings.
+#[derive(Debug, Clone)]
+pub struct FootprintImport {
+    /// Imported footprint. Its position is zero unless the file records one.
+    pub footprint: Footprint,
+    /// Deterministic messages describing data retained opaquely.
+    pub warnings: Vec<String>,
+}
 
 /// A KaiCad board imported from a KiCad PCB, plus conversion warnings.
 #[derive(Debug, Clone)]
@@ -51,6 +60,7 @@ pub fn parse_pcb(input: &str) -> Result<PcbImport, ParseError> {
     }
 
     let mut warnings = Warnings::default();
+    let mut source = parse_source(&root);
     let (layers, stackup) = parse_layers(&root, &mut warnings)?;
     let layer_ids: BTreeMap<String, u16> =
         layers.iter().map(|layer| (layer.name.clone(), layer.id)).collect();
@@ -77,7 +87,7 @@ pub fn parse_pcb(input: &str) -> Result<PcbImport, ParseError> {
                 design.vias.push(parse_via(item, &layer_ids, &mut nets, &mut warnings)?);
             }
             Some("footprint") | Some("module") => {
-                design.footprints.push(parse_footprint(
+                design.footprints.push(parse_footprint_node(
                     item,
                     &mut nets,
                     footprint_index,
@@ -85,18 +95,20 @@ pub fn parse_pcb(input: &str) -> Result<PcbImport, ParseError> {
                 )?);
                 footprint_index += 1;
             }
-            Some(head @ ("gr_line" | "gr_rect" | "gr_poly" | "gr_arc")) if !is_edge_cuts(item) => {
-                warnings.skipped(head);
+            Some("net" | "layers" | "version" | "generator" | "uuid") => {}
+            Some("gr_line" | "gr_rect" | "gr_poly") if is_edge_cuts(item) => {}
+            Some(head) => {
+                if let Some(node) = preserved_node(item) {
+                    warnings.preserved(head);
+                    source.preserved.push(node);
+                }
             }
-            Some(
-                head @ ("zone" | "arc" | "gr_curve" | "gr_circle" | "gr_text" | "group"
-                | "dimension" | "image" | "target" | "rule_area" | "generated"),
-            ) => warnings.skipped(head),
-            _ => {}
+            None => {}
         }
     }
 
     design.nets = nets.into_nets();
+    design.source = Some(source);
     if design.outline.points.len() >= 3 && !design.outline.is_closed() {
         warnings.note("Edge.Cuts geometry did not form a closed outline");
     }
@@ -133,15 +145,155 @@ pub fn save_pcb(design: &PcbDesign, path: impl AsRef<std::path::Path>) -> Result
     Ok(())
 }
 
+/// Parse a standalone KiCad `.kicad_mod` footprint.
+pub fn parse_footprint(input: &str) -> Result<FootprintImport, ParseError> {
+    let root = parse_document(input)?;
+    match root.head() {
+        Some("footprint" | "module") => {}
+        Some(other) => {
+            return Err(ParseError::Unsupported(format!(
+                "expected a footprint document, found '{other}'"
+            )));
+        }
+        None => return Err(ParseError::Syntax("empty top-level list".to_string())),
+    }
+    let mut warnings = Warnings::default();
+    let mut nets = NetTable::default();
+    let footprint = parse_footprint_node(&root, &mut nets, 0, &mut warnings)?;
+    Ok(FootprintImport { footprint, warnings: warnings.finish() })
+}
+
+/// Read and parse a standalone `.kicad_mod` file.
+pub fn load_footprint(path: impl AsRef<std::path::Path>) -> Result<FootprintImport, ParseError> {
+    let path = path.as_ref();
+    let document = std::fs::read_to_string(path)?;
+    parse_footprint(&document)
+}
+
+/// Serialize a footprint as a KiCad `.kicad_mod` document.
+///
+/// Placement (`at`) is omitted because a footprint library entry is not placed
+/// on a board. Nets are omitted for the same reason.
+pub fn write_footprint(footprint: &Footprint) -> Result<String, ParseError> {
+    if !footprint.position.x.is_finite() || !footprint.position.y.is_finite() {
+        return Err(ParseError::Unsupported("footprint position must be finite".to_string()));
+    }
+    let layer = if footprint.layer.is_empty() { "F.Cu" } else { &footprint.layer };
+    let (mask, paste, silk) = if layer.starts_with('B') {
+        ("B.Mask", "B.Paste", "B.SilkS")
+    } else {
+        ("F.Mask", "F.Paste", "F.SilkS")
+    };
+    let mut output = String::new();
+    let _ = writeln!(
+        output,
+        "(footprint {} (version 20240108) (generator \"kaicad\")",
+        quote(&footprint.name)
+    );
+    let _ = writeln!(output, "  (layer {})", quote(layer));
+    for node in &footprint.preserved {
+        if !matches!(node.head.as_str(), "layer" | "at" | "pad" | "version" | "generator" | "uuid")
+        {
+            write_node(&mut output, &node.source, 2);
+        }
+    }
+    if !has_head(&footprint.preserved, "property") && !has_head(&footprint.preserved, "fp_text") {
+        let _ = writeln!(
+            output,
+            "  (property \"Reference\" {} (at 0 0 0) (layer {}))",
+            quote(&footprint.reference_designator),
+            quote(silk)
+        );
+    }
+    if !has_head(&footprint.preserved, "uuid") {
+        let uuid = Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            format!("kicad-export-footprint|{}|{}", footprint.name, footprint.reference_designator)
+                .as_bytes(),
+        );
+        let _ = writeln!(output, "  (uuid {})", quote(&uuid.to_string()));
+    } else if let Some(uuid) = footprint.preserved.iter().find(|node| node.head == "uuid") {
+        write_node(&mut output, &uuid.source, 2);
+    }
+    for (pad_index, pad) in footprint.pad_positions.iter().enumerate() {
+        let pad_number =
+            if pad.number.is_empty() { (pad_index + 1).to_string() } else { pad.number.clone() };
+        let kind = if pad.kind.is_empty() {
+            match pad.pad_type {
+                PadType::ThroughHole => "thru_hole",
+                PadType::SurfaceMount | PadType::Tented => "smd",
+            }
+        } else {
+            &pad.kind
+        };
+        let shape = match pad.shape.as_str() {
+            "rect" | "roundrect" | "oval" | "circle" | "trapezoid" | "custom" => pad.shape.as_str(),
+            _ => "rect",
+        };
+        let layers = if has_head(&pad.preserved, "layers") {
+            String::new()
+        } else {
+            match pad.pad_type {
+                PadType::ThroughHole => " (layers \"*.Cu\" \"*.Mask\")".to_string(),
+                PadType::SurfaceMount => {
+                    format!(" (layers {} {} {})", quote(layer), quote(paste), quote(mask))
+                }
+                PadType::Tented => format!(" (layers {})", quote(layer)),
+            }
+        };
+        let drill = if has_head(&pad.preserved, "drill") {
+            String::new()
+        } else if pad.pad_type == PadType::ThroughHole {
+            format!(" (drill {})", number(pad.width.min(pad.height) / 2.0))
+        } else {
+            String::new()
+        };
+        let _ = write!(
+            output,
+            "  (pad {} {kind} {shape} (at {} {} {}) (size {} {}){drill}{layers}",
+            quote(&pad_number),
+            number(pad.x),
+            number(pad.y),
+            number(pad.rotation),
+            number(pad.width),
+            number(pad.height)
+        );
+        if shape == "roundrect" && !has_head(&pad.preserved, "roundrect_rratio") {
+            output.push_str(" (roundrect_rratio 0.25)");
+        }
+        for node in &pad.preserved {
+            write_node_inline(&mut output, &node.source);
+        }
+        output.push_str(")\n");
+    }
+    output.push_str(")\n");
+    Ok(output)
+}
+
+/// Write a standalone footprint to `path`, creating parent directories.
+pub fn save_footprint(
+    footprint: &Footprint,
+    path: impl AsRef<std::path::Path>,
+) -> Result<(), ParseError> {
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, write_footprint(footprint)?)?;
+    Ok(())
+}
+
 #[derive(Default)]
 struct Warnings {
-    skipped: BTreeMap<String, usize>,
+    preserved: BTreeMap<String, usize>,
     notes: BTreeSet<String>,
 }
 
 impl Warnings {
-    fn skipped(&mut self, construct: &str) {
-        *self.skipped.entry(construct.to_string()).or_default() += 1;
+    fn preserved(&mut self, construct: &str) {
+        *self.preserved.entry(construct.to_string()).or_default() += 1;
     }
 
     fn note(&mut self, message: impl Into<String>) {
@@ -150,15 +302,33 @@ impl Warnings {
 
     fn finish(self) -> Vec<String> {
         let mut messages: Vec<String> = self
-            .skipped
+            .preserved
             .into_iter()
             .map(|(construct, count)| {
-                format!("skipped {count} unsupported '{construct}' construct(s)")
+                format!("preserved {count} unsupported '{construct}' construct(s) for export")
             })
             .collect();
         messages.extend(self.notes);
         messages
     }
+}
+
+fn parse_source(root: &SExpr) -> SourceDocument {
+    SourceDocument {
+        format: "kicad_pcb".to_string(),
+        version: child_atom(root, "version"),
+        generator: child_atom(root, "generator"),
+        uuid: parse_uuid(root),
+        preserved: Vec::new(),
+    }
+}
+
+fn child_atom(node: &SExpr, child: &str) -> Option<String> {
+    node.child(child)?.get(1)?.atom().map(str::to_string)
+}
+
+fn preserved_node(node: &SExpr) -> Option<PreservedNode> {
+    Some(PreservedNode { head: node.head()?.to_string(), source: node.to_source() })
 }
 
 fn parse_layers(
@@ -236,7 +406,7 @@ fn parse_outline(
                 }
             }
             Some("arc" | "gr_arc") => {
-                warnings.skipped("Edge.Cuts arc");
+                warnings.note("preserved an Edge.Cuts arc; KaiCad's outline model is polygonal");
             }
             _ => {}
         }
@@ -311,6 +481,7 @@ fn parse_polygon(node: &SExpr) -> Result<Vec<Point>, ParseError> {
     Ok(result)
 }
 
+#[derive(Default)]
 struct NetTable {
     by_code: BTreeMap<u32, Uuid>,
     by_id: BTreeMap<Uuid, String>,
@@ -464,7 +635,7 @@ fn parse_via(
     Ok(Via { id, net_id, position, layer_start, layer_end, diameter, drill })
 }
 
-fn parse_footprint(
+fn parse_footprint_node(
     node: &SExpr,
     nets: &mut NetTable,
     index: usize,
@@ -476,45 +647,48 @@ fn parse_footprint(
         .and_then(SExpr::atom)
         .unwrap_or("Footprint")
         .to_string();
-    let (position, angle) = parse_at(node)?;
-    let layer_name =
-        node.child("layer").and_then(|layer| layer.get(1)).and_then(SExpr::atom).unwrap_or("F.Cu");
-    if layer_name.ends_with(".Cu") && layer_name != "F.Cu" {
-        warnings.note(format!(
-            "flattened footprint '{name}' pads from unsupported back-side layer '{layer_name}'"
-        ));
-    }
+    let (position, angle) =
+        if node.child("at").is_some() { parse_at(node)? } else { (Point::default(), 0.0) };
+    let layer = child_atom(node, "layer").unwrap_or_else(|| "F.Cu".to_string());
     let reference = footprint_reference(node).unwrap_or_else(|| format!("FP{index}"));
-    let dropped_metadata = node.items().unwrap_or_default().iter().any(|item| match item.head() {
-        Some(
-            "fp_line" | "fp_rect" | "fp_circle" | "fp_arc" | "fp_poly" | "fp_curve" | "fp_text"
-            | "model" | "attr" | "zone",
-        ) => true,
-        Some("property") => {
-            item.items().unwrap_or_default().get(1).and_then(SExpr::atom) != Some("Reference")
+
+    let mut preserved = Vec::new();
+    for child in node.items().unwrap_or_default() {
+        match child.head() {
+            Some("layer" | "at" | "pad") => {}
+            Some(head) => {
+                if let Some(node) = preserved_node(child) {
+                    preserved.push(node);
+                    warnings.note(format!(
+                        "preserved '{head}' metadata on footprint '{name}' for export"
+                    ));
+                }
+            }
+            None => {}
         }
-        _ => false,
-    });
-    if dropped_metadata {
-        warnings.note(format!(
-            "omitted graphical, 3D or non-reference metadata from footprint '{name}'"
-        ));
     }
 
     let mut pads = Vec::new();
     for pad in node.items().unwrap_or_default().iter().filter(|item| item.head() == Some("pad")) {
-        pads.push(parse_pad(pad, nets, position, angle, &name, warnings)?);
+        pads.push(parse_pad(pad, nets, &name, warnings)?);
     }
 
     let outline = footprint_outline(&pads);
-    Ok(Footprint { name, reference_designator: reference, position, pad_positions: pads, outline })
+    Ok(Footprint {
+        name,
+        reference_designator: reference,
+        position,
+        rotation: angle,
+        layer,
+        pad_positions: pads,
+        outline,
+        preserved,
+    })
 }
 
 fn parse_pad(
     node: &SExpr,
     nets: &mut NetTable,
-    footprint_position: Point,
-    footprint_angle: f64,
     footprint_name: &str,
     warnings: &mut Warnings,
 ) -> Result<PadPosition, ParseError> {
@@ -524,7 +698,7 @@ fn parse_pad(
     let shape = items.get(3).and_then(SExpr::atom).unwrap_or("rect");
     if shape != "rect" {
         warnings.note(format!(
-            "approximated {shape} pad '{number}' on '{footprint_name}' as rectangular copper"
+            "kept {shape} pad '{number}' on '{footprint_name}' but KaiCad checks it as rectangular copper"
         ));
     }
     let pad_type = match kind {
@@ -544,21 +718,28 @@ fn parse_pad(
         .ok_or_else(|| ParseError::Syntax(format!("pad '{number}' is missing its size")))?;
     let width = number_at(size, 1, "pad width")?;
     let height = number_at(size, 2, "pad height")?;
-    let (sin, cos) = footprint_angle.to_radians().sin_cos();
-    let center = Point::new(
-        footprint_position.x + local.x * cos - local.y * sin,
-        footprint_position.y + local.x * sin + local.y * cos,
-    );
     let net_id = nets.resolve(node, warnings)?;
+    let mut preserved = Vec::new();
+    for child in node.items().unwrap_or_default() {
+        if matches!(child.head(), Some("at" | "size" | "net")) {
+            continue;
+        }
+        if let Some(node) = preserved_node(child) {
+            preserved.push(node);
+        }
+    }
     Ok(PadPosition {
         number: number.to_string(),
-        x: center.x - footprint_position.x,
-        y: center.y - footprint_position.y,
+        x: local.x,
+        y: local.y,
         pad_type,
         width,
         height,
-        rotation: pad_angle + footprint_angle,
+        rotation: pad_angle,
         net_id,
+        shape: shape.to_string(),
+        kind: kind.to_string(),
+        preserved,
     })
 }
 
@@ -625,7 +806,6 @@ struct Exporter {
     layers: BTreeMap<u16, String>,
     net_codes: BTreeMap<Uuid, u32>,
     nets: Vec<(u32, Uuid, String)>,
-    top_copper: String,
 }
 
 impl Exporter {
@@ -815,19 +995,41 @@ impl Exporter {
             nets.push((code, id, name));
         }
 
-        Ok(Self { layers, net_codes, nets, top_copper })
+        Ok(Self { layers, net_codes, nets })
     }
 
     fn render(&self, design: &PcbDesign) -> String {
+        let source = design.source.as_ref();
+        let version = source.and_then(|source| source.version.as_deref()).unwrap_or("20240108");
+        let generator = source.and_then(|source| source.generator.as_deref()).unwrap_or("kaicad");
         let mut output = String::new();
-        output.push_str("(kicad_pcb (version 20240108) (generator \"kaicad\")\n");
-        output.push_str("  (general (thickness 1.6))\n");
-        output.push_str("  (paper \"A4\")\n");
+        let _ = write!(output, "(kicad_pcb (version {version}) (generator ");
+        write_quoted(&mut output, generator);
+        output.push_str(")\n");
+
+        let preserved = source.map(|source| source.preserved.as_slice()).unwrap_or_default();
+        for head in ["general", "paper", "title_block"] {
+            write_preserved(&mut output, preserved, head, 2);
+        }
+        if !has_head(preserved, "general") {
+            output.push_str("  (general (thickness 1.6))\n");
+        }
+        if !has_head(preserved, "paper") {
+            output.push_str("  (paper \"A4\")\n");
+        }
+        if let Some(uuid) = source.and_then(|source| source.uuid) {
+            if !has_head(preserved, "uuid") {
+                let _ = writeln!(output, "  (uuid {})", quote(&uuid.to_string()));
+            }
+        }
         output.push_str("  (layers\n");
         for (id, name) in &self.layers {
             let _ = writeln!(output, "    ({id} {} {})", quote(name), layer_type(name));
         }
         output.push_str("  )\n");
+        for head in ["setup", "property"] {
+            write_preserved(&mut output, preserved, head, 2);
+        }
         for (code, _, name) in &self.nets {
             let _ = writeln!(output, "  (net {code} {})", quote(name));
         }
@@ -836,6 +1038,14 @@ impl Exporter {
         self.write_footprints(&mut output, design);
         self.write_tracks(&mut output, design);
         self.write_vias(&mut output, design);
+        for node in preserved {
+            if !matches!(
+                node.head.as_str(),
+                "general" | "paper" | "title_block" | "setup" | "property" | "uuid"
+            ) {
+                write_node(&mut output, &node.source, 2);
+            }
+        }
         output.push_str(")\n");
         output
     }
@@ -869,6 +1079,12 @@ impl Exporter {
 
     fn write_footprints(&self, output: &mut String, design: &PcbDesign) {
         for (index, footprint) in design.footprints.iter().enumerate() {
+            let layer = if footprint.layer.is_empty() { "F.Cu" } else { &footprint.layer };
+            let (mask, paste, silk) = if layer.starts_with('B') {
+                ("B.Mask", "B.Paste", "B.SilkS")
+            } else {
+                ("F.Mask", "F.Paste", "F.SilkS")
+            };
             let uuid = Uuid::new_v5(
                 &Uuid::NAMESPACE_OID,
                 format!(
@@ -881,38 +1097,69 @@ impl Exporter {
                 )
                 .as_bytes(),
             );
+            let _ =
+                write!(output, "  (footprint {} (layer {})", quote(&footprint.name), quote(layer));
+            if !has_head(&footprint.preserved, "uuid") {
+                let _ = write!(output, " (uuid {})", quote(&uuid.to_string()));
+            }
+            output.push('\n');
             let _ = writeln!(
                 output,
-                "  (footprint {} (layer {}) (uuid {})",
-                quote(&footprint.name),
-                quote(&self.top_copper),
-                quote(&uuid.to_string())
-            );
-            let _ = writeln!(
-                output,
-                "    (at {} {})\n    (property \"Reference\" {} (at 0 0 0) (layer \"F.SilkS\"))",
+                "    (at {} {} {})",
                 number(footprint.position.x),
                 number(footprint.position.y),
-                quote(&footprint.reference_designator)
+                number(footprint.rotation)
             );
+            for node in &footprint.preserved {
+                write_node(output, &node.source, 4);
+            }
+            if !has_head(&footprint.preserved, "property")
+                && !has_head(&footprint.preserved, "fp_text")
+            {
+                let _ = writeln!(
+                    output,
+                    "    (property \"Reference\" {} (at 0 0 0) (layer {}))",
+                    quote(&footprint.reference_designator),
+                    quote(silk)
+                );
+            }
             for (pad_index, pad) in footprint.pad_positions.iter().enumerate() {
                 let pad_number = if pad.number.is_empty() {
                     (pad_index + 1).to_string()
                 } else {
                     pad.number.clone()
                 };
-                let (kind, layers, drill) = match pad.pad_type {
-                    PadType::ThroughHole => (
-                        "thru_hole",
-                        "\"*.Cu\" \"*.Mask\"".to_string(),
-                        format!(" (drill {})", number(pad.width.min(pad.height) / 2.0)),
-                    ),
-                    PadType::SurfaceMount => (
-                        "smd",
-                        format!("{} \"F.Paste\" \"F.Mask\"", quote(&self.top_copper)),
-                        String::new(),
-                    ),
-                    PadType::Tented => ("smd", quote(&self.top_copper), String::new()),
+                let kind = if pad.kind.is_empty() {
+                    match pad.pad_type {
+                        PadType::ThroughHole => "thru_hole",
+                        PadType::SurfaceMount | PadType::Tented => "smd",
+                    }
+                } else {
+                    &pad.kind
+                };
+                let shape = match pad.shape.as_str() {
+                    "rect" | "roundrect" | "oval" | "circle" | "trapezoid" | "custom" => {
+                        pad.shape.as_str()
+                    }
+                    _ => "rect",
+                };
+                let layers = if has_head(&pad.preserved, "layers") {
+                    String::new()
+                } else {
+                    match pad.pad_type {
+                        PadType::ThroughHole => " (layers \"*.Cu\" \"*.Mask\")".to_string(),
+                        PadType::SurfaceMount => {
+                            format!(" (layers {} {} {})", quote(layer), quote(paste), quote(mask))
+                        }
+                        PadType::Tented => format!(" (layers {})", quote(layer)),
+                    }
+                };
+                let drill = if has_head(&pad.preserved, "drill") {
+                    String::new()
+                } else if pad.pad_type == PadType::ThroughHole {
+                    format!(" (drill {})", number(pad.width.min(pad.height) / 2.0))
+                } else {
+                    String::new()
                 };
                 let net = pad
                     .net_id
@@ -925,9 +1172,9 @@ impl Exporter {
                             .map(|(_, _, name)| format!(" (net {code} {})", quote(name)))
                     })
                     .unwrap_or_default();
-                let _ = writeln!(
+                let _ = write!(
                     output,
-                    "    (pad {} {kind} rect (at {} {} {}) (size {} {}){drill} (layers {layers}){net})",
+                    "    (pad {} {kind} {shape} (at {} {} {}) (size {} {}){drill}{layers}{net}",
                     quote(&pad_number),
                     number(pad.x),
                     number(pad.y),
@@ -935,6 +1182,13 @@ impl Exporter {
                     number(pad.width),
                     number(pad.height)
                 );
+                if shape == "roundrect" && !has_head(&pad.preserved, "roundrect_rratio") {
+                    output.push_str(" (roundrect_rratio 0.25)");
+                }
+                for node in &pad.preserved {
+                    write_node_inline(output, &node.source);
+                }
+                output.push_str(")\n");
             }
             output.push_str("  )\n");
         }
@@ -1013,6 +1267,29 @@ impl Exporter {
             );
         }
     }
+}
+
+fn has_head(nodes: &[PreservedNode], head: &str) -> bool {
+    nodes.iter().any(|node| node.head == head)
+}
+
+fn write_preserved(output: &mut String, nodes: &[PreservedNode], head: &str, indent: usize) {
+    for node in nodes.iter().filter(|node| node.head == head) {
+        write_node(output, &node.source, indent);
+    }
+}
+
+fn write_node(output: &mut String, source: &str, indent: usize) {
+    for _ in 0..indent {
+        output.push(' ');
+    }
+    output.push_str(source);
+    output.push('\n');
+}
+
+fn write_node_inline(output: &mut String, source: &str) {
+    output.push(' ');
+    output.push_str(source);
 }
 
 fn parse_at(node: &SExpr) -> Result<(Point, f64), ParseError> {
@@ -1157,7 +1434,7 @@ fn quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_pcb, parse_pcb, save_pcb, write_pcb};
+    use super::{load_pcb, parse_footprint, parse_pcb, save_pcb, write_footprint, write_pcb};
     use pcb::{PcbDesign, PcbNet, Track};
     use uuid::Uuid;
 
@@ -1258,9 +1535,10 @@ mod tests {
         assert_eq!(imported.design.vias.len(), 1);
         assert_eq!(imported.design.footprints.len(), 1);
         assert_eq!(imported.design.nets.len(), 2);
-        assert_eq!(imported.warnings.len(), 2, "unexpected warnings: {:?}", imported.warnings);
+        assert_eq!(imported.warnings.len(), 3, "unexpected warnings: {:?}", imported.warnings);
         assert!(imported.warnings.iter().any(|warning| warning.contains("roundrect")));
         assert!(imported.warnings.iter().any(|warning| warning.contains("circle")));
+        assert!(imported.warnings.iter().any(|warning| warning.contains("'property'")));
 
         let footprint = &imported.design.footprints[0];
         assert_eq!(footprint.reference_designator, "U1");
@@ -1284,10 +1562,13 @@ mod tests {
         );
         let imported = parse_pcb(&document).expect("fixture imports");
 
-        assert!(imported.design.footprints[0].pad_positions[0].x.abs() < 1e-9);
-        assert!((imported.design.footprints[0].pad_positions[0].y - 1.0).abs() < 1e-9);
-        assert_eq!(imported.design.footprints[0].pad_positions[0].rotation, 90.0);
+        let footprint = &imported.design.footprints[0];
+        assert!((footprint.pad_positions[0].x - 1.0).abs() < 1e-9);
+        assert!((footprint.pad_positions[0].y - 0.0).abs() < 1e-9);
+        assert_eq!(footprint.rotation, 90.0);
+        assert_eq!(footprint.pad_positions[0].rotation, 0.0);
         assert!(imported.warnings.iter().any(|warning| warning.contains("zone")));
+        assert!(imported.design.source.as_ref().expect("source metadata").contains("zone"));
     }
 
     #[test]
@@ -1380,5 +1661,31 @@ mod tests {
         assert_eq!(loaded.design.nets.len(), 2);
 
         std::fs::remove_dir_all(directory).expect("clean temp directory");
+    }
+
+    #[test]
+    fn standalone_footprint_round_trip_preserves_shapes_and_graphics() {
+        const MOD: &str = r#"(footprint "R_0603" (version 20240108) (generator pcbnew)
+          (layer "F.Cu")
+          (fp_line (start -1 0) (end 1 0) (stroke (width 0.1) (type solid)) (layer "F.SilkS"))
+          (pad "1" smd roundrect (at -0.8 0) (size 1.4 0.8) (layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.2))
+          (pad "2" thru_hole circle (at 0.8 0) (size 1.2 1.2) (drill 0.6) (layers "*.Cu" "*.Mask"))
+        )"#;
+
+        let imported = parse_footprint(MOD).expect("footprint parses");
+        assert_eq!(imported.footprint.layer, "F.Cu");
+        assert_eq!(imported.footprint.pad_positions[0].shape, "roundrect");
+        assert_eq!(imported.footprint.pad_positions[1].kind, "thru_hole");
+        assert!(imported.footprint.preserved.iter().any(|node| node.head == "fp_line"));
+
+        let document = write_footprint(&imported.footprint).expect("footprint writes");
+        assert!(document.starts_with("(footprint \"R_0603\""));
+        assert!(document.contains("(fp_line"));
+        assert!(document.contains("smd roundrect"));
+        assert!(document.contains("(roundrect_rratio 0.2)"));
+
+        let restored = parse_footprint(&document).expect("written footprint parses");
+        assert_eq!(restored.footprint.pad_positions.len(), 2);
+        assert_eq!(restored.footprint.pad_positions[0].shape, "roundrect");
     }
 }

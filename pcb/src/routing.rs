@@ -1336,6 +1336,7 @@ mod tests {
                 height: 2.0,
                 rotation: 0.0,
                 net_id: None,
+                ..crate::PadPosition::default()
             }],
             ..crate::Footprint::default()
         });

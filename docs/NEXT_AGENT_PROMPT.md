@@ -10,9 +10,9 @@ plugin execution or new engineering engines.
 
 This brief is release hardening, not the full-KiCad replacement program. The
 current Studio shell is no longer read-only (it has track routing), and the CLI
-can convert supported `.kicad_pcb` boards, but footprint placement, schematic
-capture, manufacturing outputs and full project-file compatibility remain
-future work. The long-range gap analysis and
+can convert supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro`
+files, but footprint placement, schematic capture, manufacturing outputs,
+recursive project bundles and semantic KiCad compatibility remain future work. The long-range gap analysis and
 delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md). Read this
 document fully before writing code.
 
@@ -21,7 +21,7 @@ document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 353 passing, 0 failing
+- **Tests:** 363 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -115,10 +115,10 @@ Add `docs/USER_GUIDE.md` covering:
 - What "enabled" means: registry state only; no code is executed.
 - Current limitations: the GUI supports track routing but not footprint/pad
   editing, pan/zoom or schematic capture; no Vulkan GPU backend (a headless
-  software renderer is available); only supported-subset `.kicad_pcb`
-  import/export (no `.kicad_pro`/`.kicad_sch` or full-fidelity board round
-  trip); no manufacturing outputs; no dynamic plugin loading and no network
-  collaboration.
+  software renderer is available); `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/
+  `.kicad_pro` file interchange with unknown-node preservation, but no semantic
+  zone/DRC modeling or recursive project bundle; no manufacturing outputs; no
+  dynamic plugin loading and no network collaboration.
 - A short troubleshooting table for invalid manifests, duplicate ids, unsafe
   entry points and corrupt registry rows.
 
@@ -186,8 +186,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 353 tests still pass.
-- [ ] Test count rises to at least 354, all passing.
+- [ ] Existing 363 tests still pass.
+- [ ] Test count rises to at least 364, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).
@@ -242,8 +242,9 @@ cargo build --workspace --release
 - Vulkan renderer implementation or new GUI editing features; only fixes to
   the existing Studio inspection/DRC/track-routing shell are in scope.
 - New schematic, PCB or routing features.
-- KiCad `.kicad_sch` / `.kicad_pro` parsing or writing, or expanding
-  `.kicad_pcb` beyond the documented supported subset.
+- Semantic zone/arc/graphics/DRC modeling, recursive sheet bundles or
+  `sym-lib-table`/`fp-lib-table` handling; the existing file-level conversion
+  must not regress.
 - Network collaboration, telemetry or cloud services.
 - Schema changes; migrations 0001–0006 remain immutable.
 - Rewriting or reformatting unrelated modules.

@@ -83,12 +83,13 @@ and depth-tested 3D board views; the Vulkan GPU backend remains deferred. A
 post-Phase-2 eframe-based KaiCad Studio shell opens and saves board documents,
 presents the software-rendered 2D/3D viewport, runs DRC, inspects the stackup
 and footprints, and adds undoable click-to-route track editing with DRC
-preflight. `kicad-parser` also imports and exports a supported `.kicad_pcb`
-subset, exposed through `kai-cad pcb import|export`, with explicit warnings for
-zones, arcs, graphics and other constructs the board model cannot preserve.
-Footprint placement, schematic capture and full KiCad project compatibility are
-deferred. PCB designs persist with their tracks, vias and DRC rules in SQLite.
-The workspace has **353 passing tests**, clean `cargo clippy --workspace
+preflight. `kicad-parser` also provides `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
+`.kicad_pro` file interchange through `kai-cad pcb|sch|footprint|project`,
+retaining unmodelled constructs instead of silently dropping them. Zones, arcs,
+graphics and DRC setup are preserved but not semantically editable; recursive
+project/sheet loading and library tables remain. Footprint placement, schematic
+capture and full KiCad project compatibility are deferred. PCB designs persist with their tracks, vias and DRC rules in SQLite.
+The workspace has **363 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence,
@@ -157,10 +158,11 @@ capability gaps and delivery sequence are in
 ### 5.3 Compatibility
 - Maintain bidirectional sync with KiCad 9/10 project files — full project
   compatibility remains the target
-- Support the documented `.kicad_pcb` subset bidirectionally through
-  `kicad-parser` and the `kai-cad pcb import|export` CLI
-- Use KiCad's file format as a reference for import/export and report skipped
-  constructs rather than claiming lossless conversion
+- Support `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file
+  interchange through `kicad-parser` and the `kai-cad pcb|sch|footprint|project`
+  CLI, retaining unknown constructs for export
+- Use KiCad's file format as a reference for import/export and keep semantic
+  limitations explicit
 - Abstract EDA operations behind stable APIs
 
 ## 6. Risks & Mitigations
@@ -174,8 +176,8 @@ capability gaps and delivery sequence are in
 
 ## 7. Success Criteria
 
-- 🚧 KaiCad can import/export the supported KiCad `.kicad_pcb` subset; full
-  KiCad 9/10 project import/export is not implemented
+- 🚧 KaiCad can import/export KiCad board, schematic, footprint and project
+  files at the file layer; semantic project compatibility is not implemented
 - [ ] Full schematic design (nets, symbols, rules) works
 - [x] Multi-layer PCB design with routing is functional
 - [x] Software renderer produces deterministic 2D/3D board visualizations

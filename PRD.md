@@ -11,7 +11,7 @@
 **Primary EDA compatibility:** KiCad 10  
 **Secondary EDA compatibility:** KiCad 9  
 **Rendering:** Vulkan target; deterministic software 2D/3D renderer implemented\
-**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor and supported-subset `.kicad_pcb` import/export implemented; full KiCad project compatibility remains a post-beta program; pre-alpha
+**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange implemented; semantic project compatibility remains a post-beta program; pre-alpha
 
 ---
 
@@ -174,11 +174,12 @@ A native eframe-based Studio shell now opens and saves board documents, renders
 2D/3D views, reports DRC, stackup and footprint information, and supports
 undoable click-to-route track editing with DRC preflight. Footprint placement,
 schematic capture, manufacturing outputs and full KiCad project-file
-compatibility have not been implemented. A supported subset of `.kicad_pcb`
-can be imported and exported through `kai-cad pcb import|export`, preserving
-layers, named nets, board outlines, footprints, pads, tracks and vias while
-reporting skipped zones, arcs, graphics and models. `.kicad_pro` and
-`.kicad_sch` are still absent, so KaiCad is not yet a usable end-to-end KiCad
-replacement. Week 16 release hardening remains outstanding; the full parity
+compatibility have not been implemented. The CLI imports and exports supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod`
+and `.kicad_pro` files. Board and schematic constructs KaiCad does not model —
+zones, arcs, graphics, DRC setup, library symbols and unknown nodes — are
+retained for export instead of being silently dropped. They are not yet
+semantically editable, recursive project/sheet loading and library tables are
+missing, and the compatibility corpus is small, so KaiCad is not yet a usable
+end-to-end KiCad replacement. Week 16 release hardening remains outstanding; the full parity
 sequence and the exact board-conversion limits are in
 [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md). KaiCad is pre-alpha.

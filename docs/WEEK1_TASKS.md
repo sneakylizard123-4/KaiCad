@@ -105,8 +105,9 @@ that commit.
 This document records Week 1 evidence and is intentionally historical. For the
 current state, see [`README.md`](../README.md) and
 [`KICAD_PARITY.md`](KICAD_PARITY.md). The tree has since added SQLite
-persistence, schematic/PCB engines, Studio, and supported `.kicad_pcb`
-import/export; Week 1's JSON persistence API still works.
+persistence, schematic/PCB engines, Studio, and `.kicad_pcb`/`.kicad_sch`/
+`.kicad_mod`/`.kicad_pro` file interchange; Week 1's JSON persistence API still
+works.
 
 ## Post-review fixes
 

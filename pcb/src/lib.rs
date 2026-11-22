@@ -28,6 +28,9 @@ pub struct PcbDesign {
     /// Design-rule limits used when checking this design.
     #[serde(default)]
     pub rules: drc::DrcRules,
+    /// Opaque source constructs retained for lossless KiCad interchange.
+    #[serde(default)]
+    pub source: Option<core::SourceDocument>,
 }
 
 /// A named PCB net.
@@ -51,6 +54,7 @@ impl Default for PcbDesign {
             vias: Vec::new(),
             nets: Vec::new(),
             rules: drc::DrcRules::default(),
+            source: None,
         }
     }
 }
@@ -322,22 +326,38 @@ impl PcbDesign {
     /// Placed pad copper with absolute coordinates and layer coverage.
     ///
     /// Through-hole pads occupy every copper layer; surface-mount and tented
-    /// pads occupy the top copper layer. Pads keep their relative coordinates
-    /// and are offset by [`footprint::Footprint::position`].
+    /// pads occupy the copper layer named by [`footprint::Footprint::layer`].
+    /// Pads keep their relative coordinates, rotate with the footprint and are
+    /// offset by [`footprint::Footprint::position`].
     pub(crate) fn pad_copper(&self) -> Vec<PadCopper> {
         let copper = self.copper_layer_ids();
         let top = self.top_copper_layer();
+        let bottom = copper.last().copied();
         let mut pads = Vec::new();
 
         for (footprint_index, footprint) in self.footprints.iter().enumerate() {
+            let side_layer = self
+                .layers
+                .iter()
+                .find(|layer| layer.name == footprint.layer)
+                .map(|layer| layer.id);
+            let half_turn = if footprint.layer.starts_with('B') { 180.0 } else { 0.0 };
+            let (footprint_sin, footprint_cos) = footprint.rotation.to_radians().sin_cos();
+            let placed = |x: f64, y: f64| {
+                core::Point::new(
+                    footprint.position.x + x * footprint_cos - y * footprint_sin,
+                    footprint.position.y + x * footprint_sin + y * footprint_cos,
+                )
+            };
             for (pad_index, pad) in footprint.pad_positions.iter().enumerate() {
-                let center =
-                    core::Point::new(footprint.position.x + pad.x, footprint.position.y + pad.y);
+                let center = placed(pad.x, pad.y);
+                let rotation = pad.rotation + footprint.rotation + half_turn;
                 let layers = match pad.pad_type {
                     footprint::PadType::ThroughHole => copper.clone(),
-                    footprint::PadType::SurfaceMount | footprint::PadType::Tented => {
-                        top.into_iter().collect()
-                    }
+                    footprint::PadType::SurfaceMount | footprint::PadType::Tented => side_layer
+                        .or_else(|| if footprint.layer.starts_with('B') { bottom } else { top })
+                        .into_iter()
+                        .collect(),
                 };
                 let name = format!(
                     "pad:{}:{}:{}:{}:{}:{}:{}:{}",
@@ -348,16 +368,16 @@ impl PcbDesign {
                     pad.x.to_bits(),
                     pad.y.to_bits(),
                     footprint.position.x.to_bits(),
-                    pad.rotation.to_bits(),
+                    footprint.rotation.to_bits(),
                 );
                 pads.push(PadCopper {
                     id: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes()),
                     footprint_index,
                     center,
-                    rect: CopperRect::from_center(center, pad.width, pad.height, pad.rotation),
+                    rect: CopperRect::from_center(center, pad.width, pad.height, rotation),
                     width: pad.width,
                     height: pad.height,
-                    rotation: pad.rotation,
+                    rotation,
                     layers,
                     net_id: pad.net_id,
                 });

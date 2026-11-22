@@ -44,6 +44,14 @@ impl Project {
     pub fn touch(&mut self) {
         self.metadata.modified_at = Utc::now();
     }
+
+    /// Find the root schematic sheet, if the project has one.
+    ///
+    /// A root sheet is a sheet with no parent. If several sheets qualify, the
+    /// first one in insertion order is returned.
+    pub fn root_sheet(&self) -> Option<&Sheet> {
+        self.schematic.sheets.iter().find(|sheet| sheet.parent.is_none())
+    }
 }
 
 /// High-level schematic design data.
@@ -53,6 +61,9 @@ pub struct SchematicData {
     pub symbols: Vec<Symbol>,
     pub nets: Vec<Net>,
     pub components: Vec<Component>,
+    /// Opaque source constructs retained for lossless KiCad interchange.
+    #[serde(default)]
+    pub source: Option<crate::source::SourceDocument>,
 }
 
 /// High-level PCB design data.

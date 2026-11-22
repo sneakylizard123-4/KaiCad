@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Phase 2 (PCB core + software renderer), board inspection, the first track-routing editor and supported-subset `.kicad_pcb` import/export complete (pre-alpha); full KiCad parity remains a multi-phase program
+- **Implementation:** Phase 2 (PCB core + software renderer), board inspection, the first track-routing editor and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange complete (pre-alpha); full KiCad parity remains a multi-phase program
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -17,7 +17,7 @@ tool yet.
 ## Features
 - Native Studio GUI for board viewing, DRC and undoable track routing (placement and schematic editing planned)
 - Deterministic software 2D/3D rendering (Vulkan GPU backend planned)
-- KiCad `.kicad_sym` symbol import and `.kicad_pcb` board subset import/export through `kai-cad pcb` (full project compatibility not implemented)
+- KiCad `.kicad_sym` symbol import and `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange through `kai-cad` (semantic project compatibility not implemented)
 - Full schematic and PCB design capabilities target (not complete)
 - Integrated design-rule and electrical-rule checking
 - Advanced PCB routing and engineering analysis
@@ -51,7 +51,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (353 tests across the workspace)
+# Run tests (363 tests across the workspace)
 cargo test --workspace
 
 # Run the desktop GUI with the built-in demo board
@@ -65,6 +65,12 @@ cargo run -p kai-cad -- pcb import path/to/board.kicad_pcb path/to/board.kaicad.
 
 # Export a KaiCad board as a KiCad PCB
 cargo run -p kai-cad -- pcb export path/to/board.kaicad.json path/to/board.kicad_pcb
+
+# Convert a KiCad schematic, footprint or project JSON
+cargo run -p kai-cad -- sch import path/to/main.kicad_sch path/to/main.json
+cargo run -p kai-cad -- sch export path/to/main.json path/to/main.kicad_sch
+cargo run -p kai-cad -- footprint import path/to/part.kicad_mod path/to/part.json
+cargo run -p kai-cad -- footprint export path/to/part.json path/to/part.kicad_mod
 
 # Run the CLI application (banner + subsystem self-check)
 cargo run -p kai-cad
@@ -150,10 +156,12 @@ KaiCad/
 │   │   └── 0006_plugin_enabled.sql
 │   └── examples/
 │       └── project_crud.rs
-├── kicad-parser/               # KiCad symbol import and `.kicad_pcb` subset I/O
+├── kicad-parser/               # KiCad symbol, PCB, schematic, footprint and project I/O
 │   ├── src/
 │   │   ├── lib.rs              # `.kicad_sym` parser
-│   │   └── pcb.rs              # `.kicad_pcb` importer/exporter with warnings
+│   │   ├── pcb.rs              # `.kicad_pcb` and `.kicad_mod` I/O with preservation
+│   │   └── schematic.rs        # `.kicad_sch` and `.kicad_pro` preservation
+│   └── tests/                  # compatibility corpus and structural round trips
 │   └── examples/
 │       └── parse_library.rs
 ├── kai-cad/                    # application binary (kai-cad)
@@ -175,15 +183,15 @@ KaiCad/
 - [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 16)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
-- [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) — full-KiCad gap analysis, parity milestones, current editor scope and the supported `.kicad_pcb` subset
+- [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) — full-KiCad gap analysis, parity milestones, current editor scope and the KiCad file-interchange boundary
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
 - [`docs/WEEK1_TASKS.md`](docs/WEEK1_TASKS.md) — Week 1 deliverables and verification status
 
 ## Current State
 
 Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
-increment and a KiCad PCB compatibility subset are complete and verified:
-**353 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+increment and a KiCad file-interchange layer are complete and verified:
+**363 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
 routing, interactive route previews, and a headless software 2D/3D renderer
@@ -198,8 +206,10 @@ board in a 2D or 3D viewport through the deterministic CPU rasterizer, shows
 the layer stack and placed footprints, runs DRC, and saves the board. The 2D
 view now has an undoable track-routing tool: click a pad or free point, click
 a destination, and DRC-checked copper is added. The CLI can convert supported
-`.kicad_pcb` boards to and from KaiCad JSON with explicit warnings for skipped
-KiCad constructs; Studio does not yet open `.kicad_pcb` directly.
+`.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` files with explicit
+warnings for constructs retained opaquely; Studio still opens KaiCad board JSON
+rather than KiCad files. Zones, arcs, graphics and DRC setup round-trip but are
+not semantically editable; recursive sheet loading and library tables remain.
 Footprint/pad placement, pan/zoom, native file pickers and schematic capture
 remain unimplemented.
 
@@ -270,10 +280,10 @@ What each crate provides today:
   with persisted enable/disable state and capability filters.
 - ✅ **kicad-parser** — deterministic S-expression reader, `.kicad_sym`
   loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids,
-  and `.kicad_pcb` supported-subset import/export. Board conversion preserves
-  layer tables, named nets, Edge.Cuts outlines, footprints/pads, tracks and
-  vias; skipped zones, arcs, graphics, models and other unsupported constructs
-  are reported as warnings rather than silently claimed as round-tripped.
+  plus `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file
+  interchange. Unknown board/schematic nodes are retained for export; zones,
+  arcs, graphics, DRC setup and 3D models round-trip without becoming
+  semantically editable.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,

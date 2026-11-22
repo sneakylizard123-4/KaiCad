@@ -4,12 +4,12 @@
 > and the code that exists today. The data model, schematic and PCB engines,
 > DRC, routing, software renderer, persistence, collaboration primitives and a
 > desktop GUI editor/inspection shell are implemented and tested; full board and
-> schematic editing, full KiCad project-file compatibility, the Vulkan GPU backend,
+> schematic editing, semantic KiCad project compatibility, the Vulkan GPU backend,
 > AI generation and real-time transport remain incomplete. Do not read this as
 > a description of a finished EDA application.
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
-> 3 (symbol libraries, KiCad `.kicad_sym` import and `.kicad_pcb` subset I/O), 4 (schematic engine),
+> 3 (symbol libraries and KiCad file interchange), 4 (schematic engine),
 > 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
 > routing), 8 (multi-layer routing with vias), 9 (transactional kAI
 > application), 10 (collaborative edit sessions), 11 (multi-step edit
@@ -18,8 +18,8 @@
 > Phase 2 completion pass (rotated pads, blind/buried vias, push-and-shove,
 > interactive routing and the software renderer) are complete. A post-Phase-2
 > Studio shell adds native board viewing, inspection, DRC and click-to-route
-> track editing and `.kicad_pcb` subset import/export. The workspace has 353
-> passing tests.
+> track editing and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file
+> interchange. The workspace has 363 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
@@ -41,7 +41,7 @@ graph TD
     collab["collab<br/>sessions · versioning · sharing"]
     plugin["plugin<br/>manifests · registry"]
     store["store<br/>SQLite persistence"]
-    kicad_parser["kicad-parser<br/>KiCad symbol and PCB import/export"]
+    kicad_parser["kicad-parser<br/>KiCad file interchange"]
 
     app --> core
     app --> schematic
@@ -391,27 +391,35 @@ not part of the manifest. Migrations are numbered SQL files
 embedded with `include_str!`; once applied they are immutable — add a new
 numbered file rather than editing an old one.
 
-### `kicad-parser` — KiCad symbol and PCB import/export
+### `kicad-parser` — KiCad file interchange
 
-Dependencies: `core`, `pcb`, `uuid` (with the `v5` feature). KiCad's file
-format never becomes the internal representation.
+Dependencies: `core`, `pcb`, `serde_json`, `uuid` (with the `v5` feature).
+KiCad's file format never becomes the internal representation.
 
 - `parse_symbol_library(path) -> Result<core::SymbolLibrary, ParseError>` reads
 a `.kicad_sym` file and maps each top-level `(symbol ...)` to
   `core::Symbol`, including pins nested inside unit sub-symbols.
-- `parse_pcb(input) -> Result<PcbImport, ParseError>` and
-  `load_pcb(path)` map supported `.kicad_pcb` content into `pcb::PcbDesign`.
-  `PcbImport` carries the board and deterministic warnings for skipped or
-  approximated constructs.
-- `write_pcb(design) -> Result<String, ParseError>` and `save_pcb` emit the same
-  supported subset as a KiCad-openable board document. The CLI exposes these as
-  `kai-cad pcb import|export`.
-- PCB conversion preserves the layer table and copper stackup, named nets,
-  Edge.Cuts outlines, footprints/references/pad numbers, pad copper geometry,
-  tracks and vias. It warns about zones, arcs, graphics, groups, models, DRC
-  setup requiring a richer model, non-rectangular pad shapes and flattened
-  footprint rotation. Back-side SMD copper is warned because the current pad
-  model only places SMD pads on the top layer.
+- `parse_pcb(input) -> Result<PcbImport, ParseError>` and `load_pcb(path)` map
+  supported `.kicad_pcb` content into `pcb::PcbDesign`; `PcbImport` carries the
+  board and deterministic warnings.
+- `parse_schematic`/`load_schematic` map components, wires, labels, junctions,
+  no-connects and sheet symbols into `core::project::SchematicData`.
+- `parse_footprint`/`load_footprint` map standalone `.kicad_mod` files into
+  `pcb::Footprint`. `ProjectFile::{load, parse, save}` preserves `.kicad_pro`
+  JSON.
+- `write_pcb`, `write_schematic` and `write_footprint` (with file helpers) emit
+  KiCad-openable documents. The CLI exposes `pcb|sch|footprint|project`
+  import/export.
+- Board conversion preserves the layer table and copper stackup, named nets,
+  Edge.Cuts outlines, footprints/references/pad numbers, footprint rotation and
+  side, pad shape/kind/copper geometry, tracks and vias. Zones, arcs, graphics,
+  text, groups, models, setup/title data and unknown nodes are retained in
+  `PcbDesign::source` or `Footprint::preserved` and re-emitted. Non-rectangular
+  pads keep their source shape, but DRC/routing still use rectangles.
+- Schematic conversion retains `lib_symbols`, property effects, pin blocks,
+  instance paths, buses, text, images and unknown nodes. Child sheet symbols
+  record their file name and placement; recursive project bundle loading is not
+  implemented.
 - `ParseError::{Io, Syntax, Unsupported}` implements `Display` and
   `std::error::Error`; malformed input never panics.
 - The parser implements a minimal deterministic S-expression tokenizer/parser
@@ -505,7 +513,8 @@ a collaboration session with roles, records a versioned edit and stages/drains
 its transaction, discovers and registers validated plugin manifests, exercises
 the SQLite store with an in-memory database including plugin persistence and a
 PCB-design round trip, parses a hermetic `.kicad_sym` fixture, and imports,
-exports and re-imports a small `.kicad_pcb` fixture with `kicad-parser`.
+exports and re-imports PCB, schematic and footprint fixtures with
+`kicad-parser`.
 Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
@@ -676,10 +685,12 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 - **Primary:** KiCad 10 project files.
 - **Secondary:** KiCad 9 project files.
-- `kicad-parser` imports `.kicad_sym` symbol libraries, imports/exports the
-  supported `.kicad_pcb` subset, and `schematic` exports a KiCad netlist. No
-  `.kicad_sch` or `.kicad_pro` parser/writer, full-fidelity board round trip,
-  unknown-field preservation or netlist importer exists yet.
+- `kicad-parser` imports `.kicad_sym` symbol libraries and provides
+  `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange;
+  `schematic` exports a KiCad netlist. Unknown constructs are preserved, but
+  zones/arcs/graphics/DRC rules are not semantically modeled, recursive project
+  bundles and library tables are absent, and no KiCad netlist importer exists
+  yet.
 
 ## Current milestone and next steps
 
@@ -701,9 +712,10 @@ manifests with deterministic registry ordering, local discovery, SQLite
 persistence, activation state, capability filters and CLI management, a
 deterministic software 2D/3D renderer, the `kai-cad` self-check binary, a
 post-Phase-2 Studio shell (`gui`) for board viewing, inspection, DRC and
-undoable track routing, a `.kicad_pcb` supported-subset importer/exporter with
-CLI conversion and explicit loss warnings, CI (including a Markdown link check
-and coverage job), and documentation. The workspace has **353 passing tests**.
+undoable track routing, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
+file interchange with opaque preservation and a four-file corpus, CI (including
+a Markdown link check and coverage job), and documentation. The workspace has
+**363 passing tests**.
 
 **Next (Week 16):** foundation release hardening. The planned work is:
 
