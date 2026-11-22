@@ -319,6 +319,71 @@ fn edit_history_supports_multi_step_undo_redo_and_branching() {
 }
 
 #[test]
+fn plugin_manifests_discover_and_register_deterministically() {
+    let directory = std::env::temp_dir().join(format!("kaicad-plugin-smoke-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&directory).expect("create plugin fixture directory");
+
+    let alpha = plugin::PluginManifest {
+        id: "com.smoke.alpha".to_string(),
+        name: "Alpha".to_string(),
+        version: "0.1.0".to_string(),
+        api_version: plugin::SUPPORTED_API_VERSION,
+        entry_point: "plugins/alpha.so".to_string(),
+        capabilities: vec![plugin::PluginCapability::Schematic],
+    };
+    let beta = plugin::PluginManifest {
+        id: "com.smoke.beta".to_string(),
+        name: "Beta".to_string(),
+        version: "0.2.0".to_string(),
+        api_version: plugin::SUPPORTED_API_VERSION,
+        entry_point: "plugins/beta.so".to_string(),
+        capabilities: vec![plugin::PluginCapability::Pcb, plugin::PluginCapability::ImportExport],
+    };
+    beta.save(directory.join("zeta.json")).expect("save beta manifest");
+    alpha.save(directory.join("alpha.json")).expect("save alpha manifest");
+    std::fs::write(directory.join("notes.txt"), "ignored").expect("write non-manifest");
+
+    let discovered = plugin::discover_manifests(&directory).expect("discover manifests");
+    let ids: Vec<_> = discovered.iter().map(|manifest| manifest.id.as_str()).collect();
+    assert_eq!(ids, vec!["com.smoke.alpha", "com.smoke.beta"]);
+    assert_eq!(discovered[1].capabilities.len(), 2);
+
+    let mut registry = plugin::PluginRegistry::new();
+    for manifest in discovered {
+        registry.register(manifest).expect("register manifest");
+    }
+    let ids: Vec<_> = registry.list().iter().map(|manifest| manifest.id.as_str()).collect();
+    assert_eq!(ids, vec!["com.smoke.alpha", "com.smoke.beta"]);
+    assert!(registry.find("com.smoke.beta").is_some());
+
+    let duplicate = plugin::PluginManifest { id: "com.smoke.alpha".to_string(), ..beta.clone() };
+    assert!(matches!(registry.register(duplicate), Err(plugin::PluginError::DuplicateId(_))));
+
+    let mut unsupported = beta.clone();
+    unsupported.id = "com.smoke.future".to_string();
+    unsupported.api_version += 1;
+    assert!(matches!(
+        registry.register(unsupported),
+        Err(plugin::PluginError::UnsupportedApiVersion { .. })
+    ));
+
+    let mut unsafe_entry = beta.clone();
+    unsafe_entry.id = "com.smoke.unsafe".to_string();
+    unsafe_entry.entry_point = "../escape.so".to_string();
+    assert!(matches!(
+        registry.register(unsafe_entry),
+        Err(plugin::PluginError::UnsafeEntryPoint(_))
+    ));
+    assert_eq!(registry.len(), 2);
+
+    assert!(registry.remove("com.smoke.alpha"));
+    assert!(registry.find("com.smoke.alpha").is_none());
+    assert_eq!(registry.len(), 1);
+
+    std::fs::remove_dir_all(&directory).expect("clean up plugin fixture directory");
+}
+
+#[test]
 fn collab_edits_enforce_roles_and_track_versions() {
     let owner = Uuid::from_u128(10);
     let editor = Uuid::from_u128(11);

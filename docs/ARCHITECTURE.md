@@ -9,8 +9,9 @@
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
 > 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
 > routing), 8 (multi-layer routing with vias), 9 (transactional kAI
-> application), 10 (collaborative edit sessions) and 11 (multi-step edit
-> history) are complete. The workspace has 263 passing tests.
+> application), 10 (collaborative edit sessions), 11 (multi-step edit
+> history) and 12 (plugin manifests and discovery) are complete. The workspace
+> has 282 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -28,6 +29,7 @@ graph TD
     renderer["renderer<br/>Vulkan via ash"]
     ai["ai (kAI)<br/>suggest · validate"]
     collab["collab<br/>sessions · versioning · sharing"]
+    plugin["plugin<br/>manifests · registry"]
     store["store<br/>SQLite persistence"]
     kicad_parser["kicad-parser<br/>KiCad symbol import"]
 
@@ -37,6 +39,7 @@ graph TD
     app --> renderer
     app --> ai
     app --> collab
+    app --> plugin
     app --> store
     app --> kicad_parser
 
@@ -65,6 +68,7 @@ flowchart BT
     render["Renderer<br/>renderer (Vulkan)"]
     ai["AI subsystem<br/>ai (kAI)"]
     collab["Collaboration<br/>collab"]
+    plugin["Plugin metadata<br/>plugin"]
     store["Engineering database<br/>store"]
     ui["UI / application shell<br/>kai-cad"]
 
@@ -80,6 +84,7 @@ flowchart BT
     ui --> render
     ui --> ai
     ui --> collab
+    ui --> plugin
     ui --> store
 ```
 
@@ -339,6 +344,29 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
   type. Known types include `free` and `no_connect`; only genuinely unknown
   types become `PinType::Unspecified`.
 
+### `plugin` — plugin metadata
+
+Dependencies: `serde`, `serde_json` only. No workspace dependencies, and no
+plugin code is loaded or executed.
+
+- `PluginManifest { id, name, version, api_version, entry_point,
+  capabilities }` with `PluginCapability::{Schematic, Pcb, Ai, ImportExport}`.
+  `validate` enforces a lowercase ASCII id, non-empty name/version, API version
+  `1`, at least one unique capability, and a relative entry point with no
+  absolute prefix, drive prefix, backslash, `.`/`..` component or empty path
+  component. It does not check whether the entry point exists.
+- `PluginManifest::{from_json, to_json, save, load}` validate automatically;
+  `save` writes pretty JSON with one trailing newline.
+- `PluginRegistry::{register, remove, find, list, len, is_empty}` keeps
+  manifests sorted by id, rejects duplicate or invalid manifests without
+  mutating, and returns `list` in ascending id order.
+- `discover_manifests` reads direct `*.json` regular files in file-name order,
+  rejects duplicate ids and malformed files, and returns manifests sorted by
+  `(id, entry_point)`. Missing directories and directories with no manifests
+  return `PluginError::Io`.
+- `PluginError::{InvalidManifest, UnsupportedApiVersion, DuplicateId,
+  UnsafeEntryPoint, Json, Io}` implements `Display` and `std::error::Error`.
+
 ### `kai-cad` — application binary
 
 Depends on every library crate. `src/main.rs` prints a banner, supports
@@ -349,9 +377,10 @@ library round trip, clean/dirty DRC runs, a DRC-clean single-layer route, a
 multi-layer route across a full-width wall with through vias, and a blocked-
 route check), applies a validated kAI suggestion and undoes/redoes it, creates
 a collaboration session with roles, records a versioned edit and stages/drains
-its transaction, exercises the SQLite store with an in-memory database
-including a PCB-design round trip, and parses a hermetic `.kicad_sym` fixture
-with `kicad-parser`. Integration tests live
+its transaction, discovers and registers validated plugin manifests, exercises
+the SQLite store with an in-memory database including a PCB-design round trip,
+and parses a hermetic `.kicad_sym` fixture with `kicad-parser`. Integration
+tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
 
@@ -508,6 +537,9 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
    platforms (`PRD.md` §1.1).
 8. **Modular, testable subsystems.** Each subsystem is a crate with a narrow
    public API; `core` owns shared types (`PLAN.md` §2.2).
+9. **Plugin metadata is untrusted.** Manifests are validated before use,
+   discovery is local and sorted, and entry points remain relative. No plugin
+   code is loaded or executed.
 
 ## Compatibility targets
 
@@ -519,7 +551,7 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–11, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–12, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v4) with migrations plus project, symbol-library and
 PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
@@ -531,17 +563,16 @@ deterministic single-layer and multi-layer grid routing with through vias and
 UUIDv5 ids, atomic core edit transactions with validated kAI suggestion
 application and undo/redo, permission-checked collaborative sessions with
 versioned project digests and staged transactions, bounded multi-step undo/redo
-history with branch clearing, renderer/AI/collab configuration types, the
-`kai-cad` self-check binary, CI (including a Markdown link check and coverage
-job), and documentation.
+history with branch clearing, validated plugin manifests with deterministic
+registry ordering and local discovery, renderer/AI/collab configuration types,
+the `kai-cad` self-check binary, CI (including a Markdown link check and
+coverage job), and documentation.
 
-**Next (Week 12):** plugin manifest registry and deterministic discovery. The
-planned work is:
+**Next (Week 13):** SQLite-backed plugin registry. The planned work is:
 
-1. Add a validated local plugin manifest format.
-2. Add a registry with deterministic ordering and duplicate rejection.
-3. Wire manifest loading and registry checks into the self-check and smoke
-   tests.
+1. Add schema v5 with a global `plugins` table and canonical manifest JSON.
+2. Add validated, deterministic plugin save/load/list/delete CRUD.
+3. Wire plugin persistence into the self-check and smoke tests.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

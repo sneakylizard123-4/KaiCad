@@ -8,6 +8,7 @@ members = [
     "renderer",
     "ai",
     "collab",
+    "plugin",
     "kai-cad",
     "store",
     "kicad-parser",

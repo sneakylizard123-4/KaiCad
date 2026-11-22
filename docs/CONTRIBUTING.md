@@ -7,9 +7,8 @@ welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 12, plugin manifest
-registry and deterministic discovery — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+instructions. The current implementation brief — Week 13, SQLite-backed plugin
+registry — is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Ground rules
 
@@ -25,6 +24,9 @@ registry and deterministic discovery — is in
   AI model mandatory for normal editing.
 - **AI output is untrusted.** Any AI-proposed change must pass deterministic
   validation before it is applied.
+- **Plugin metadata is untrusted.** Manifests are validated before registration
+  or discovery, ids are sorted deterministically, and entry points must remain
+  relative. Discovery must never load or execute plugin code.
 - **Deterministic operations.** Do not introduce unseeded randomness into
   geometry, netlisting, routing or rule checks. DRC violations are sorted by
   `(rule_id, objects)`, each unordered track pair on different nets is checked
@@ -40,7 +42,9 @@ same-net clearance checks stay exempt. Edit transactions derive UUIDv5 ids  over
   digests are UUIDv5 over compact project JSON, and sync staging deduplicates
   by transaction id while preserving insertion order. `EditHistory` clears
   redo on every new edit, evicts only the oldest undo entry at the limit, and
-  changes stacks only after the underlying edit succeeds.
+  changes stacks only after the underlying edit succeeds. `PluginRegistry`
+  keeps manifests sorted by id and rejects duplicates without mutating, and
+  `discover_manifests` reads only direct `.json` files in file-name order.
 - **No silent data loss.** Report or preserve data you cannot represent.
 - **Never edit an applied migration.** Migrations live in
   `store/migrations/<version>_<name>.sql` and are embedded with `include_str!`.

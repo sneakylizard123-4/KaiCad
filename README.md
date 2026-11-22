@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 11 multi-step edit history complete (pre-alpha); Week 12 (plugin manifest registry) is next
+- **Implementation:** Week 12 plugin manifest registry complete (pre-alpha); Week 13 (SQLite-backed plugin registry) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (263 tests across the workspace)
+# Run tests (282 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -114,6 +114,7 @@ KaiCad/
 ├── renderer/                   # Vulkan renderer skeleton (ash)
 ├── ai/                         # kAI subsystem
 ├── collab/                     # collaboration layer
+├── plugin/                     # plugin manifests, registry and discovery
 ├── store/                      # SQLite engineering database + project CRUD
 │   ├── src/
 │   │   └── lib.rs
@@ -144,7 +145,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 12)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 13)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -152,15 +153,15 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–11 are complete and verified: **263 tests pass**, `cargo clippy
+Weeks 1–12 are complete and verified: **282 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 11 added bounded multi-step
-undo/redo (`core::history::EditHistory`), redo-branch clearing, capacity
-eviction, failure-atomic stack updates, and deterministic labels/predicates.
+clean, and the release build succeeds. Week 12 added validated local plugin
+manifests (`PluginManifest`, `PluginCapability`), a deterministic
+`PluginRegistry` with duplicate rejection, and deterministic `*.json`
+discovery. Manifests never load or execute plugin code.
 
-The next milestone is **Week 12 — plugin manifest registry and deterministic
-discovery**: validated local plugin manifests and a deterministic registry.
-The full brief is in
+The next milestone is **Week 13 — SQLite-backed plugin registry**: persist
+validated manifests in schema v5 with deterministic CRUD. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -198,6 +199,10 @@ What each crate provides today:
   atomic edits, transaction-linked version history with UUIDv5 project digests,
   deterministic staged-transaction queues, sharing and windows. No transport,
   merge or real-time sync.
+- ✅ **plugin** — validated local manifest metadata (`PluginManifest`,
+  `PluginCapability`), a deterministic id-sorted `PluginRegistry`, and
+  deterministic discovery of direct `.json` files. Entry points are path-checked
+  but never opened; no plugin code is loaded or executed.
 - ✅ **store** — SQLite engineering database (schema v4) with versioned
   migrations, project CRUD (`create`, `load`, `list`, `update`, `delete`),
   symbol-library CRUD, and PCB-design CRUD (`save`, `load`, `delete`) storing
@@ -209,9 +214,9 @@ What each crate provides today:
   round trips a footprint library, routes a track and verifies it is DRC-clean,
   crosses a full-width top-layer wall using deterministic through vias, rejects
   a blocked route, applies a validated suggestion and undoes/redoes it, drives
-  a bounded multi-step undo/redo history, creates a session and enforces roles,
-  records a versioned edit, stages/drains it, and stores and reloads a PCB
-  design.
+  a bounded multi-step undo/redo history, discovers and registers validated
+  plugin manifests, creates a session and enforces roles, records a versioned
+  edit, stages/drains it, and stores and reloads a PCB design.
 
 ## Roadmap
 
@@ -219,7 +224,7 @@ What each crate provides today:
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 PCB core complete; renderer deferred |
-| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 In progress (kAI + collaboration + history) |
+| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 Week 12 complete; kAI generation, real-time sync and plugin execution deferred |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and

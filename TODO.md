@@ -102,16 +102,24 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Multi-step history wired into the `kai-cad` self-check and smoke tests
 - Documentation updated; total tests: 263
 
-## 🚧 Next — Week 12: Plugin manifest registry and deterministic discovery
+### Week 12 — Plugin manifest registry and deterministic discovery
+- New `plugin` crate with `PluginManifest`, `PluginCapability` and `PluginError`
+- Manifest validation for ids, names, versions, API version, capabilities and relative entry points
+- `PluginRegistry` with id sorting, duplicate rejection and failure-atomic registration
+- Deterministic `discover_manifests` over direct `.json` files with duplicate detection
+- Plugin discovery and validation wired into the `kai-cad` self-check and smoke tests
+- Documentation updated; total tests: 282
+
+## 🚧 Next — Week 13: SQLite-backed plugin registry
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Add a validated local plugin manifest format
-- [ ] Add a deterministic registry with duplicate and API-version rejection
-- [ ] Add deterministic manifest discovery for a local directory
-- [ ] Wire plugin loading into the `kai-cad` self-check and smoke tests
-- [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥279 tests, clippy/fmt/doc/link clean
+- [ ] Add schema v5 `plugins` migration with canonical manifest JSON
+- [ ] Add validated plugin save/load/list/delete CRUD to `store`
+- [ ] Keep listing deterministic by plugin id and reject corrupt rows
+- [ ] Wire plugin persistence into the `kai-cad` self-check and smoke tests
+- [ ] Update docs and all schema-version expectations to v5
+- [ ] Target: ≥298 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
@@ -138,9 +146,11 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ Transactional kAI suggestion application (Week 9)
 - ✅ Permission-checked collaborative edits and version history (Week 10)
 - ✅ Multi-step edit history and redo branching (Week 11)
+- ✅ Plugin manifest registry and discovery (Week 12; execution deferred)
 - ⬜ Circuit optimization suggestion generation
 - ⬜ Project sharing and real-time sync transport
-- ⬜ Plugin architecture
+- ⬜ Plugin persistence (Week 13)
+- ⬜ Dynamic plugin loading and sandboxing
 
 ### Phase 4 — Polish & release (Weeks 13–16)
 - Performance optimization

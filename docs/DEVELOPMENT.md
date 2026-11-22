@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–11 are complete (263 tests, clippy/fmt/doc/release
-> all clean). Week 12 — plugin manifest registry and deterministic discovery —
-> is next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–12 are complete (282 tests, clippy/fmt/doc/release
+> all clean). Week 13 — SQLite-backed plugin registry — is next; its work order
+> is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,7 +121,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **263 tests**, all passing:
+`cargo test --workspace` currently runs **282 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -130,10 +130,11 @@ benchmarks; a bare `cargo check` misses them.
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 72 |
+| `plugin` (`src/lib.rs` and inline modules) | 18 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 23 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 16 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 17 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -156,6 +157,7 @@ License: GPL-3.0-or-later
 
 subsystem self-check:
   core: project JSON round trip ok (500 bytes), history 3 undo / 0 redo, limit 2
+  plugin: discovered 2, registered 2, deterministic order and validation ok
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
   pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s), multi-layer 2 track(s)/2 via(s)
   renderer: window 1920x1080, vsync=true
@@ -247,8 +249,8 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–11 are finished; Week 12 adds a validated local plugin manifest format
-and a deterministic registry. Before starting, read
+Weeks 1–12 are finished; Week 13 persists validated plugin manifests in SQLite
+schema v5 with deterministic CRUD. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -384,6 +386,25 @@ you, check these semantics before changing a rule:
 If the report changes between identical runs, look for code that consumes
 `HashMap` iteration order or track insertion order instead of the sorted
 report.
+
+### Plugin manifests look wrong
+
+`plugin` is metadata-only. Check these rules before changing it:
+
+- `PluginManifest::validate` rejects invalid ids, empty names/versions,
+  unsupported API versions, empty or duplicate capabilities, and unsafe entry
+  points (absolute paths, `..`, empty path components, drive prefixes or
+  backslashes). It does not check whether the entry point exists.
+- `PluginManifest::{from_json, to_json, save, load}` validate automatically.
+  `from_json` returns `Json` for malformed input and the validation error for a
+  well-formed but invalid manifest.
+- `PluginRegistry::register` validates first, rejects duplicate ids, and keeps
+  the registry sorted by id. A rejected manifest leaves the registry unchanged.
+- `discover_manifests` reads only direct `*.json` regular files in file-name
+  order, rejects duplicate ids and invalid files, and returns manifests sorted
+  by `(id, entry_point)`. Missing directories and directories with no JSON
+  manifests return `Io`.
+- Discovery never opens, resolves, copies or executes an entry point.
 
 ### Edit history looks wrong
 

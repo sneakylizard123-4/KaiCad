@@ -65,7 +65,7 @@
 
 ### Implementation status
 
-**Weeks 1–11 are complete and verified.** The Cargo workspace, CI pipeline,
+**Weeks 1–12 are complete and verified.** The Cargo workspace, CI pipeline,
 toolchain configuration, shared data model, SQLite engineering database, named
 symbol libraries, KiCad `.kicad_sym` import, the basic schematic engine
 (netlist generation and export, graph traversal, ERC), the PCB core (outline
@@ -73,13 +73,14 @@ geometry, layer validation, footprint libraries), PCB geometry/DRC (distance
 primitives, track and via dimensions, pad copper, validated rules),
 deterministic single-layer and multi-layer grid routing with through vias,
 atomic core edit transactions with kAI suggestion application,
-permission-checked collaborative edit sessions with version history, and
-bounded multi-step undo/redo history are in place. PCB designs persist with
-their tracks, vias and DRC rules in SQLite. The workspace has **263 passing
-tests**, clean `cargo clippy --workspace --all-targets -- -D warnings`,
-`cargo fmt --all -- --check`, and a successful release build. See
-[`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 12 brief.
+permission-checked collaborative edit sessions with version history, bounded
+multi-step undo/redo history, and a validated local plugin manifest registry
+are in place. PCB designs persist with their tracks, vias and DRC rules in
+SQLite. The workspace has **282 passing tests**, clean `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a
+successful release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
+evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 13
+brief.
 
 Phase 1 progress:
 
@@ -101,12 +102,13 @@ Phase 2 progress:
 | 9 | kAI suggestion application and transactional edits | ✅ Complete |
 | 10 | Collaborative edit sessions, permissions and version history | ✅ Complete |
 | 11 | Multi-step edit history and redo branching | ✅ Complete |
-| 12 | Plugin manifest registry and deterministic discovery | ⬜ Not started |
+| 12 | Plugin manifest registry and deterministic discovery | ✅ Complete |
+| 13 | SQLite-backed plugin registry (schema v5) | ⬜ Not started |
 
 The detailed brief for the next implementation pass — including API
 requirements, acceptance criteria and verification commands — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 12:
-validated local plugin manifests and a deterministic registry.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 13:
+persisting validated plugin manifests with deterministic CRUD.
 
 ## 4. Key Milestones
 

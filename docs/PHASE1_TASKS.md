@@ -4,7 +4,7 @@
 > ⬜ not started. Phase 1 (Weeks 1–4) is complete and verified, and Phase 2
 > began with Week 5 (PCB core). See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for
 > Week 1 evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
-> Week 12 brief.
+> Week 13 brief.
 
 ## Project Setup & Infrastructure
 
@@ -13,9 +13,9 @@
 - **Deliverable:** `Cargo.toml` workspace root with workspace members
 - **Dependencies:** None
 - **Acceptance Criteria:**
-  - The workspace root `Cargo.toml` declares the nine members: `core`,
-    `schematic`, `pcb`, `renderer`, `ai`, `collab`, `store`, `kicad-parser`
-    and the `kai-cad` binary
+  - The workspace root `Cargo.toml` declares the ten members: `core`,
+    `schematic`, `pcb`, `renderer`, `ai`, `collab`, `plugin`, `store`,
+    `kicad-parser` and the `kai-cad` binary
   - `cargo check` passes with no warnings
   - `cargo test` runs (initially no tests, but infrastructure in place)
 
@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 263 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 282 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -200,10 +200,12 @@ permission-checked collaborative edits, transaction-linked version digests and
 deterministic sync staging, with 19 more tests for a total of **244 passing
 tests**. Week 11 added bounded multi-step undo/redo history with redo-branch
 clearing and capacity eviction, with 19 more tests for a total of **263
-passing tests**. `cargo check`,
+passing tests**. Week 12 added validated local plugin manifests, deterministic
+registry ordering and duplicate rejection, and deterministic directory
+discovery, with 19 more tests for a total of **282 passing tests**. `cargo check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
 --check`, `cargo doc --workspace --no-deps`,
 `python3 scripts/check_markdown_links.py` and `cargo build --workspace
 --release` all succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
-evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 12
-(plugin manifest registry) work order.
+evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 13
+(SQLite-backed plugin registry) work order.

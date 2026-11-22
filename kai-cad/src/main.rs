@@ -64,6 +64,7 @@ fn run_self_check() -> ExitCode {
 
 fn self_check() -> Result<(), String> {
     check_core()?;
+    check_plugin()?;
     check_schematic()?;
     check_pcb()?;
     check_renderer()?;
@@ -170,6 +171,112 @@ fn check_core() -> Result<(), String> {
         history.undo_len(),
         history.redo_len(),
         bounded.limit()
+    );
+    Ok(())
+}
+
+fn check_plugin() -> Result<(), String> {
+    let directory =
+        std::env::temp_dir().join(format!("kaicad-plugin-self-check-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("plugin: failed to create fixture directory: {error}"))?;
+
+    let outcome = (|| -> Result<(usize, usize), String> {
+        let alpha = plugin::PluginManifest {
+            id: "com.kaicad.alpha".to_string(),
+            name: "Alpha self-check plugin".to_string(),
+            version: "0.1.0".to_string(),
+            api_version: plugin::SUPPORTED_API_VERSION,
+            entry_point: "plugins/alpha.so".to_string(),
+            capabilities: vec![plugin::PluginCapability::Schematic, plugin::PluginCapability::Ai],
+        };
+        let beta = plugin::PluginManifest {
+            id: "com.kaicad.beta".to_string(),
+            name: "Beta self-check plugin".to_string(),
+            version: "1.2.0".to_string(),
+            api_version: plugin::SUPPORTED_API_VERSION,
+            entry_point: "plugins/beta.so".to_string(),
+            capabilities: vec![plugin::PluginCapability::Pcb],
+        };
+        alpha
+            .save(directory.join("alpha.json"))
+            .map_err(|error| format!("plugin: failed to save alpha manifest: {error}"))?;
+        beta.save(directory.join("beta.json"))
+            .map_err(|error| format!("plugin: failed to save beta manifest: {error}"))?;
+
+        let discovered = plugin::discover_manifests(&directory)
+            .map_err(|error| format!("plugin: discovery failed: {error}"))?;
+        ensure(discovered.len() == 2, "plugin: discovery did not return both manifests")?;
+        ensure(
+            discovered[0].id == "com.kaicad.alpha" && discovered[1].id == "com.kaicad.beta",
+            "plugin: discovery order is not deterministic",
+        )?;
+
+        let discovered_count = discovered.len();
+        let mut registry = plugin::PluginRegistry::new();
+        for manifest in discovered {
+            registry
+                .register(manifest)
+                .map_err(|error| format!("plugin: registry rejected a valid manifest: {error}"))?;
+        }
+        ensure(registry.len() == 2, "plugin: registry did not retain both manifests")?;
+        ensure(
+            registry.find("com.kaicad.alpha").is_some_and(|entry| entry.capabilities.len() == 2),
+            "plugin: registry lost the alpha capabilities",
+        )?;
+
+        let duplicate =
+            plugin::PluginManifest { id: "com.kaicad.alpha".to_string(), ..beta.clone() };
+        ensure(
+            matches!(registry.register(duplicate), Err(plugin::PluginError::DuplicateId(_))),
+            "plugin: duplicate id was accepted",
+        )?;
+
+        let unsupported = plugin::PluginManifest {
+            id: "com.kaicad.future".to_string(),
+            api_version: plugin::SUPPORTED_API_VERSION + 1,
+            ..beta.clone()
+        };
+        ensure(
+            matches!(
+                registry.register(unsupported),
+                Err(plugin::PluginError::UnsupportedApiVersion { .. })
+            ),
+            "plugin: unsupported API version was accepted",
+        )?;
+
+        let unsafe_entry = plugin::PluginManifest {
+            id: "com.kaicad.unsafe".to_string(),
+            entry_point: "../escape.so".to_string(),
+            ..beta.clone()
+        };
+        ensure(
+            matches!(
+                registry.register(unsafe_entry),
+                Err(plugin::PluginError::UnsafeEntryPoint(_))
+            ),
+            "plugin: unsafe entry point was accepted",
+        )?;
+        ensure(registry.len() == 2, "plugin: rejected manifests changed the registry")?;
+
+        let registered_count = registry.len();
+        ensure(
+            registry.remove("com.kaicad.alpha"),
+            "plugin: registered plugin could not be removed",
+        )?;
+        ensure(
+            registry.find("com.kaicad.alpha").is_none() && registry.len() == 1,
+            "plugin: removal did not update the registry",
+        )?;
+
+        Ok((discovered_count, registered_count))
+    })();
+
+    let _ = std::fs::remove_dir_all(&directory);
+    let (discovered_count, registered_count) = outcome?;
+
+    println!(
+        "  plugin: discovered {discovered_count}, registered {registered_count}, deterministic order and validation ok"
     );
     Ok(())
 }
