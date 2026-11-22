@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 8 multi-layer routing complete (pre-alpha); Week 9 (kAI suggestion application) is next
+- **Implementation:** Week 9 transactional kAI application complete (pre-alpha); Week 10 (collaborative edit sessions) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (205 tests across the workspace)
+# Run tests (225 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -144,7 +144,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 9)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 10)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -152,16 +152,16 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–8 are complete and verified: **205 tests pass**, `cargo clippy
+Weeks 1–9 are complete and verified: **225 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 8 added deterministic multi-layer
-A* routing (`RouteResult`, `route_multilayer`), through-via insertion with
-clearance checks on every spanned copper layer, per-layer track splitting and
-via-aware DRC.
+clean, and the release build succeeds. Week 9 added atomic, reversible project
+edits (`core::edit::{apply, undo, redo}`), stale-change detection, and
+`kAI::apply_suggestion`, which validates a suggestion before applying it and
+returns an undoable transaction.
 
-The next milestone is **Week 9 — kAI suggestion application with undo/redo**:
-apply validated suggestions through deterministic, reversible edits and wire
-the flow into the self-check. The full brief is in
+The next milestone is **Week 10 — collaborative edit sessions and version
+history**: participant permissions, transaction staging and edit-linked
+versions. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -169,8 +169,10 @@ What each crate provides today:
 - ✅ **core** — `Project`/`SchematicData`/`PcbData`/`ProjectMetadata`, symbols,
   nets, sheets, components, PCB outline/layer/stackup types (with outline area,
   perimeter, contains-point and bounding-box queries), `Point`, the shared
-  `ChangeProposal`, and named symbol libraries. Real JSON serialization: `to_json`, `to_json_pretty`,
-  `from_json`, `save`, `load` plus `Project::{to_json, from_json, save, load}`.
+  `ChangeProposal`, named symbol libraries, and atomic `edit` transactions
+  (`apply`, `undo`, `redo`, stale-value checks, UUIDv5 transaction ids). Real
+  JSON serialization: `to_json`, `to_json_pretty`, `from_json`, `save`, `load`
+  plus `Project::{to_json, from_json, save, load}`.
 - ✅ **schematic** — real netlist generation (`generate_netlist` maps pin ids to
   `PinRef`s and emits connections for adjacent pins), deterministic KiCad
   netlist export (`to_kicad_netlist`), a connectivity `Graph` with
@@ -187,8 +189,10 @@ What each crate provides today:
   buried vias are not implemented.
 - 🚧 **renderer** — `RendererConfig` and `WindowConfig` only. `Renderer::new`
   and `Renderer::render` return `NotImplemented`; no Vulkan objects are created.
-- 🚧 **ai (kAI)** — configuration plus deterministic suggestion validation
-  (confidence range, empty changes, no-op changes, negative constraints).
+- 🚧 **ai (kAI)** — configuration, deterministic suggestion validation
+  (confidence range, empty changes, no-op changes, negative constraints) and
+  atomic `apply_suggestion` with undoable `core::edit` transactions. Every
+  application is validated first and leaves the project untouched on failure.
   `kAI::suggest_optimization` returns `NotImplemented`.
 - 🚧 **collab** — `CollabManager` session creation, `VersioningManager`,
   `SharingManager` and `Window`. No transport, merge or real-time sync.
@@ -202,7 +206,8 @@ What each crate provides today:
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,
   crosses a full-width top-layer wall using deterministic through vias, rejects
-  a blocked route, and stores and reloads a PCB design.
+  a blocked route, applies a validated suggestion and undoes/redoes it, and
+  stores and reloads a PCB design.
 
 ## Roadmap
 
@@ -210,7 +215,7 @@ What each crate provides today:
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 PCB core complete; renderer deferred |
-| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | ⬜ Not started |
+| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 In progress (kAI application complete) |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and

@@ -159,9 +159,9 @@ milestones and task breakdowns are maintained separately:
 - [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — the current
   implementation brief.
 
-Implementation status: Weeks 1–8 are complete — scaffolding, the shared data
+Implementation status: Weeks 1–9 are complete — scaffolding, the shared data
 model, the SQLite engineering database, symbol management, the schematic
 engine, PCB geometry and DRC, deterministic single-layer and multi-layer
-routing with through vias, and PCB-design persistence. Week 9 (transactional kAI
-suggestion application) is next. KaiCad is pre-alpha and does not yet provide
-usable schematic or PCB editing.
+routing with through vias, PCB-design persistence, and atomic kAI suggestion
+application with undo/redo. Week 10 (collaborative edit sessions) is next.
+KaiCad is pre-alpha and does not yet provide usable schematic or PCB editing.

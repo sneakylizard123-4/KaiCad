@@ -223,6 +223,62 @@ fn ai_validation_accepts_good_and_rejects_bad_suggestion() {
 }
 
 #[test]
+fn kai_suggestion_application_is_atomic_and_reversible() {
+    let mut project = core::Project::new("smoke-ai");
+    project.schematic.components.push(core::Component {
+        id: Uuid::from_u128(1),
+        reference_designator: "R1".to_string(),
+        properties: vec![core::ComponentProperty {
+            name: "Value".to_string(),
+            value: "10k".to_string(),
+        }],
+        ..core::Component::default()
+    });
+    let before = serde_json::to_string(&project).expect("serialize start");
+    let kai = ai::kAI::new(ai::kAIConfig::default());
+    let suggestion = ai::OptimizationSuggestion {
+        id: Uuid::new_v4(),
+        description: "smoke value update".to_string(),
+        changes: vec![ai::ChangeProposal::new(
+            "component:R1",
+            "value",
+            serde_json::json!("10k"),
+            serde_json::json!("22k"),
+        )],
+        confidence_score: 0.9,
+    };
+
+    let applied = kai.apply_suggestion(&mut project, &suggestion).expect("apply suggestion");
+    assert_eq!(project.schematic.components[0].properties[0].value, "22k");
+    assert_eq!(applied.transaction.id.get_version_num(), 5);
+
+    core::edit::undo(&mut project, &applied.transaction).expect("undo");
+    assert_eq!(before, serde_json::to_string(&project).expect("serialize undo"));
+
+    core::edit::redo(&mut project, &applied.transaction).expect("redo");
+    assert_eq!(project.schematic.components[0].properties[0].value, "22k");
+
+    let mut repeated = core::Project::new("smoke-ai");
+    repeated.schematic.components = project.schematic.components.clone();
+    repeated.schematic.components[0].properties[0].value = "10k".to_string();
+    let repeat = kai.apply_suggestion(&mut repeated, &suggestion).expect("repeat apply");
+    assert_eq!(applied.transaction.id, repeat.transaction.id);
+
+    let stale = ai::OptimizationSuggestion {
+        changes: vec![ai::ChangeProposal::new(
+            "component:R1",
+            "value",
+            serde_json::json!("1k"),
+            serde_json::json!("33k"),
+        )],
+        ..suggestion
+    };
+    let edited = serde_json::to_string(&project).expect("serialize edited");
+    assert!(kai.apply_suggestion(&mut project, &stale).is_err());
+    assert_eq!(edited, serde_json::to_string(&project).expect("serialize after failure"));
+}
+
+#[test]
 fn collab_session_creation_tracks_sessions() {
     let mut manager = collab::CollabManager::new();
     let project_id = Uuid::new_v4();

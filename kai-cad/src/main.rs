@@ -347,7 +347,82 @@ fn check_ai() -> Result<(), String> {
 
     ensure(!config.model_endpoint.is_empty(), "ai: default model endpoint must be configured")?;
 
-    println!("  ai: endpoint={}, deterministic validation=always", config.model_endpoint);
+    let kai = ai::kAI::new(config.clone());
+    let mut project = core::Project::new("ai-self-check");
+    project.schematic.components.push(core::Component {
+        id: Uuid::new_v4(),
+        reference_designator: "R1".to_string(),
+        properties: vec![core::ComponentProperty {
+            name: "Value".to_string(),
+            value: "10k".to_string(),
+        }],
+        ..core::Component::default()
+    });
+    let before = core::serialization::to_json(&project)
+        .map_err(|error| format!("ai: project serialization failed: {error}"))?;
+    let suggestion = ai::OptimizationSuggestion {
+        id: Uuid::new_v4(),
+        description: "self-check value update".to_string(),
+        changes: vec![ai::ChangeProposal::new(
+            "component:R1",
+            "value",
+            serde_json::json!("10k"),
+            serde_json::json!("22k"),
+        )],
+        confidence_score: 0.9,
+    };
+
+    let applied = kai
+        .apply_suggestion(&mut project, &suggestion)
+        .map_err(|error| format!("ai: suggestion application failed: {error}"))?;
+    let edited = core::serialization::to_json(&project)
+        .map_err(|error| format!("ai: project serialization failed: {error}"))?;
+    ensure(edited != before, "ai: applied suggestion did not change the project")?;
+    ensure(
+        project.schematic.components[0].properties[0].value == "22k",
+        "ai: applied suggestion did not update the component value",
+    )?;
+
+    core::edit::undo(&mut project, &applied.transaction)
+        .map_err(|error| format!("ai: undo failed: {error}"))?;
+    let undone = core::serialization::to_json(&project)
+        .map_err(|error| format!("ai: project serialization failed: {error}"))?;
+    ensure(undone == before, "ai: undo did not restore the project")?;
+
+    core::edit::redo(&mut project, &applied.transaction)
+        .map_err(|error| format!("ai: redo failed: {error}"))?;
+    let redone = core::serialization::to_json(&project)
+        .map_err(|error| format!("ai: project serialization failed: {error}"))?;
+    ensure(redone == edited, "ai: redo did not restore the edit")?;
+
+    let stale = ai::OptimizationSuggestion {
+        id: Uuid::new_v4(),
+        description: "stale self-check update".to_string(),
+        changes: vec![ai::ChangeProposal::new(
+            "component:R1",
+            "value",
+            serde_json::json!("1k"),
+            serde_json::json!("33k"),
+        )],
+        confidence_score: 0.9,
+    };
+    ensure(
+        kai.apply_suggestion(&mut project, &stale).is_err(),
+        "ai: stale suggestion was applied",
+    )?;
+    ensure(
+        core::serialization::to_json(&project)
+            .map_err(|error| format!("ai: project serialization failed: {error}"))?
+            == edited,
+        "ai: failed suggestion mutated the project",
+    )?;
+
+    println!(
+        "  ai: endpoint={}, deterministic validation=always, applied {} change(s), undo/redo ok (tx {})",
+        config.model_endpoint,
+        applied.transaction.changes.len(),
+        &applied.transaction.id.to_string()[..8]
+    );
     Ok(())
 }
 

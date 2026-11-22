@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–8 are complete (205 tests, clippy/fmt/doc/release
-> all clean). Week 9 — transactional kAI suggestion application — is next; its
-> work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–9 are complete (225 tests, clippy/fmt/doc/release
+> all clean). Week 10 — collaborative edit sessions and version history — is
+> next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,19 +121,19 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **205 tests**, all passing:
+`cargo test --workspace` currently runs **225 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
-| `ai` (`src/lib.rs`) | 7 |
+| `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 9 |
-| `core` (`src/tests.rs` and inline modules) | 31 |
+| `core` (`src/tests.rs`, `edit.rs` and inline modules) | 45 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 72 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 23 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 13 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 14 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -159,7 +159,7 @@ subsystem self-check:
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
   pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s), multi-layer 2 track(s)/2 via(s)
   renderer: window 1920x1080, vsync=true
-  ai: endpoint=http://localhost:11434, deterministic validation=always
+  ai: endpoint=http://localhost:11434, deterministic validation=always, applied 1 change(s), undo/redo ok (tx 97f81c80)
   collab: 1 session(s)
   store: created, loaded and deleted 1 project with its PCB design (schema v4)
   kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym
@@ -247,8 +247,9 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–8 are finished; Week 9 adds transactional kAI suggestion application
-with deterministic undo/redo. Before starting, read
+Weeks 1–9 are finished; Week 10 adds collaborative edit sessions with
+permission checks, staged transactions and edit-linked version history. Before
+starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -384,6 +385,29 @@ you, check these semantics before changing a rule:
 If the report changes between identical runs, look for code that consumes
 `HashMap` iteration order or track insertion order instead of the sorted
 report.
+
+### Applied edits or undo look wrong
+
+`core::edit` is strict by design: `apply` stages every change on a project
+clone and only swaps it in when all changes succeed. Check these semantics
+before changing it:
+
+- Targets are `project` and `component:<reference_designator>`. Component
+  fields are `value` (the property named `Value`), `property:<name>` and
+  `reference_designator`; project fields are `name`, `version`, `author` and
+  `description`. Text fields use JSON strings.
+- `old_value` must match the current value exactly. A mismatch is a
+  `StaleChange`, never an overwrite. Creating a missing property requires
+  `old_value: null`; undo removes it again.
+- Undo walks the recorded changes in reverse and redo walks them forward. Both
+  verify the expected current value first and are atomic on failure.
+- Transaction ids are UUIDv5 values over the label and ordered
+  `(target, field, old_value, new_value)` tuples. Identical edits on identical
+  starting projects must produce the same id.
+- `kAI::apply_suggestion` validates before calling `core::edit::apply`, maps
+  edit failures to `kAIError::ApplyFailed`, and never mutates on failure.
+- Only component properties and project text fields are editable today. PCB
+  objects, multi-step history and collaborative merge are not.
 
 ### Routing results look wrong
 

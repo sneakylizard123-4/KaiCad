@@ -1,9 +1,10 @@
-# Next Agent Prompt — Week 9: Transactional kAI Suggestion Application
+# Next Agent Prompt — Week 10: Collaborative Edit Sessions and Version History
 
 You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
-`/home/sneak/vscode/KaiCad`. Week 8 is finished and verified. Your job is
-**Week 9: apply validated kAI suggestions through deterministic, atomic and
-reversible edits**, without adding a network or model dependency.
+`/home/sneak/vscode/KaiCad`. Week 9 is finished and verified. Your job is
+**Week 10: make edit transactions collaborative — add session membership and
+permissions, stage transactions deterministically, and record version history
+tied to those transactions**, without adding a network transport.
 
 Read this document fully before writing code.
 
@@ -12,7 +13,7 @@ Read this document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 205 passing, 0 failing
+- **Tests:** 225 passing, 0 failing
 - **Schema:** version 4 (`projects`, projection tables, `symbol_libraries`,
   `pcb_designs`)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
@@ -22,39 +23,53 @@ Read this document fully before writing code.
 
 | Crate | Role | Workspace dependencies |
 |-------|------|------------------------|
-| `core` | Shared data model, JSON, symbol libraries, PCB primitives, change proposals | none |
+| `core` | Shared data model, JSON, symbol libraries, PCB primitives, atomic edit transactions | none |
 | `schematic` | Netlist, graph, ERC | `core` |
 | `pcb` | Board data, outline, layers, footprints, DRC, routing | `core` |
 | `renderer` | Vulkan configuration types (`ash`) | none |
-| `ai` | kAI suggestions and deterministic validation | `core`, `schematic` |
-| `collab` | Sessions, versioning, sharing | `core` |
+| `ai` | kAI suggestions, deterministic validation, transaction application | `core`, `schematic` |
+| `collab` | Sessions, versioning, sharing, sync staging | `core` |
 | `store` | SQLite project, symbol-library and PCB-design CRUD | `core`, `pcb` |
 | `kicad-parser` | `.kicad_sym` import | `core` |
 | `kai-cad` | Binary and cross-crate smoke tests | all of the above |
 
-### Existing AI and editing support
+### Existing collaboration and edit support
 
-- `core::proposal::ChangeProposal { id, target, field, old_value, new_value }`
-  is a field-level change with JSON values. `ChangeProposal::new` currently
-  creates a random v4 id.
-- `ai::kAI { config }` with `kAIConfig`, `OptimizationContext`, `Constraint`,
-  `ConstraintType`, `OptimizationSuggestion`, `ValidationResult`,
-  `ValidationError`, `kAIError` and `SuggestionValidator`.
-- `OptimizationSuggestion { id, description, changes, confidence_score }` and
-  `is_applicable` (non-empty changes and confidence in `0.0..=1.0`).
-- `kAI::validate_suggestion` runs `SuggestionValidator` with no constraints.
-  `kAI::suggest_optimization` still returns `kAIError::NotImplemented`.
-- `core::Project { id, name, version, schematic, pcb, metadata }`;
-  `SchematicData { sheets, symbols, nets, components }`;
-  `Component { id, reference_designator, symbol_id, footprint_id, properties }`;
-  `ComponentProperty { name, value }`.
+- `core::edit`:
+  - `EditTransaction { id, label, changes }`,
+    `AppliedChange { target, field, old_value, new_value, object_id }`,
+    `EditError::{UnknownTarget, UnknownField, StaleChange, InvalidValue}`.
+  - `apply(project, label, changes) -> Result<EditTransaction, EditError>`
+    stages on a clone and commits only when every change succeeds.
+  - `undo` walks changes in reverse, `redo` forward; both verify current values
+    and are atomic on failure.
+  - Targets are `project` and `component:<reference_designator>`; fields are
+    `value`, `property:<name>`, `reference_designator`, and the project text
+    fields. Transaction ids are UUIDv5 values.
+- `ai::kAI::apply_suggestion(project, suggestion) -> AppliedSuggestion`
+  validates first, applies through `core::edit::apply`, and returns the
+  undoable transaction. `kAIError::ApplyFailed` wraps `EditError`.
+- `collab`:
+  - `CollabManager { sessions, versions }` with `new`, `create_session`,
+    `session_count`; the creator is an `Owner` participant.
+  - `CollabSession { session_id, project_id, participants, version }`;
+    `Participant { user_id, username, role }`;
+    `ParticipantRole::{Owner, Editor, Viewer}`.
+  - `VersioningManager { sessions, versions }` with `record(author, summary)`
+    and `latest`; `VersionEntry { version, timestamp, author, change_summary }`.
+  - `SharingManager::share/unshare` over project name strings.
+  - `SyncManager { sessions, pending_changes }`, where `pending_changes` is a
+    `Vec<core::ChangeProposal>`.
+  - `Window::new(title)`.
 
-What is missing for Week 9:
+What is missing for Week 10:
 
-- A validated suggestion cannot be applied to a project.
-- There is no atomic edit operation: a partially applied multi-change
-  suggestion would leave the project inconsistent.
-- There is no undo/redo, no stale-value detection, and no stable edit record.
+- Sessions cannot add participants, change roles or check edit permissions.
+- There is no way to apply an edit transaction through a session; viewers and
+  non-members are not rejected.
+- Version entries are not linked to edit transactions or project snapshots.
+- `SyncManager` cannot queue whole transactions, deduplicate them or drain them
+  in a deterministic order.
 
 ---
 
@@ -62,20 +77,20 @@ What is missing for Week 9:
 
 1. **No KiCad wrapping.** KiCad formats are import/export targets only.
 2. **Local-first.** No network, cloud service or model may be required.
-3. **AI output is untrusted.** Never apply a suggestion that has not passed
-   deterministic validation, and never weaken `SuggestionValidator`.
-4. **Deterministic operations.** No unseeded randomness. Applying the same
-   transaction twice to the same starting project must produce byte-identical
-   JSON, including transaction ids. Do not use `Uuid::new_v4` for new
-   transaction identifiers.
-5. **No silent data loss.** Report or preserve anything that cannot be
-   represented, and fail cleanly instead of dropping changes.
-6. **Atomicity.** A failed multi-change edit leaves the project exactly as it
-   was before the call.
+3. **AI output is untrusted.** Do not weaken validation or bypass
+   `kAI::apply_suggestion`.
+4. **Deterministic operations.** No unseeded randomness in new production
+   paths. Project digests and new transaction-linked identifiers must use
+   UUIDv5 over canonical serialized data, never `Uuid::new_v4`.
+5. **No silent data loss.** Preserve or report information that cannot be
+   represented.
+6. **Atomic edits.** A rejected session edit leaves both the project and the
+   session version unchanged.
 7. **Zero warnings.** `cargo clippy --workspace --all-targets -- -D warnings`
    and `cargo fmt --all -- --check` must pass.
 8. **No breaking changes.** Add modules, variants and serde-defaulted fields;
-   do not rename or remove existing public APIs.
+   do not rename or remove existing public APIs. Existing `collab` JSON must
+   continue to load.
 9. **Never edit an applied migration.** Add `0005_*.sql` only if truly needed;
    this milestone should not need a schema change.
 10. **Update the docs** listed in §7 in the same change.
@@ -85,159 +100,187 @@ What is missing for Week 9:
 
 ## 3. Deliverable
 
-### 3.1 Core edit transactions
+### 3.1 Session membership and permissions
 
-Add `core::edit` (exported as `core::edit` and re-exported where useful):
+Add to `collab` (module layout is your choice):
 
 ```rust
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EditTransaction {
-    /// Stable UUIDv5 id derived from the label and applied changes.
-    pub id: uuid::Uuid,
-    pub label: String,
-    pub changes: Vec<AppliedChange>,
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AppliedChange {
-    pub target: String,
-    pub field: String,
-    pub old_value: serde_json::Value,
-    pub new_value: serde_json::Value,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EditError {
-    UnknownTarget(String),
-    UnknownField { target: String, field: String },
-    StaleChange { target: String, field: String },
-    InvalidValue { target: String, field: String, message: String },
+pub enum CollabError {
+    UnknownSession(uuid::Uuid),
+    UnknownParticipant(uuid::Uuid),
+    DuplicateParticipant(uuid::Uuid),
+    ReadOnly,
+    Edit(core::edit::EditError),
+    History(String),
 }
 
-pub fn apply(
-    project: &mut core::Project,
-    label: &str,
-    changes: &[core::ChangeProposal],
-) -> Result<EditTransaction, EditError>;
+impl CollabManager {
+    pub fn add_participant(
+        &mut self,
+        session_id: uuid::Uuid,
+        participant: Participant,
+    ) -> Result<(), CollabError>;
 
-pub fn undo(project: &mut core::Project, transaction: &EditTransaction) -> Result<(), EditError>;
+    pub fn set_role(
+        &mut self,
+        session_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        role: ParticipantRole,
+    ) -> Result<(), CollabError>;
 
-pub fn redo(project: &mut core::Project, transaction: &EditTransaction) -> Result<(), EditError>;
+    pub fn can_edit(&self, session_id: uuid::Uuid, user_id: uuid::Uuid) -> bool;
+
+    pub fn apply_edit(
+        &mut self,
+        session_id: uuid::Uuid,
+        user_id: uuid::Uuid,
+        project: &mut core::Project,
+        label: &str,
+        changes: &[core::ChangeProposal],
+    ) -> Result<core::edit::EditTransaction, CollabError>;
+}
 ```
 
 Required semantics:
 
-- Validate every change against a **clone** of the project and only replace the
-  caller's project after all changes succeed. No partial edits.
-- Supported targets:
-  - `component:<reference_designator>` — exact match on a component's
-    reference designator.
-  - `project` — project-level fields.
-- Supported fields:
-  - `component:<ref>` + `value` — the `ComponentProperty` named `Value`.
-    If it is absent, `old_value` must be `null`; applying creates it, and undo
-    removes it again.
-  - `component:<ref>` + `property:<name>` — an arbitrary existing
-    `ComponentProperty`. Creating a missing property is allowed only with
-    `old_value: null`, and undo removes it.
-  - `component:<ref>` + `reference_designator` — non-empty string.
-  - `project` + `name`, `version`, `author`, `description` — strings.
-- Values use JSON strings for text fields. UUID-valued component fields are
-  out of scope for this pass unless you add explicit, documented support.
-- `old_value` must equal the current value exactly; otherwise return
-  `StaleChange` without mutating anything.
-- Apply changes in the order given; undo in reverse order. `redo` applies the
-  recorded `new_value`s again and must also reject stale state.
-- Derive the transaction id with UUIDv5 over the label and the ordered
-  `(target, field, old_value, new_value)` tuples. Repeated edits on the same
-  starting state must produce the same id.
-- `EditError` implements `Display` and `std::error::Error`.
+- `add_participant` rejects duplicate `user_id`s within a session and unknown
+  session ids; usernames are stored as supplied.
+- Only `Owner` and `Editor` may edit. `Viewer`, unknown participants and
+  unknown sessions are rejected **before** the project is touched.
+- `apply_edit` checks permission, calls `core::edit::apply`, and only after a
+  successful edit increments `CollabSession::version` by one. A failed
+  `core::edit::apply` leaves the session version unchanged and returns
+  `CollabError::Edit`.
+- `can_edit` is read-only and returns false for unknown sessions, unknown
+  users, and viewers.
+- `CollabError` implements `Display` and `std::error::Error`; `Edit` exposes
+  the underlying edit error through `source`.
+- Session creation keeps its current behaviour and owner seeding. Session ids
+  may keep using `Uuid::new_v4` for compatibility; do not make them part of a
+  deterministic edit record.
 
-### 3.2 kAI application
+### 3.2 Edit-linked version history
 
-Extend `ai` without changing existing signatures:
+Extend `VersionEntry` with serde-defaulted fields:
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
-pub struct AppliedSuggestion {
-    pub suggestion_id: uuid::Uuid,
-    pub transaction: core::edit::EditTransaction,
-}
+#[serde(default)]
+pub transaction_id: Option<uuid::Uuid>,
+#[serde(default)]
+pub project_digest: Option<uuid::Uuid>,
+```
 
-impl kAI {
-    pub fn apply_suggestion(
-        &self,
-        project: &mut core::Project,
-        suggestion: &OptimizationSuggestion,
-    ) -> Result<AppliedSuggestion, kAIError>;
+Add:
+
+```rust
+impl VersioningManager {
+    pub fn record_transaction(
+        &mut self,
+        author: uuid::Uuid,
+        summary: impl Into<String>,
+        transaction: &core::edit::EditTransaction,
+        project: &core::Project,
+    ) -> Result<u64, CollabError>;
+
+    pub fn find_by_transaction(&self, transaction_id: uuid::Uuid) -> Option<&VersionEntry>;
 }
 ```
 
 Required semantics:
 
-- Run deterministic validation first. Invalid suggestions return
-  `kAIError::ValidationFailed` and must not mutate the project.
-- Reject a suggestion failing `is_applicable` (empty changes or out-of-range
-  confidence) before touching the project.
-- Apply all changes through `core::edit::apply`; on any `EditError`, return an
-  error that preserves the details and leaves the project unchanged. Add an
-  additive `kAIError::ApplyFailed(core::edit::EditError)` variant with
-  `Display` and `source` support.
-- The returned `AppliedSuggestion` carries the suggestion id and the exact
-  transaction that can be undone or redone.
-- No model call, no network access and no change to `SuggestionValidator`.
-- Suggestion generation (`suggest_optimization`) remains out of scope.
+- `record_transaction` computes the project digest as a UUIDv5 over the compact
+  JSON produced by `core::serialization::to_json`, then stores
+  `Some(transaction.id)` and `Some(digest)`. Return
+  `CollabError::History` on serialization failure.
+- Version numbers continue to increase by one from `versions.len()`.
+- `record(author, summary)` keeps working and stores `None` for both new
+  fields, so existing callers and JSON documents stay compatible.
+- `find_by_transaction` returns the first matching entry.
+- A digest must be identical for identical project JSON and different after an
+  edit. Do not use `chrono` or wall-clock time in the digest.
 
-### 3.3 Application wiring
+### 3.3 Transaction staging
+
+Extend `SyncManager` with a serde-defaulted queue of whole transactions:
+
+```rust
+#[serde(default)]
+pub staged: Vec<core::edit::EditTransaction>;
+```
+
+Add:
+
+```rust
+impl SyncManager {
+    /// Queue a transaction, returning false if its id is already staged.
+    pub fn stage(&mut self, transaction: core::edit::EditTransaction) -> bool;
+
+    /// Remove and return every staged transaction in insertion order.
+    pub fn drain(&mut self) -> Vec<core::edit::EditTransaction>;
+
+    pub fn staged_count(&self) -> usize;
+}
+```
+
+- Deduplicate by transaction id; staging an existing id is a no-op and returns
+  `false`.
+- `drain` preserves insertion order and leaves the queue empty.
+- Staging never applies the transaction to a project. `pending_changes` stays
+  available and unchanged for older callers.
+- `SyncManager` keeps its existing serde round trip.
+
+### 3.4 Application wiring
 
 Extend the `kai-cad` self-check and cross-crate smoke tests to:
 
-1. Build a project with at least two components and `Value` properties.
-2. Apply a valid suggestion (for example, change `R1`'s value), verify the
-   property changed, and assert the returned transaction has stable ids.
-3. Undo and assert the project's serialized JSON is byte-identical to the
-   starting project; redo and assert the change returns.
-4. Attempt a stale suggestion and an invalid-confidence suggestion; both must
-   fail without changing the project.
-5. Print the number of applied changes, the undo result and the transaction id
-   length or a short prefix in the `ai:` line.
+1. Create a session, add an editor and a viewer, and check `can_edit`.
+2. Apply an edit as the owner and as an editor; both bump the session version.
+3. Reject the viewer, an unknown participant and an unknown session without
+   changing the project or version.
+4. Record a version for the transaction and assert its transaction id and
+   non-nil digest.
+5. Stage the transaction, reject a duplicate, and drain it back in order.
+6. Undo the edit and assert the project JSON matches the starting state.
+7. Print session participant count, version and staged-history status in the
+   `collab:` line.
 
-Add a cross-crate smoke test that covers apply → undo → redo, failure atomicity
-and deterministic transaction ids.
+Add a cross-crate smoke test for permissions, version recording, staging and
+atomic rejection.
 
-### 3.4 Tests (target: 16–20 new tests)
+### 3.5 Tests (target: 16–20 new tests)
 
 Cover at least:
 
-1. Apply a `component:<ref>` `value` change and update the property.
-2. Create a missing property from `null` and remove it again on undo.
-3. Update an arbitrary `property:<name>`.
-4. Update project-level `name` and `version`.
-5. Unknown target is rejected.
-6. Unknown field is rejected.
-7. Stale `old_value` is rejected.
-8. Wrong JSON type is rejected.
-9. A multi-change transaction with one failing change leaves the project
-   byte-identical.
-10. Undo restores the exact starting JSON.
-11. Redo after undo restores the edited JSON.
-12. Undo/redo reject a project that changed underneath them.
-13. Transaction ids are UUIDv5, non-nil and repeatable for the same input.
-14. kAI applies a valid suggestion and returns its id and transaction.
-15. kAI rejects invalid confidence without mutation.
-16. kAI rejects stale changes without mutation.
-17. kAI rejects empty changes and no-op changes.
-18. `kai-cad` smoke test for apply, undo, redo and atomic failure.
+1. Add owner/editor/viewer participants and reject duplicates.
+2. `can_edit` allows owners and editors, rejects viewers and unknown users.
+3. Unknown session is rejected by `add_participant`, `set_role` and
+   `apply_edit`.
+4. `set_role` changes permissions.
+5. Viewer edit is rejected without project or version change.
+6. Editor and owner edits apply and bump the session version.
+7. Failed stale edit leaves project and version unchanged.
+8. `apply_edit` returns the same transaction as direct `core::edit::apply`.
+9. `record_transaction` stores transaction id and a non-nil digest.
+10. Digest is stable for identical JSON and changes after an edit.
+11. `record` remains compatible and stores `None`.
+12. `find_by_transaction` finds the recorded version.
+13. Version numbers continue sequentially.
+14. `stage` deduplicates by transaction id.
+15. `drain` preserves insertion order and empties the queue.
+16. Staging does not mutate the project.
+17. SyncManager JSON round-trips with staged transactions.
+18. `kai-cad` smoke test for permissions, versions and staging.
 
-### 3.5 Definition of done
+### 3.6 Definition of done
 
-- [ ] `core::edit` provides atomic apply, undo and redo with documented targets.
-- [ ] `kAI::apply_suggestion` validates first and never mutates on failure.
-- [ ] Transaction and applied-suggestion ids are deterministic UUIDv5 values.
-- [ ] The project JSON after apply → undo is byte-identical to the start.
-- [ ] `kai-cad` self-check and smoke tests cover apply/undo/redo and failures.
-- [ ] No public API was broken; existing 205 tests still pass.
-- [ ] Test count rises from 205 to at least 221, all passing.
+- [ ] Sessions support participants, roles and permission checks.
+- [ ] `apply_edit` is atomic and bumps the version only on success.
+- [ ] Version entries link transactions and deterministic project digests.
+- [ ] `SyncManager` stages and drains transactions deterministically.
+- [ ] `kai-cad` self-check and smoke tests cover permissions and staging.
+- [ ] No public API was broken; existing 225 tests still pass.
+- [ ] Test count rises from 225 to at least 241, all passing.
 - [ ] Clippy, fmt, rustdoc and Markdown links are clean.
 - [ ] Documentation updated (§7).
 
@@ -265,10 +308,10 @@ cargo build --workspace --release
 
 ## 5. Suggested implementation order
 
-1. Add `core::edit` types and strict target/field resolution.
-2. Implement atomic apply on a project clone, then undo/redo and UUIDv5 ids.
-3. Add `kAI::apply_suggestion`, the `ApplyFailed` variant and error mapping.
-4. Add unit tests for core edits and kAI application.
+1. Add `CollabError`, membership methods and permission checks.
+2. Implement `apply_edit` through `core::edit`, then test atomic rejection.
+3. Extend `VersionEntry` and add deterministic `record_transaction`.
+4. Extend `SyncManager` with staging and draining.
 5. Wire the self-check and smoke test, then run the full verification suite.
 6. Update documentation and leave the changes uncommitted.
 
@@ -276,35 +319,36 @@ cargo build --workspace --release
 
 ## 6. Documentation updates (required)
 
-- `README.md` — status, test count, AI features and roadmap.
-- `docs/PLAN.md` — mark Week 9 complete and point to the Week 10 brief.
+- `README.md` — status, test count, collaboration features and roadmap.
+- `docs/PLAN.md` — mark Week 10 complete and point to the Week 11 brief.
 - `docs/PHASE1_TASKS.md` — update the status note.
-- `docs/ARCHITECTURE.md` — core edit transactions, kAI application flow and the
+- `docs/ARCHITECTURE.md` — session permissions, versions, staging and the
   "Current milestone" section.
-- `docs/DEVELOPMENT.md` — test table, self-check sample, apply/undo
+- `docs/DEVELOPMENT.md` — test table, self-check sample and collaboration
   troubleshooting.
-- `docs/CONTRIBUTING.md` — deterministic transaction ids and atomicity rules.
-- `docs/NEXT_AGENT_PROMPT.md` — replace with the Week 10 brief.
-- `TODO.md` — mark Week 9 done and list Week 10.
+- `docs/CONTRIBUTING.md` — deterministic digests and atomic session edits.
+- `docs/NEXT_AGENT_PROMPT.md` — replace with the Week 11 brief.
+- `TODO.md` — mark Week 10 done and list Week 11.
 - `PRD.md` — update the implementation-status paragraph.
 
 ---
 
 ## 7. Out of scope for this pass
 
-- LLM or model invocation, network transport, prompt construction and
-  `suggest_optimization` generation.
-- Multi-step undo history, branching history, persistence of transactions in
-  SQLite or collaboration merge.
+- WebSocket or any network transport, remote peers, presence and reconnect.
+- Merge algorithms, conflict resolution, operational transforms or CRDTs.
+- Persisting sessions, versions or staged transactions in SQLite; schema
+  changes are not needed.
 - GUI, windowing or Vulkan object creation.
-- PCB-level suggestions that edit tracks, vias or footprints.
-- Automatic symbol-to-footprint binding, impedance/length rules and
-  push-and-shove routing.
-- Schema changes.
+- Multi-step undo history beyond one transaction, branching history and undo
+  across collaborators.
+- kAI suggestion generation, model calls or PCB-object edit targets.
+- Plugin architecture and real-time collaboration.
+- Sharing by project id instead of the existing name strings.
 
 ---
 
 ## 8. Reporting format
 
-Report changed files (do not commit), the final edit/kAI API, test counts per
-crate and total, verification tails, and anything deliberately deferred.
+Report changed files (do not commit), the final collaboration API, test counts
+per crate and total, verification tails, and anything deliberately deferred.

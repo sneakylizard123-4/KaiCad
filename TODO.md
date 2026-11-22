@@ -78,15 +78,24 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Two-layer wall crossing and blocked-route checks wired into the `kai-cad` self-check and smoke tests
 - Documentation updated; total tests: 205
 
-## 🚧 Next — Week 9: Transactional kAI suggestion application
+### Week 9 — Transactional kAI suggestion application
+- `core::edit` with `EditTransaction`, `AppliedChange`, `EditError`, atomic `apply`, `undo` and `redo`
+- Stale-value detection, project/component targets, property creation/removal and rename-safe undo by component id
+- Deterministic UUIDv5 transaction ids over the label and ordered changes
+- `kAI::apply_suggestion` validates first, applies atomically and returns an undoable transaction; `kAIError::ApplyFailed` preserves edit errors
+- Apply/undo/redo and failure atomicity wired into the `kai-cad` self-check and smoke tests
+- Documentation updated; total tests: 225
+
+## 🚧 Next — Week 10: Collaborative edit sessions and version history
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Add atomic, reversible core edit transactions with stale-value detection
-- [ ] Apply only validated kAI suggestions and return an undoable transaction
-- [ ] Wire apply/undo/redo into the `kai-cad` self-check and smoke tests
+- [ ] Add participant membership, roles and edit permission checks
+- [ ] Record versions linked to edit transactions and deterministic project digests
+- [ ] Stage transactions deterministically for sync and drain them in order
+- [ ] Wire collaboration sessions into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥221 tests, clippy/fmt/doc/link clean
+- [ ] Target: ≥241 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 

@@ -65,18 +65,19 @@
 
 ### Implementation status
 
-**Weeks 1–8 are complete and verified.** The Cargo workspace, CI pipeline,
+**Weeks 1–9 are complete and verified.** The Cargo workspace, CI pipeline,
 toolchain configuration, shared data model, SQLite engineering database, named
 symbol libraries, KiCad `.kicad_sym` import, the basic schematic engine
 (netlist generation and export, graph traversal, ERC), the PCB core (outline
 geometry, layer validation, footprint libraries), PCB geometry/DRC (distance
-primitives, track and via dimensions, pad copper, validated rules), and
-deterministic single-layer and multi-layer grid routing with through vias are in
-place. PCB designs persist with their tracks, vias and DRC rules in SQLite. The
-workspace has **205 passing tests**, clean `cargo clippy --workspace
+primitives, track and via dimensions, pad copper, validated rules),
+deterministic single-layer and multi-layer grid routing with through vias, and
+atomic core edit transactions with kAI suggestion application are in place. PCB
+designs persist with their tracks, vias and DRC rules in SQLite. The workspace
+has **225 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 9 brief.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 10 brief.
 
 Phase 1 progress:
 
@@ -95,12 +96,14 @@ Phase 2 progress:
 | 6 | PCB geometry and design-rule checking | ✅ Complete |
 | 7 | Deterministic single-layer routing | ✅ Complete |
 | 8 | Multi-layer routing, vias and renderer integration | ✅ Complete (routing; renderer deferred) |
-| 9 | kAI suggestion application and transactional edits | ⬜ Not started |
+| 9 | kAI suggestion application and transactional edits | ✅ Complete |
+| 10 | Collaborative edit sessions, permissions and version history | ⬜ Not started |
 
 The detailed brief for the next implementation pass — including API
 requirements, acceptance criteria and verification commands — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 9:
-transactional kAI suggestion application with deterministic undo/redo.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 10:
+collaborative edit sessions with permission checks, staged transactions and
+edit-linked version history.
 
 ## 4. Key Milestones
 

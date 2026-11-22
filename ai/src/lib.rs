@@ -64,6 +64,28 @@ impl kAI {
     ) -> Result<ValidationResult, kAIError> {
         Ok(SuggestionValidator.validate(suggestion, &[]))
     }
+
+    /// Validate and atomically apply a suggestion to `project`.
+    ///
+    /// Validation always runs first. Invalid suggestions and failed edits leave
+    /// the project untouched. The returned transaction can be passed to
+    /// [`core::edit::undo`] or [`core::edit::redo`].
+    pub fn apply_suggestion(
+        &self,
+        project: &mut core::Project,
+        suggestion: &OptimizationSuggestion,
+    ) -> Result<AppliedSuggestion, kAIError> {
+        let validation = self.validate_suggestion(suggestion)?;
+        if !validation.valid {
+            return Err(kAIError::ValidationFailed(validation.errors));
+        }
+
+        let label = format!("kAI: {}", suggestion.description);
+        let transaction = core::edit::apply(project, &label, &suggestion.changes)
+            .map_err(kAIError::ApplyFailed)?;
+
+        Ok(AppliedSuggestion { suggestion_id: suggestion.id, transaction })
+    }
 }
 
 /// Context provided to kAI for optimization requests.
@@ -88,6 +110,13 @@ impl OptimizationSuggestion {
     pub fn is_applicable(&self) -> bool {
         !self.changes.is_empty() && (0.0..=1.0).contains(&self.confidence_score)
     }
+}
+
+/// Result of successfully applying a suggestion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedSuggestion {
+    pub suggestion_id: uuid::Uuid,
+    pub transaction: core::edit::EditTransaction,
 }
 
 /// A constraint that must be respected in any AI suggestion.
@@ -131,6 +160,8 @@ pub enum kAIError {
     NotImplemented,
     ModelUnavailable,
     ValidationFailed(Vec<ValidationError>),
+    /// The suggestion passed validation but could not be applied atomically.
+    ApplyFailed(core::edit::EditError),
 }
 
 impl std::fmt::Display for kAIError {
@@ -141,11 +172,19 @@ impl std::fmt::Display for kAIError {
             kAIError::ValidationFailed(errors) => {
                 write!(f, "Validation failed: {:?}", errors)
             }
+            kAIError::ApplyFailed(error) => write!(f, "Suggestion could not be applied: {error}"),
         }
     }
 }
 
-impl std::error::Error for kAIError {}
+impl std::error::Error for kAIError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ApplyFailed(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -244,5 +283,107 @@ mod tests {
             .expect("deterministic validation should not fail");
 
         assert!(result.valid);
+    }
+
+    fn project_with_component() -> core::Project {
+        let mut project = core::Project::new("ai-test");
+        project.schematic.components.push(core::Component {
+            id: uuid::Uuid::from_u128(1),
+            reference_designator: "R1".to_string(),
+            properties: vec![core::ComponentProperty {
+                name: "Value".to_string(),
+                value: "10k".to_string(),
+            }],
+            ..core::Component::default()
+        });
+        project
+    }
+
+    fn project_value(project: &core::Project) -> &str {
+        &project.schematic.components[0].properties[0].value
+    }
+
+    fn component_suggestion(old: &str, new: &str, confidence: f32) -> OptimizationSuggestion {
+        suggestion(
+            vec![ChangeProposal::new(
+                "component:R1",
+                "value",
+                serde_json::json!(old),
+                serde_json::json!(new),
+            )],
+            confidence,
+        )
+    }
+
+    #[test]
+    fn apply_suggestion_changes_the_project_and_returns_a_transaction() {
+        let mut project = project_with_component();
+        let kai = kAI::new(kAIConfig::default());
+        let request = component_suggestion("10k", "22k", 0.9);
+
+        let applied = kai.apply_suggestion(&mut project, &request).expect("suggestion applies");
+
+        assert_eq!(project_value(&project), "22k");
+        assert_eq!(applied.suggestion_id, request.id);
+        assert_eq!(applied.transaction.changes.len(), 1);
+        assert_eq!(applied.transaction.id.get_version_num(), 5);
+        assert!(applied.transaction.label.contains("test suggestion"));
+    }
+
+    #[test]
+    fn apply_rejects_invalid_confidence_without_mutation() {
+        let mut project = project_with_component();
+        let before = serde_json::to_string(&project).expect("serialize");
+        let kai = kAI::new(kAIConfig::default());
+        let request = component_suggestion("10k", "22k", 1.5);
+
+        let error = kai.apply_suggestion(&mut project, &request).expect_err("invalid confidence");
+
+        assert!(matches!(error, kAIError::ValidationFailed(_)));
+        assert_eq!(before, serde_json::to_string(&project).expect("serialize"));
+    }
+
+    #[test]
+    fn apply_rejects_stale_changes_without_mutation() {
+        let mut project = project_with_component();
+        let before = serde_json::to_string(&project).expect("serialize");
+        let kai = kAI::new(kAIConfig::default());
+        let request = component_suggestion("1k", "22k", 0.9);
+
+        let error = kai.apply_suggestion(&mut project, &request).expect_err("stale change");
+
+        assert!(matches!(error, kAIError::ApplyFailed(core::edit::EditError::StaleChange { .. })));
+        assert_eq!(before, serde_json::to_string(&project).expect("serialize"));
+    }
+
+    #[test]
+    fn apply_rejects_empty_and_no_op_suggestions() {
+        let mut project = project_with_component();
+        let before = serde_json::to_string(&project).expect("serialize");
+        let kai = kAI::new(kAIConfig::default());
+        let requests = [suggestion(Vec::new(), 0.5), component_suggestion("10k", "10k", 0.5)];
+
+        for request in requests {
+            let error = kai.apply_suggestion(&mut project, &request).expect_err("invalid request");
+            assert!(matches!(error, kAIError::ValidationFailed(_)));
+        }
+        assert_eq!(before, serde_json::to_string(&project).expect("serialize"));
+    }
+
+    #[test]
+    fn apply_is_deterministic_for_the_same_starting_project() {
+        let mut first = project_with_component();
+        let mut second = first.clone();
+        let kai = kAI::new(kAIConfig::default());
+        let request = component_suggestion("10k", "22k", 0.9);
+
+        let left = kai.apply_suggestion(&mut first, &request).expect("first apply");
+        let right = kai.apply_suggestion(&mut second, &request).expect("second apply");
+
+        assert_eq!(left.transaction.id, right.transaction.id);
+        assert_eq!(
+            serde_json::to_string(&first).expect("serialize"),
+            serde_json::to_string(&second).expect("serialize")
+        );
     }
 }

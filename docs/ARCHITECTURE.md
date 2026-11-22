@@ -8,8 +8,8 @@
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
 > 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
-> routing) and 8 (multi-layer routing with vias) are complete. The workspace
-> has 205 passing tests.
+> routing), 8 (multi-layer routing with vias) and 9 (transactional kAI
+> application) are complete. The workspace has 225 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -96,6 +96,7 @@ network access or external services (`PRD.md` §1.2, §1.3).
 | Module | Public types / functions | Purpose |
 |--------|--------------------------|---------|
 | `component` | `Component`, `ComponentProperty` | Instance linking a symbol to a footprint |
+| `edit` | `EditTransaction`, `AppliedChange`, `EditError`, `apply`, `undo`, `redo` | Atomic field edits with stale-value checks and reversible transactions |
 | `geometry` | `Point`, `segment_distance` | 2D point in millimetres with `distance_to` and `distance_to_segment`; segment-to-segment distance |
 | `net` | `Net`, `NetClass` | Named connectivity and design-rule class |
 | `pcb` | `PcbOutline`, `BoundingBox`, `PcbLayer`, `LayerKind`, `Stackup` | Board outline with area/perimeter/contains-point/bounds, layers and layer order |
@@ -247,8 +248,13 @@ Dependencies: `core`, `schematic`, `serde`, `serde_json`, `uuid`. Modules:
   constraints }`.
 - `SuggestionValidator::validate` implements the deterministic rules listed
   below.
-- `kAI::suggest_optimization` still returns `NotImplemented`;
-  `kAI::validate_suggestion` runs the validator locally (no network, no model).
+- `kAI::validate_suggestion` runs the validator locally (no network, no model).
+- `kAI::apply_suggestion` validates first, applies through `core::edit::apply`
+  and returns `AppliedSuggestion { suggestion_id, transaction }`. Invalid or
+  stale suggestions leave the project untouched; the transaction supports
+  undo/redo.
+- `kAI::suggest_optimization` still returns `NotImplemented`; suggestion
+  generation and model calls are future work.
 
 The default endpoint is `http://localhost:11434` (a local model server).
 Deterministic validation is mandatory and always on; `kAIConfig` exposes no
@@ -331,9 +337,10 @@ it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
 builds a PCB design (outline measurements, layer validation, a footprint
 library round trip, clean/dirty DRC runs, a DRC-clean single-layer route, a
 multi-layer route across a full-width wall with through vias, and a blocked-
-route check), reads the default renderer, AI and collaboration configuration,
-exercises the SQLite store with an in-memory database including a PCB-design
-round trip, and parses a hermetic `.kicad_sym` fixture with `kicad-parser`. Integration tests live
+route check), applies a validated kAI suggestion and undoes/redoes it, reads
+the default renderer and collaboration configuration, exercises the SQLite
+store with an in-memory database including a PCB-design round trip, and parses
+a hermetic `.kicad_sym` fixture with `kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
 
@@ -481,8 +488,10 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
    routing, netlisting or rule checks (`PLAN.md` §5.1).
 5. **No silent data loss.** Unknown or unsupported data encountered on import
    must be preserved or reported, never dropped silently (`PRD.md` §1.3.10).
-6. **Transactional editing.** Design mutations should be grouped into
-   transactions that support undo/redo (`PRD.md` §1.3.7). Not implemented yet.
+6. **Transactional editing.** Design mutations are grouped into reversible
+   `core::edit` transactions with stale-value checks (`PRD.md` §1.3.7).
+   Multi-step history, collaboration merge and PCB-object edits are not
+   implemented yet.
 7. **GPU-accelerated rendering.** Vulkan is the target rendering API on all
    platforms (`PRD.md` §1.1).
 8. **Modular, testable subsystems.** Each subsystem is a crate with a narrow
@@ -498,7 +507,7 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–8, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–9, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v4) with migrations plus project, symbol-library and
 PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
@@ -507,16 +516,18 @@ traversal, five-rule ERC, board-outline geometry, layer-stack validation,
 JSON footprint libraries, distance primitives, track/via dimensions, pad
 copper, nine-rule DRC (eight geometry rules plus limit validation),
 deterministic single-layer and multi-layer grid routing with through vias and
-UUIDv5 ids, renderer/AI/collab configuration types, the `kai-cad` self-check
-binary, CI (including a Markdown link check and coverage job), and
-documentation.
+UUIDv5 ids, atomic core edit transactions with validated kAI suggestion
+application and undo/redo, renderer/AI/collab configuration types, the
+`kai-cad` self-check binary, CI (including a Markdown link check and coverage
+job), and documentation.
 
-**Next (Week 9):** transactional kAI suggestion application. The planned work
-is:
+**Next (Week 10):** collaborative edit sessions and version history. The
+planned work is:
 
-1. Add atomic, reversible core edits with stale-value detection.
-2. Let `kAI` apply only validated suggestions and return the edit transaction.
-3. Wire apply/undo/redo into the self-check and smoke tests.
+1. Add participant membership, roles and edit permission checks.
+2. Record versions linked to `core::edit` transactions and project digests.
+3. Stage transactions deterministically for sync, then wire sessions into the
+   self-check and smoke tests.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

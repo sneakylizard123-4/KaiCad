@@ -1,6 +1,7 @@
 //! KaiCad core library — shared types, enums, and traits used across all crates.
 
 pub mod component;
+pub mod edit;
 pub mod geometry;
 pub mod net;
 pub mod pcb;
@@ -12,6 +13,7 @@ pub mod symbol;
 pub mod symbol_library;
 
 pub use component::{Component, ComponentProperty};
+pub use edit::{AppliedChange, EditError, EditTransaction};
 pub use geometry::Point;
 pub use net::{Net, NetClass};
 pub use pcb::{BoundingBox, LayerKind, PcbLayer, PcbOutline, Stackup};
