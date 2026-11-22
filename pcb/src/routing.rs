@@ -1,16 +1,20 @@
-//! Deterministic single-layer PCB routing on a configurable grid.
+//! Deterministic PCB routing on a configurable grid.
 //!
 //! [`route`] snaps the requested endpoints to a grid, runs four-neighbour A*
-//! over nodes inside the board outline, avoids existing copper and returns one
-//! simplified track. All ties are broken deterministically and track ids are
-//! UUIDv5 values derived from the request, so repeated routing is byte-identical.
+//! over nodes inside the board outline, avoids existing copper and returns
+//! simplified single-layer tracks. [`route_multilayer`] uses the same search
+//! but may insert through vias and continue on other copper layers.
+//!
+//! All ties are broken deterministically and every id is a UUIDv5 value
+//! derived from the request and the corresponding path segment, so repeated
+//! routing is byte-identical.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use uuid::Uuid;
 
-use crate::{PcbDesign, Track, rect_distance_to_point, rect_distance_to_segment};
+use crate::{PcbDesign, Track, Via, rect_distance_to_point, rect_distance_to_segment};
 
 /// Router for generating copper traces.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -59,6 +63,26 @@ fn default_max_expansions() -> usize {
     200_000
 }
 
+fn default_allow_vias() -> bool {
+    true
+}
+
+fn default_via_cost() -> f64 {
+    5.0
+}
+
+fn default_max_vias() -> usize {
+    64
+}
+
+fn default_via_diameter() -> f64 {
+    0.6
+}
+
+fn default_via_drill() -> f64 {
+    0.3
+}
+
 /// Costs and limits for the grid router.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RouterConfig {
@@ -71,6 +95,21 @@ pub struct RouterConfig {
     /// Maximum number of grid nodes the search may expand.
     #[serde(default = "default_max_expansions")]
     pub max_expansions: usize,
+    /// Whether [`route_multilayer`] may insert through vias.
+    #[serde(default = "default_allow_vias")]
+    pub allow_vias: bool,
+    /// Cost of one layer transition, in grid steps.
+    #[serde(default = "default_via_cost")]
+    pub via_cost: f64,
+    /// Maximum number of vias in one route.
+    #[serde(default = "default_max_vias")]
+    pub max_vias: usize,
+    /// Outer copper diameter of generated vias, in millimetres.
+    #[serde(default = "default_via_diameter")]
+    pub via_diameter: f64,
+    /// Finished drill diameter of generated vias, in millimetres.
+    #[serde(default = "default_via_drill")]
+    pub via_drill: f64,
 }
 
 impl Default for RouterConfig {
@@ -79,6 +118,11 @@ impl Default for RouterConfig {
             grid: default_grid(),
             bend_cost: default_bend_cost(),
             max_expansions: default_max_expansions(),
+            allow_vias: default_allow_vias(),
+            via_cost: default_via_cost(),
+            max_vias: default_max_vias(),
+            via_diameter: default_via_diameter(),
+            via_drill: default_via_drill(),
         }
     }
 }
@@ -87,7 +131,10 @@ fn default_route_width() -> f64 {
     0.25
 }
 
-/// A single-net, single-layer routing request, in millimetres.
+/// A single-net routing request, in millimetres.
+///
+/// Both endpoints are on `layer`, but [`route_multilayer`] may leave that
+/// layer and return to it before reaching `end`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteRequest {
     pub net_id: Uuid,
@@ -108,6 +155,13 @@ impl Default for RouteRequest {
             width: default_route_width(),
         }
     }
+}
+
+/// Tracks and vias produced by a multi-layer route.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RouteResult {
+    pub tracks: Vec<Track>,
+    pub vias: Vec<Via>,
 }
 
 /// Why a route could not be produced.
@@ -141,12 +195,44 @@ impl std::error::Error for RouteError {}
 /// and keeps every node inside the board outline. The returned track uses
 /// `request.net_id`, `request.width` and `request.layer`; adding it to the
 /// design produces no DRC error for clearance or containment.
+///
+/// This entry point never inserts a via, even when `config.allow_vias` is
+/// true. Use [`route_multilayer`] to allow layer changes.
 pub fn route(
     request: &RouteRequest,
     design: &PcbDesign,
     config: &RouterConfig,
 ) -> Result<Vec<Track>, RouteError> {
+    let mut single_layer = config.clone();
+    single_layer.allow_vias = false;
+    route_multilayer(request, design, &single_layer).map(|result| result.tracks)
+}
+
+/// Route one net, optionally changing copper layers through through-vias.
+///
+/// The search state is `(node, layer, direction)` plus the number of vias used
+/// so far. In-layer moves cost one grid step, with `config.bend_cost` added on
+/// a direction change. A via stays on the same node, costs `config.via_cost`
+/// and may move to any other copper layer in stackup order.
+///
+/// A candidate via is only used when its diameter/drill satisfy the design's
+/// `via-drill` and annular-ring limits, and when it clears every track, pad and
+/// via on every copper layer it spans. Generated vias are through vias from
+/// the top to the bottom copper layer. Tracks are split at each layer change
+/// and simplified independently; every track uses `request.net_id` and
+/// `request.width`. With `allow_vias == false` this is equivalent to
+/// [`route`].
+pub fn route_multilayer(
+    request: &RouteRequest,
+    design: &PcbDesign,
+    config: &RouterConfig,
+) -> Result<RouteResult, RouteError> {
     validate(request, design, config)?;
+
+    let copper = design.copper_layer_ids();
+    if !copper.contains(&request.layer) {
+        return Err(invalid("layer is not in the copper stackup"));
+    }
 
     let start_node = snap_node(request.start, config.grid);
     let end_node = snap_node(request.end, config.grid);
@@ -166,17 +252,17 @@ pub fn route(
     let pads = design.pad_copper();
     let context = SearchContext {
         design,
-        layer: request.layer,
         width: request.width,
         clearance: design.rules.clearance,
         net_id: request.net_id,
         pads: &pads,
+        copper: &copper,
     };
 
-    if context.point_blocked(&start_point) {
+    if context.point_blocked(&start_point, request.layer) {
         return Err(invalid("start point is blocked by existing copper"));
     }
-    if context.point_blocked(&end_point) {
+    if context.point_blocked(&end_point, request.layer) {
         return Err(invalid("end point is blocked by existing copper"));
     }
 
@@ -189,7 +275,8 @@ pub fn route(
     let min_y = (bbox.min.y / config.grid).floor() as i64;
     let max_y = (bbox.max.y / config.grid).ceil() as i64;
 
-    let start_state = State { node: start_node, direction: START_DIRECTION };
+    let start_state =
+        State { node: start_node, layer: request.layer, direction: START_DIRECTION, vias: 0 };
     let mut open = BinaryHeap::new();
     let mut best = HashMap::new();
     let mut came = HashMap::new();
@@ -209,7 +296,7 @@ pub fn route(
         if closed.contains(&item.state) {
             continue;
         }
-        if item.state.node == end_node {
+        if item.state.node == end_node && item.state.layer == request.layer {
             goal = Some(item.state);
             break;
         }
@@ -231,7 +318,7 @@ pub fn route(
             if !design.outline.contains_point(&next_point) {
                 continue;
             }
-            if context.segment_blocked(&current_point, &next_point) {
+            if context.segment_blocked(&current_point, &next_point, item.state.layer) {
                 continue;
             }
 
@@ -242,28 +329,60 @@ pub fn route(
                     0.0
                 };
             let g = item.g + 1.0 + bend;
-            let state = State { node: next, direction };
+            let state =
+                State { node: next, layer: item.state.layer, direction, vias: item.state.vias };
 
-            if best.get(&state).is_some_and(|existing| *existing <= g) {
+            relax(&mut open, &mut best, &mut came, item.state, state, g, end_node);
+        }
+
+        if !config.allow_vias
+            || copper.len() < 2
+            || item.state.vias as usize >= config.max_vias
+            || !context.via_allowed(&current_point, config)
+        {
+            continue;
+        }
+
+        let Some(from_index) = copper.iter().position(|id| *id == item.state.layer) else {
+            continue;
+        };
+        for offset in 1..copper.len() {
+            let target = copper[(from_index + offset) % copper.len()];
+            if context.point_blocked(&current_point, target) {
                 continue;
             }
-            best.insert(state, g);
-            came.insert(state, item.state);
-            open.push(Reverse(QueueItem { f: g + heuristic(next, end_node), g, state }));
+
+            let g = item.g + config.via_cost;
+            let state = State {
+                node: item.state.node,
+                layer: target,
+                direction: START_DIRECTION,
+                vias: item.state.vias + 1,
+            };
+            relax(&mut open, &mut best, &mut came, item.state, state, g, end_node);
         }
     }
 
     let goal = goal.ok_or(RouteError::NoPath)?;
-    let nodes = reconstruct(goal, &came);
-    let path = nodes.into_iter().map(|node| node_point(node, config.grid)).collect();
+    let states = reconstruct(goal, &came);
+    Ok(build_result(request, config, &copper, &states))
+}
 
-    Ok(vec![Track {
-        id: route_id(request, config, start_node, end_node),
-        net_id: request.net_id,
-        layer: request.layer,
-        width: request.width,
-        path,
-    }])
+fn relax(
+    open: &mut BinaryHeap<Reverse<QueueItem>>,
+    best: &mut HashMap<State, f64>,
+    came: &mut HashMap<State, State>,
+    previous: State,
+    state: State,
+    g: f64,
+    end_node: Node,
+) {
+    if best.get(&state).is_some_and(|existing| *existing <= g) {
+        return;
+    }
+    best.insert(state, g);
+    came.insert(state, previous);
+    open.push(Reverse(QueueItem { f: g + heuristic(state.node, end_node), g, state }));
 }
 
 fn validate(
@@ -279,6 +398,21 @@ fn validate(
     }
     if config.max_expansions == 0 {
         return Err(invalid("max_expansions must be greater than zero"));
+    }
+    if !config.via_cost.is_finite() || config.via_cost < 0.0 {
+        return Err(invalid("via_cost must be finite and non-negative"));
+    }
+    if config.max_vias == 0 {
+        return Err(invalid("max_vias must be greater than zero"));
+    }
+    if !config.via_diameter.is_finite() || config.via_diameter <= 0.0 {
+        return Err(invalid("via_diameter must be finite and greater than zero"));
+    }
+    if !config.via_drill.is_finite() || config.via_drill <= 0.0 {
+        return Err(invalid("via_drill must be finite and greater than zero"));
+    }
+    if config.via_drill >= config.via_diameter {
+        return Err(invalid("via_drill must be smaller than via_diameter"));
     }
     if !request.width.is_finite() || request.width <= 0.0 {
         return Err(invalid("width must be finite and greater than zero"));
@@ -318,7 +452,9 @@ struct Node {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct State {
     node: Node,
+    layer: u16,
     direction: u8,
+    vias: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -346,6 +482,8 @@ impl Ord for QueueItem {
             .then_with(|| self.state.node.y.cmp(&other.state.node.y))
             .then_with(|| self.state.node.x.cmp(&other.state.node.x))
             .then_with(|| self.state.direction.cmp(&other.state.direction))
+            .then_with(|| self.state.layer.cmp(&other.state.layer))
+            .then_with(|| self.state.vias.cmp(&other.state.vias))
     }
 }
 
@@ -357,19 +495,19 @@ impl PartialOrd for QueueItem {
 
 struct SearchContext<'a> {
     design: &'a PcbDesign,
-    layer: u16,
     width: f64,
     clearance: f64,
     net_id: Uuid,
     pads: &'a [crate::PadCopper],
+    copper: &'a [u16],
 }
 
 impl SearchContext<'_> {
-    fn point_blocked(&self, point: &core::Point) -> bool {
+    fn point_blocked(&self, point: &core::Point, layer: u16) -> bool {
         let gap = self.clearance + self.width / 2.0;
 
         for track in &self.design.tracks {
-            if track.layer != self.layer || !track.width.is_finite() {
+            if track.layer != layer || !track.width.is_finite() {
                 continue;
             }
             let required = gap + track.width / 2.0;
@@ -381,7 +519,7 @@ impl SearchContext<'_> {
         }
 
         for via in &self.design.vias {
-            if !self.design.via_covers_layer(via, self.layer) || !via.diameter.is_finite() {
+            if !self.design.via_covers_layer(via, layer) || !via.diameter.is_finite() {
                 continue;
             }
             if point.distance_to(&via.position) < gap + via.diameter / 2.0 {
@@ -391,7 +529,7 @@ impl SearchContext<'_> {
 
         for pad in self.pads {
             if !pad.has_valid_size()
-                || !pad.layers.contains(&self.layer)
+                || !pad.layers.contains(&layer)
                 || pad.net_id == Some(self.net_id)
             {
                 continue;
@@ -403,11 +541,11 @@ impl SearchContext<'_> {
         false
     }
 
-    fn segment_blocked(&self, start: &core::Point, end: &core::Point) -> bool {
+    fn segment_blocked(&self, start: &core::Point, end: &core::Point, layer: u16) -> bool {
         let gap = self.clearance + self.width / 2.0;
 
         for track in &self.design.tracks {
-            if track.layer != self.layer || !track.width.is_finite() {
+            if track.layer != layer || !track.width.is_finite() {
                 continue;
             }
             let required = gap + track.width / 2.0;
@@ -419,7 +557,7 @@ impl SearchContext<'_> {
         }
 
         for via in &self.design.vias {
-            if !self.design.via_covers_layer(via, self.layer) || !via.diameter.is_finite() {
+            if !self.design.via_covers_layer(via, layer) || !via.diameter.is_finite() {
                 continue;
             }
             if via.position.distance_to_segment(start, end) < gap + via.diameter / 2.0 {
@@ -429,7 +567,7 @@ impl SearchContext<'_> {
 
         for pad in self.pads {
             if !pad.has_valid_size()
-                || !pad.layers.contains(&self.layer)
+                || !pad.layers.contains(&layer)
                 || pad.net_id == Some(self.net_id)
             {
                 continue;
@@ -439,6 +577,70 @@ impl SearchContext<'_> {
             }
         }
         false
+    }
+
+    /// Whether a through via centred on `point` clears every spanned layer and
+    /// satisfies the design's via limits.
+    fn via_allowed(&self, point: &core::Point, config: &RouterConfig) -> bool {
+        if self.copper.len() < 2 {
+            return false;
+        }
+
+        let rules = &self.design.rules;
+        let ring = (config.via_diameter - config.via_drill) / 2.0;
+        if config.via_drill < rules.min_via_drill || ring < rules.min_annular_ring {
+            return false;
+        }
+
+        let radius = config.via_diameter / 2.0;
+        for layer in self.copper {
+            for track in &self.design.tracks {
+                if track.layer != *layer || !track.width.is_finite() || track.net_id == self.net_id
+                {
+                    continue;
+                }
+                let required = self.clearance + radius + track.width / 2.0;
+                if path_point_distance(&track.path, point) < required {
+                    return false;
+                }
+            }
+
+            for pad in self.pads {
+                if !pad.has_valid_size()
+                    || !pad.layers.contains(layer)
+                    || pad.net_id == Some(self.net_id)
+                {
+                    continue;
+                }
+                if rect_distance_to_point(&pad.rect, point) < self.clearance + radius {
+                    return false;
+                }
+            }
+
+            for via in &self.design.vias {
+                if !self.design.via_covers_layer(via, *layer)
+                    || !via.diameter.is_finite()
+                    || via.net_id == Some(self.net_id)
+                {
+                    continue;
+                }
+                if point.distance_to(&via.position) < self.clearance + radius + via.diameter / 2.0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+fn path_point_distance(path: &[core::Point], point: &core::Point) -> f64 {
+    match path {
+        [] => f64::INFINITY,
+        [single] => single.distance_to(point),
+        _ => path
+            .windows(2)
+            .map(|window| point.distance_to_segment(&window[0], &window[1]))
+            .fold(f64::INFINITY, f64::min),
     }
 }
 
@@ -454,7 +656,7 @@ fn heuristic(node: Node, goal: Node) -> f64 {
     ((node.x - goal.x).abs() + (node.y - goal.y).abs()) as f64
 }
 
-fn reconstruct(goal: State, came: &HashMap<State, State>) -> Vec<Node> {
+fn reconstruct(goal: State, came: &HashMap<State, State>) -> Vec<State> {
     let mut states = vec![goal];
     let mut current = goal;
     while let Some(previous) = came.get(&current).copied() {
@@ -462,14 +664,80 @@ fn reconstruct(goal: State, came: &HashMap<State, State>) -> Vec<Node> {
         current = previous;
     }
     states.reverse();
+    states
+}
 
-    let mut nodes: Vec<Node> = Vec::new();
-    for state in states {
-        if nodes.last() != Some(&state.node) {
-            nodes.push(state.node);
+#[derive(Debug)]
+struct Run {
+    layer: u16,
+    nodes: Vec<Node>,
+}
+
+fn build_result(
+    request: &RouteRequest,
+    config: &RouterConfig,
+    copper: &[u16],
+    states: &[State],
+) -> RouteResult {
+    let mut runs: Vec<Run> = Vec::new();
+    let mut transitions: Vec<(Node, u16, u16)> = Vec::new();
+    let mut current = Run { layer: states[0].layer, nodes: vec![states[0].node] };
+
+    for pair in states.windows(2) {
+        let (current_state, next) = (pair[0], pair[1]);
+        if current_state.layer != next.layer {
+            if current.nodes.len() >= 2 {
+                runs.push(current);
+            }
+            current = Run { layer: next.layer, nodes: vec![next.node] };
+            transitions.push((current_state.node, current_state.layer, next.layer));
+        } else if current.nodes.last() != Some(&next.node) {
+            current.nodes.push(next.node);
         }
     }
-    simplify(nodes)
+    if current.nodes.len() >= 2 {
+        runs.push(current);
+    }
+
+    let track_count = runs.len();
+    let tracks = runs
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, run)| {
+            let simplified = simplify(run.nodes);
+            if simplified.len() < 2 {
+                return None;
+            }
+            let path: Vec<core::Point> =
+                simplified.iter().map(|node| node_point(*node, config.grid)).collect();
+            let id = if track_count == 1 {
+                route_id(request, config, simplified[0], *simplified.last().unwrap())
+            } else {
+                track_segment_id(request, config, run.layer, &simplified, index)
+            };
+            Some(Track { id, net_id: request.net_id, layer: run.layer, width: request.width, path })
+        })
+        .collect();
+
+    let (layer_start, layer_end) = (
+        copper.first().copied().unwrap_or(request.layer),
+        copper.last().copied().unwrap_or(request.layer),
+    );
+    let vias = transitions
+        .into_iter()
+        .enumerate()
+        .map(|(index, (node, from, to))| Via {
+            id: via_id(request, config, node, from, to, index),
+            net_id: Some(request.net_id),
+            position: node_point(node, config.grid),
+            layer_start,
+            layer_end,
+            diameter: config.via_diameter,
+            drill: config.via_drill,
+        })
+        .collect();
+
+    RouteResult { tracks, vias }
 }
 
 fn simplify(nodes: Vec<Node>) -> Vec<Node> {
@@ -484,7 +752,9 @@ fn simplify(nodes: Vec<Node>) -> Vec<Node> {
                 break;
             }
         }
-        simplified.push(node);
+        if simplified.last() != Some(&node) {
+            simplified.push(node);
+        }
     }
     simplified
 }
@@ -504,11 +774,63 @@ fn route_id(request: &RouteRequest, config: &RouterConfig, start: Node, end: Nod
     Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes())
 }
 
+fn track_segment_id(
+    request: &RouteRequest,
+    config: &RouterConfig,
+    layer: u16,
+    nodes: &[Node],
+    index: usize,
+) -> Uuid {
+    let start = nodes[0];
+    let end = *nodes.last().unwrap();
+    let name = format!(
+        "route:{}:{}:{}:{}:multi:{}:{}:{}:{}:{}:{}",
+        request.net_id,
+        request.layer,
+        request.width.to_bits(),
+        config.grid.to_bits(),
+        index,
+        layer,
+        start.x,
+        start.y,
+        end.x,
+        end.y
+    );
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes())
+}
+
+fn via_id(
+    request: &RouteRequest,
+    config: &RouterConfig,
+    node: Node,
+    from: u16,
+    to: u16,
+    index: usize,
+) -> Uuid {
+    let name = format!(
+        "via:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+        request.net_id,
+        request.width.to_bits(),
+        config.grid.to_bits(),
+        config.via_diameter.to_bits(),
+        config.via_drill.to_bits(),
+        node.x,
+        node.y,
+        from,
+        to,
+        index
+    );
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RouteError, RouteRequest, Router, RouterConfig, route};
+    use super::{
+        RouteError, RouteRequest, RouteResult, Router, RouterConfig, route, route_multilayer,
+    };
     use crate::{PcbDesign, Track, Via, run_drc};
     use core::{LayerKind, PcbLayer, PcbOutline, Point, Stackup};
+    use std::collections::HashSet;
     use uuid::Uuid;
 
     fn design() -> PcbDesign {
@@ -524,12 +846,31 @@ mod tests {
         }
     }
 
+    fn four_layer_design() -> PcbDesign {
+        PcbDesign {
+            outline: PcbOutline::rectangle(20.0, 20.0),
+            layers: vec![
+                PcbLayer::new(0, "F.Cu", LayerKind::Copper),
+                PcbLayer::new(1, "In1.Cu", LayerKind::Copper),
+                PcbLayer::new(2, "In2.Cu", LayerKind::Copper),
+                PcbLayer::new(3, "B.Cu", LayerKind::Copper),
+            ],
+            stackup: Stackup { layers: vec![0, 1, 2, 3] },
+            ..PcbDesign::default()
+        }
+    }
+
     fn request(start: Point, end: Point) -> RouteRequest {
         RouteRequest { net_id: Uuid::from_u128(7), start, end, layer: 0, width: 0.25 }
     }
 
     fn config() -> RouterConfig {
-        RouterConfig { grid: 1.0, bend_cost: 1.0, max_expansions: 100_000 }
+        RouterConfig {
+            grid: 1.0,
+            bend_cost: 1.0,
+            max_expansions: 100_000,
+            ..RouterConfig::default()
+        }
     }
 
     fn wall(design: &mut PcbDesign, start: Point, end: Point) {
@@ -540,6 +881,31 @@ mod tests {
             width: 0.25,
             path: vec![start, end],
         });
+    }
+
+    fn wall_on(design: &mut PcbDesign, layer: u16, start: Point, end: Point) {
+        design.tracks.push(Track {
+            id: Uuid::new_v4(),
+            net_id: Uuid::new_v4(),
+            layer,
+            width: 0.25,
+            path: vec![start, end],
+        });
+    }
+
+    fn crossing_design() -> PcbDesign {
+        let mut design = design();
+        wall(&mut design, Point::new(0.0, 10.0), Point::new(20.0, 10.0));
+        design
+    }
+
+    fn assert_drc_clean(design: &PcbDesign, result: &RouteResult) {
+        let mut routed = design.clone();
+        routed.tracks.extend(result.tracks.clone());
+        routed.vias.extend(result.vias.clone());
+        let report = run_drc(&routed, &routed.rules);
+        assert!(report.is_valid(), "route produced DRC errors: {:?}", report.violations);
+        assert_eq!(report.violations, Vec::new());
     }
 
     fn routed_tracks(
@@ -562,6 +928,11 @@ mod tests {
         assert_eq!(router.config.grid, 0.5);
         assert_eq!(router.config.bend_cost, 1.0);
         assert_eq!(router.config.max_expansions, 200_000);
+        assert!(router.config.allow_vias);
+        assert_eq!(router.config.via_cost, 5.0);
+        assert_eq!(router.config.max_vias, 64);
+        assert_eq!(router.config.via_diameter, 0.6);
+        assert_eq!(router.config.via_drill, 0.3);
 
         let json = serde_json::to_string(&router).expect("router serializes");
         let restored: Router = serde_json::from_str(&json).expect("router parses");
@@ -663,6 +1034,7 @@ mod tests {
         let mut design = design();
         design.vias.push(Via {
             id: Uuid::new_v4(),
+            net_id: None,
             position: Point::new(5.0, 5.0),
             layer_start: 0,
             layer_end: 1,
@@ -723,5 +1095,287 @@ mod tests {
         design.footprints[0].pad_positions[0].net_id = Some(request.net_id);
         let straight = route(&request, &design, &config()).expect("same-net pad should not block");
         assert_eq!(straight[0].path.len(), 2);
+    }
+
+    #[test]
+    fn multilayer_config_defaults_and_legacy_json() {
+        let config = RouterConfig::default();
+        assert!(config.allow_vias);
+        assert_eq!(config.via_cost, 5.0);
+        assert_eq!(config.max_vias, 64);
+        assert_eq!(config.via_diameter, 0.6);
+        assert_eq!(config.via_drill, 0.3);
+
+        let json = serde_json::to_string(&config).expect("config serializes");
+        let restored: RouterConfig = serde_json::from_str(&json).expect("config parses");
+        assert_eq!(restored, config);
+
+        let legacy: RouterConfig =
+            serde_json::from_str(r#"{"grid":0.25,"bend_cost":2.0,"max_expansions":1000}"#)
+                .expect("legacy config loads");
+        assert_eq!(legacy.grid, 0.25);
+        assert!(legacy.allow_vias);
+        assert_eq!(legacy.via_cost, 5.0);
+    }
+
+    #[test]
+    fn multilayer_config_rejects_invalid_via_settings() {
+        let design = design();
+        let request = request(Point::new(1.0, 1.0), Point::new(5.0, 5.0));
+        let cases = [
+            RouterConfig { via_cost: -1.0, ..config() },
+            RouterConfig { via_cost: f64::NAN, ..config() },
+            RouterConfig { max_vias: 0, ..config() },
+            RouterConfig { via_diameter: 0.0, ..config() },
+            RouterConfig { via_diameter: f64::NAN, ..config() },
+            RouterConfig { via_drill: 0.0, ..config() },
+            RouterConfig { via_drill: f64::NAN, ..config() },
+            RouterConfig { via_drill: 0.6, ..config() },
+        ];
+
+        for config in cases {
+            assert!(matches!(
+                route_multilayer(&request, &design, &config),
+                Err(RouteError::InvalidRequest(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn multilayer_crosses_a_full_width_top_wall() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let result = route_multilayer(&request, &design, &config())
+            .expect("multi-layer route should succeed");
+
+        assert!(!result.vias.is_empty(), "expected at least one via");
+        assert!(result.tracks.len() >= 2, "expected at least two layer runs");
+        assert!(result.vias.iter().any(|via| via.position.y < 10.0));
+        assert!(result.vias.iter().any(|via| via.position.y > 10.0));
+        assert!(result.tracks.iter().any(|track| track.layer == 1));
+        assert!(result.tracks.iter().all(|track| track.net_id == request.net_id));
+        assert!(result.tracks.iter().all(|track| track.width == request.width));
+        assert_drc_clean(&design, &result);
+    }
+
+    #[test]
+    fn multilayer_disabled_returns_no_path_for_the_wall() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let config = RouterConfig { allow_vias: false, ..config() };
+
+        assert!(matches!(route_multilayer(&request, &design, &config), Err(RouteError::NoPath)));
+        assert!(matches!(route(&request, &design, &config), Err(RouteError::NoPath)));
+    }
+
+    #[test]
+    fn multilayer_vias_match_config_and_span_stackup() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let config = config();
+        let result =
+            route_multilayer(&request, &design, &config).expect("multi-layer route should succeed");
+
+        for via in &result.vias {
+            assert_eq!(via.layer_start, 0);
+            assert_eq!(via.layer_end, 1);
+            assert_eq!(via.diameter, config.via_diameter);
+            assert_eq!(via.drill, config.via_drill);
+            assert_eq!(via.net_id, Some(request.net_id));
+            assert!((via.position.x.fract()).abs() < 1e-9);
+            assert!((via.position.y.fract()).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn multilayer_tracks_are_split_and_simplified_per_layer() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let result = route_multilayer(&request, &design, &config())
+            .expect("multi-layer route should succeed");
+
+        let mut ids = HashSet::new();
+        for track in &result.tracks {
+            assert!(track.path.len() >= 2, "track has fewer than two points");
+            assert!(track.path.windows(2).all(|pair| pair[0] != pair[1]), "zero-length run");
+            assert!(matches!(track.layer, 0 | 1), "track is on a non-copper layer");
+            assert!(ids.insert(track.id), "duplicate track id");
+        }
+        for via in &result.vias {
+            assert!(
+                result.tracks.iter().any(|track| {
+                    track.path.first() == Some(&via.position)
+                        || track.path.last() == Some(&via.position)
+                }),
+                "via is not connected to a track endpoint"
+            );
+        }
+    }
+
+    #[test]
+    fn multilayer_vias_avoid_bottom_layer_copper() {
+        let mut design = crossing_design();
+        wall_on(&mut design, 1, Point::new(0.0, 10.0), Point::new(9.0, 10.0));
+        wall_on(&mut design, 1, Point::new(11.0, 10.0), Point::new(20.0, 10.0));
+
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let result =
+            route_multilayer(&request, &design, &config()).expect("gap should allow a route");
+
+        assert!(!result.vias.is_empty());
+        assert_drc_clean(&design, &result);
+    }
+
+    #[test]
+    fn multilayer_max_vias_is_enforced() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+
+        let one = RouterConfig { max_vias: 1, ..config() };
+        assert!(matches!(route_multilayer(&request, &design, &one), Err(RouteError::NoPath)));
+
+        let two = RouterConfig { max_vias: 2, ..config() };
+        let result = route_multilayer(&request, &design, &two).expect("two vias should be enough");
+        assert!(result.vias.len() <= 2);
+    }
+
+    #[test]
+    fn multilayer_rejects_vias_that_violate_drc_limits() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+
+        let drill_too_small = RouterConfig { via_drill: 0.1, ..config() };
+        assert!(matches!(
+            route_multilayer(&request, &design, &drill_too_small),
+            Err(RouteError::NoPath)
+        ));
+
+        let thin_ring = RouterConfig { via_diameter: 0.25, via_drill: 0.2, ..config() };
+        assert!(matches!(route_multilayer(&request, &design, &thin_ring), Err(RouteError::NoPath)));
+    }
+
+    #[test]
+    fn multilayer_is_deterministic() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+
+        let first = route_multilayer(&request, &design, &config()).expect("first route");
+        let second = route_multilayer(&request, &design, &config()).expect("second route");
+
+        assert_eq!(
+            serde_json::to_string(&first).expect("serialize"),
+            serde_json::to_string(&second).expect("serialize")
+        );
+        assert_eq!(
+            first.vias.iter().map(|via| via.id).collect::<Vec<_>>(),
+            second.vias.iter().map(|via| via.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn multilayer_does_not_mutate_the_design() {
+        let design = crossing_design();
+        let before = serde_json::to_string(&design).expect("design serializes");
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+
+        let _ = route_multilayer(&request, &design, &config()).expect("route");
+
+        assert_eq!(before, serde_json::to_string(&design).expect("design serializes"));
+    }
+
+    #[test]
+    fn multilayer_result_is_drc_clean() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let result = route_multilayer(&request, &design, &config()).expect("route");
+
+        let mut routed = design;
+        routed.tracks.extend(result.tracks);
+        routed.vias.extend(result.vias);
+        let report = run_drc(&routed, &routed.rules);
+
+        assert!(report.is_valid(), "route produced DRC errors: {:?}", report.violations);
+        assert_eq!(report.count(crate::DrcSeverity::Error), 0);
+    }
+
+    #[test]
+    fn multilayer_uses_inner_layer_on_a_four_layer_board() {
+        let mut design = four_layer_design();
+        wall_on(&mut design, 0, Point::new(0.0, 10.0), Point::new(20.0, 10.0));
+        wall_on(&mut design, 1, Point::new(0.0, 10.0), Point::new(20.0, 10.0));
+        wall_on(&mut design, 3, Point::new(0.0, 10.0), Point::new(20.0, 10.0));
+
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let result =
+            route_multilayer(&request, &design, &config()).expect("inner layer should be usable");
+
+        assert!(result.tracks.iter().any(|track| track.layer == 2));
+        assert!(result.vias.iter().all(|via| via.layer_start == 0 && via.layer_end == 3));
+        assert_drc_clean(&design, &result);
+    }
+
+    #[test]
+    fn single_layer_route_matches_multilayer_without_vias() {
+        let design = design();
+        let request = request(Point::new(2.0, 2.0), Point::new(17.0, 17.0));
+        let config = config();
+
+        let single = route(&request, &design, &config).expect("single-layer route");
+        let disabled = RouterConfig { allow_vias: false, ..config };
+        let multi = route_multilayer(&request, &design, &disabled).expect("no-via route");
+
+        assert!(multi.vias.is_empty());
+        assert_eq!(
+            serde_json::to_string(&single).expect("serialize"),
+            serde_json::to_string(&multi.tracks).expect("serialize")
+        );
+
+        let with_vias = route_multilayer(&request, &design, &config).expect("no-via-needed route");
+        assert!(with_vias.vias.is_empty());
+        assert_eq!(
+            serde_json::to_string(&single).expect("serialize"),
+            serde_json::to_string(&with_vias.tracks).expect("serialize")
+        );
+    }
+
+    #[test]
+    fn multilayer_reports_invalid_requests() {
+        let design = design();
+        let config = config();
+
+        let cases = [
+            RouteRequest { layer: 2, ..request(Point::new(1.0, 1.0), Point::new(5.0, 5.0)) },
+            RouteRequest { width: 0.0, ..request(Point::new(1.0, 1.0), Point::new(5.0, 5.0)) },
+            request(Point::new(1.0, 1.0), Point::new(30.0, 5.0)),
+        ];
+        for case in cases {
+            assert!(matches!(
+                route_multilayer(&case, &design, &config),
+                Err(RouteError::InvalidRequest(_))
+            ));
+        }
+
+        let bad_grid = RouterConfig { grid: -0.5, ..config };
+        assert!(matches!(
+            route_multilayer(
+                &request(Point::new(1.0, 1.0), Point::new(5.0, 5.0)),
+                &design,
+                &bad_grid
+            ),
+            Err(RouteError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn multilayer_via_ids_are_unique() {
+        let design = crossing_design();
+        let request = request(Point::new(5.0, 5.0), Point::new(15.0, 15.0));
+        let result = route_multilayer(&request, &design, &config()).expect("route");
+
+        let mut ids = HashSet::new();
+        for via in &result.vias {
+            assert!(!via.id.is_nil());
+            assert!(ids.insert(via.id), "duplicate via id");
+        }
     }
 }

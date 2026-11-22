@@ -313,6 +313,55 @@ fn kicad_symbol_library_parses_and_persists() {
 }
 
 #[test]
+fn multilayer_routing_crosses_a_top_layer_wall_and_repeats_deterministically() {
+    let design = pcb::PcbDesign {
+        outline: core::PcbOutline::rectangle(40.0, 30.0),
+        layers: vec![
+            core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
+            core::PcbLayer::new(1, "B.Cu", core::LayerKind::Copper),
+        ],
+        stackup: core::Stackup { layers: vec![0, 1] },
+        tracks: vec![pcb::Track {
+            id: Uuid::new_v4(),
+            net_id: Uuid::new_v4(),
+            layer: 0,
+            width: 0.25,
+            path: vec![core::Point::new(0.0, 15.0), core::Point::new(40.0, 15.0)],
+        }],
+        ..pcb::PcbDesign::default()
+    };
+    let request = pcb::routing::RouteRequest {
+        net_id: Uuid::new_v4(),
+        start: core::Point::new(5.0, 5.0),
+        end: core::Point::new(35.0, 25.0),
+        layer: 0,
+        width: 0.25,
+    };
+    let config = pcb::routing::RouterConfig::default();
+
+    let result = pcb::routing::route_multilayer(&request, &design, &config)
+        .expect("route across the wall using a via");
+    assert!(!result.vias.is_empty());
+    assert!(result.tracks.len() >= 2);
+    assert!(result.tracks.iter().any(|track| track.layer == 1));
+
+    let mut routed = design.clone();
+    routed.tracks.extend(result.tracks.clone());
+    routed.vias.extend(result.vias.clone());
+    assert!(pcb::run_drc(&routed, &routed.rules).is_valid());
+
+    let repeated =
+        pcb::routing::route_multilayer(&request, &design, &config).expect("repeat route");
+    assert_eq!(
+        serde_json::to_string(&result).expect("serialize first route"),
+        serde_json::to_string(&repeated).expect("serialize repeated route")
+    );
+
+    let no_vias = pcb::routing::RouterConfig { allow_vias: false, ..config };
+    assert!(pcb::routing::route_multilayer(&request, &design, &no_vias).is_err());
+}
+
+#[test]
 fn routing_produces_a_drc_clean_track_and_reports_a_blocked_path() {
     let design = pcb::PcbDesign {
         outline: core::PcbOutline::rectangle(40.0, 30.0),

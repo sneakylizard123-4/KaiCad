@@ -227,6 +227,34 @@ fn check_pcb() -> Result<(), String> {
     let routed_report = pcb::run_drc(&routed_design, &routed_design.rules);
     ensure(routed_report.is_valid(), "pcb: routed track fails DRC")?;
 
+    let mut crossing_design = design.clone();
+    crossing_design.tracks.push(pcb::Track {
+        id: Uuid::new_v4(),
+        net_id: Uuid::new_v4(),
+        layer: 0,
+        width: 0.25,
+        path: vec![core::Point::new(0.0, 40.0), core::Point::new(100.0, 40.0)],
+    });
+    let crossing_request = pcb::routing::RouteRequest {
+        start: core::Point::new(10.0, 30.0),
+        end: core::Point::new(90.0, 50.0),
+        ..route_request.clone()
+    };
+    let multilayer =
+        pcb::routing::route_multilayer(&crossing_request, &crossing_design, &router_config)
+            .map_err(|error| format!("pcb: multi-layer routing failed: {error}"))?;
+    ensure(!multilayer.vias.is_empty(), "pcb: multi-layer route inserted no via")?;
+    ensure(
+        multilayer.tracks.len() >= 2,
+        "pcb: multi-layer route did not split tracks at the layer change",
+    )?;
+
+    let mut multilayer_design = crossing_design.clone();
+    multilayer_design.tracks.extend(multilayer.tracks.clone());
+    multilayer_design.vias.extend(multilayer.vias.clone());
+    let multilayer_report = pcb::run_drc(&multilayer_design, &multilayer_design.rules);
+    ensure(multilayer_report.is_valid(), "pcb: multi-layer route fails DRC")?;
+
     let mut blocked_design = design.clone();
     blocked_design.tracks.push(pcb::Track {
         id: Uuid::new_v4(),
@@ -284,7 +312,7 @@ fn check_pcb() -> Result<(), String> {
     ensure(loaded.footprints[0].pad_positions.len() == 2, "pcb: footprint library lost pads")?;
 
     println!(
-        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s), DRC clean={} ({} violation(s) before fixing), routed {} point(s)",
+        "  pcb: outline {} points, area {:.0} mm^2, {} layer(s), {} copper layer(s), {} footprint(s), DRC clean={} ({} violation(s) before fixing), routed {} point(s), multi-layer {} track(s)/{} via(s)",
         design.outline.points.len(),
         design.outline.area(),
         design.layers.len(),
@@ -292,7 +320,9 @@ fn check_pcb() -> Result<(), String> {
         loaded.footprints.len(),
         clean.violations.is_empty(),
         dirty.violations.len(),
-        routed[0].path.len()
+        routed[0].path.len(),
+        multilayer.tracks.len(),
+        multilayer.vias.len()
     );
     Ok(())
 }

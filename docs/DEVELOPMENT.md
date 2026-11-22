@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–7 are complete (188 tests, clippy/fmt/doc/release
-> all clean). Week 8 — multi-layer routing with vias — is next; its work order
-> is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–8 are complete (205 tests, clippy/fmt/doc/release
+> all clean). Week 9 — transactional kAI suggestion application — is next; its
+> work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,7 +121,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **188 tests**, all passing:
+`cargo test --workspace` currently runs **205 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -129,11 +129,11 @@ benchmarks; a bare `cargo check` misses them.
 | `collab` (`src/lib.rs`) | 9 |
 | `core` (`src/tests.rs` and inline modules) | 31 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
-| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 56 |
+| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 72 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 23 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 12 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 13 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -157,7 +157,7 @@ License: GPL-3.0-or-later
 subsystem self-check:
   core: project JSON round trip ok (… bytes)
   schematic: 1 net(s), 1 connection(s), ERC valid=true, 0 violation(s), export 208 bytes
-  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s)
+  pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s), multi-layer 2 track(s)/2 via(s)
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always
   collab: 1 session(s)
@@ -247,8 +247,8 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–7 are finished; Week 8 extends routing across copper layers with
-deterministic via insertion. Before starting, read
+Weeks 1–8 are finished; Week 9 adds transactional kAI suggestion application
+with deterministic undo/redo. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -354,8 +354,9 @@ you, check these semantics before changing a rule:
   subtract the via radius, and pads are axis-aligned copper rectangles offset
   by the footprint position. Tracks on other layers, non-copper layers and the
   **same net** are skipped, because same-net copper is an intentional
-  connection. Pad-to-track clearance is skipped when `pad.net_id` matches the
-  track's net; pads in one footprint are not compared with each other.
+  connection. Pad-to-track and pad-to-via clearance is skipped when the nets
+  match, and track-to-via clearance is skipped when `via.net_id` matches the
+  track's net. Pads in one footprint are not compared with each other.
 - Limits live on `PcbDesign::rules` and serialize with the design. Every limit
   must be finite and greater than zero; `DrcRules::validate` checks this and
   `run_drc` reports an invalid set as a `drc-rules` error, then checks with the
@@ -387,23 +388,32 @@ report.
 ### Routing results look wrong
 
 `pcb::routing::route` snaps both endpoints to an origin-anchored grid (half-grid
-values round away from zero), runs four-neighbour A* and returns one simplified
-track. Check these semantics before changing the router:
+values round away from zero), runs four-neighbour A* and returns simplified
+tracks; `route_multilayer` uses the same search and may insert through vias.
+Check these semantics before changing the router:
 
 - The start and end nodes must be inside the outline and not blocked by
   existing copper. A blocked endpoint is an `InvalidRequest`, not `NoPath`.
 - Nodes and each moved segment are tested against tracks, vias and pads on the
   requested layer, using the design's clearance plus half of the route width.
   Same-net pads are ignored so a route can connect to its own pad.
-- Search ties are broken by `(f, g, y, x, direction)`, and ids are UUIDv5
-  values over the net, layer, width, grid and snapped endpoints. Routing the
+- Search ties are broken by `(f, g, y, x, direction, layer, vias)`, and track
+  and via ids are UUIDv5 values over the request and path segment. Routing the
   same request twice must produce identical JSON.
 - `NoPath` means the reachable search space was exhausted; `ExpansionLimit`
   means `max_expansions` was reached first. A larger limit can turn the latter
   into a path or into `NoPath`, never into a different successful path for the
   same limit.
+- `route` always disables vias and keeps Week 7 behaviour. `route_multilayer`
+  adds a via transition at the same snapped node, costs `via_cost` and moves to
+  another layer in stackup order; `allow_vias: false` reproduces `route`.
+- A candidate via must clear every copper layer it spans and satisfy
+  `min_via_drill` and `min_annular_ring`. It is a through via from the first to
+  the last stackup layer; `max_vias` caps transitions. Generated vias carry the
+  requested net so their own tracks are not reported as clearance violations.
 - Returned points are the snapped lattice coordinates, and collinear points are
-  merged; the track has no vias yet and stays on one layer.
+  merged within each layer run. Tracks are split at every layer change, so each
+  track is single-layer and at least two points long.
 
 ### Footprint libraries behave unexpectedly
 

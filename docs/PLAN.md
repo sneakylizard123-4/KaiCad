@@ -65,18 +65,18 @@
 
 ### Implementation status
 
-**Weeks 1–7 are complete and verified.** The Cargo workspace, CI pipeline,
+**Weeks 1–8 are complete and verified.** The Cargo workspace, CI pipeline,
 toolchain configuration, shared data model, SQLite engineering database, named
 symbol libraries, KiCad `.kicad_sym` import, the basic schematic engine
 (netlist generation and export, graph traversal, ERC), the PCB core (outline
 geometry, layer validation, footprint libraries), PCB geometry/DRC (distance
-primitives, track and via dimensions, pad copper, validated rules) and
-deterministic single-layer grid routing are in place. PCB designs persist with
-their tracks, vias and DRC rules in SQLite. The workspace has **188 passing
-tests**, clean `cargo clippy --workspace
+primitives, track and via dimensions, pad copper, validated rules), and
+deterministic single-layer and multi-layer grid routing with through vias are in
+place. PCB designs persist with their tracks, vias and DRC rules in SQLite. The
+workspace has **205 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 8 brief.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 9 brief.
 
 Phase 1 progress:
 
@@ -94,12 +94,13 @@ Phase 2 progress:
 | 5 | PCB core: outline geometry, layer-stack validation, footprint libraries | ✅ Complete |
 | 6 | PCB geometry and design-rule checking | ✅ Complete |
 | 7 | Deterministic single-layer routing | ✅ Complete |
-| 8 | Multi-layer routing, vias and renderer integration | ⬜ Not started |
+| 8 | Multi-layer routing, vias and renderer integration | ✅ Complete (routing; renderer deferred) |
+| 9 | kAI suggestion application and transactional edits | ⬜ Not started |
 
-The detailed brief for the next implementation pass — including schema
+The detailed brief for the next implementation pass — including API
 requirements, acceptance criteria and verification commands — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 8:
-multi-layer routing with deterministic via insertion, with DRC-clean results.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 9:
+transactional kAI suggestion application with deterministic undo/redo.
 
 ## 4. Key Milestones
 
@@ -142,7 +143,7 @@ multi-layer routing with deterministic via insertion, with DRC-clean results.
 
 - [ ] KaiCad can import/export KiCad 9/10 projects
 - [ ] Full schematic design (nets, symbols, rules) works
-- [ ] Multi-layer PCB design with routing is functional
+- [x] Multi-layer PCB design with routing is functional
 - [ ] Vulkan renderer produces accurate 2D/3D visualizations
 - [ ] kAI provides meaningful circuit optimization suggestions
 - [ ] Collaborative features (sharing, versioning) are operational

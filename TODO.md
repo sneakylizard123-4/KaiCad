@@ -68,15 +68,25 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Routing, pad/via DRC and design persistence wired into the `kai-cad` self-check and smoke tests
 - Documentation updated; total tests: 188
 
-## 🚧 Next — Week 8: Multi-layer routing with vias
+### Week 8 — Multi-layer routing with vias
+- `RouterConfig` fields for `allow_vias`, `via_cost`, `max_vias`, `via_diameter` and `via_drill`, with serde defaults for older JSON
+- `RouteResult { tracks, vias }` and `route_multilayer`; `route` stays single-layer and delegates to the same search
+- A* state now tracks node, layer, direction and via count; deterministic `(f, g, y, x, direction, layer, vias)` tie-break
+- Through-via insertion checked against clearance on every spanned layer, `via-span`, `min_via_drill` and `min_annular_ring`
+- Tracks split at layer changes, simplified per layer, with UUIDv5 track and via ids
+- `Via::net_id` (serde-defaulted) lets DRC exempt a via from its own same-net tracks and pads
+- Two-layer wall crossing and blocked-route checks wired into the `kai-cad` self-check and smoke tests
+- Documentation updated; total tests: 205
+
+## 🚧 Next — Week 9: Transactional kAI suggestion application
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Extend `route` across copper layers with deterministic via insertion
-- [ ] Check candidate vias with `via-span`, `via-drill` and clearance rules
-- [ ] Wire multi-layer routes into the `kai-cad` self-check and smoke tests
+- [ ] Add atomic, reversible core edit transactions with stale-value detection
+- [ ] Apply only validated kAI suggestions and return an undoable transaction
+- [ ] Wire apply/undo/redo into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥204 tests, clippy/fmt/doc/link clean
+- [ ] Target: ≥221 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
@@ -90,7 +100,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ⬜ Interactive routing
 - ✅ Deterministic DRC (Week 6)
 - ✅ Deterministic single-layer grid routing (Week 7)
-- 🚧 Multi-layer routing with vias (Week 8)
+- ✅ Multi-layer routing with vias (Week 8)
 - ⬜ Basic 2D/3D Vulkan renderer
 
 ### Custom GUI (not yet scheduled)

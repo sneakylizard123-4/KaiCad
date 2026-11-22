@@ -275,7 +275,7 @@ fn default_via_drill() -> f64 {
 }
 
 /// A PCB track (copper trace).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Track {
     pub id: uuid::Uuid,
     pub net_id: uuid::Uuid,
@@ -300,9 +300,13 @@ impl Default for Track {
 }
 
 /// A PCB via (plated hole connecting layers).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Via {
     pub id: uuid::Uuid,
+    /// Net connected by the via, when known. Documents from before this field
+    /// existed load with `None`.
+    #[serde(default)]
+    pub net_id: Option<uuid::Uuid>,
     pub position: core::Point,
     pub layer_start: u16,
     pub layer_end: u16,
@@ -320,6 +324,7 @@ impl Default for Via {
     fn default() -> Self {
         Self {
             id: uuid::Uuid::nil(),
+            net_id: None,
             position: core::Point::default(),
             layer_start: 0,
             layer_end: 0,

@@ -571,7 +571,10 @@ fn check_clearance(
         }
 
         for via in &design.vias {
-            if !design.via_covers_layer(via, track.layer) || !via.diameter.is_finite() {
+            if !design.via_covers_layer(via, track.layer)
+                || !via.diameter.is_finite()
+                || via.net_id == Some(track.net_id)
+            {
                 continue;
             }
 
@@ -638,7 +641,7 @@ fn check_clearance(
         }
 
         for via in &design.vias {
-            if !via.diameter.is_finite() {
+            if !via.diameter.is_finite() || (pad.net_id.is_some() && pad.net_id == via.net_id) {
                 continue;
             }
 

@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 7 deterministic routing complete (pre-alpha); Week 8 (multi-layer routing) is next
+- **Implementation:** Week 8 multi-layer routing complete (pre-alpha); Week 9 (kAI suggestion application) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (188 tests across the workspace)
+# Run tests (205 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -144,7 +144,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 8)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 9)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -152,16 +152,16 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–7 are complete and verified: **188 tests pass**, `cargo clippy
+Weeks 1–8 are complete and verified: **205 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 7 added deterministic single-layer
-grid routing (`RouterConfig`, `RouteRequest`, `RouteError`, `route`), pad copper
-in the DRC (size, containment and clearance), via-to-track clearance, and
-SQLite persistence of complete PCB designs including their DRC rules.
+clean, and the release build succeeds. Week 8 added deterministic multi-layer
+A* routing (`RouteResult`, `route_multilayer`), through-via insertion with
+clearance checks on every spanned copper layer, per-layer track splitting and
+via-aware DRC.
 
-The next milestone is **Week 8 — multi-layer routing with vias**: extend the
-router across copper layers, insert vias deterministically and keep the result
-DRC-clean. The full brief is in
+The next milestone is **Week 9 — kAI suggestion application with undo/redo**:
+apply validated suggestions through deterministic, reversible edits and wire
+the flow into the self-check. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -181,8 +181,10 @@ What each crate provides today:
   `LayerStack` with validation, `FootprintLibrary` JSON persistence, track and
   via dimensions, placed footprints with pad copper, a deterministic DRC
   (`run_drc`) covering tracks, vias and pads with validated per-design limits,
-  and deterministic single-layer A* routing (`route`) with grid/cost
-  configuration. Quadratic multi-layer routing with vias is next.
+  and deterministic single-layer and multi-layer A* routing (`route`,
+  `route_multilayer`) with grid/cost configuration, through-via insertion and
+  via-aware clearance checks. Pad rotation, interactive routing and blind or
+  buried vias are not implemented.
 - 🚧 **renderer** — `RendererConfig` and `WindowConfig` only. `Renderer::new`
   and `Renderer::render` return `NotImplemented`; no Vulkan objects are created.
 - 🚧 **ai (kAI)** — configuration plus deterministic suggestion validation
@@ -199,14 +201,15 @@ What each crate provides today:
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,
-  rejects a blocked route, and stores and reloads a PCB design.
+  crosses a full-width top-layer wall using deterministic through vias, rejects
+  a blocked route, and stores and reloads a PCB design.
 
 ## Roadmap
 
 | Phase | Weeks | Focus | Status |
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
-| 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 In progress |
+| 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 PCB core complete; renderer deferred |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | ⬜ Not started |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
 

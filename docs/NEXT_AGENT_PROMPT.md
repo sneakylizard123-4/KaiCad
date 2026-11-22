@@ -1,10 +1,9 @@
-# Next Agent Prompt — Week 8: Multi-Layer Routing with Vias
+# Next Agent Prompt — Week 9: Transactional kAI Suggestion Application
 
 You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
-`/home/sneak/vscode/KaiCad`. Week 7 is finished and verified. Your job is
-**Week 8: extend deterministic routing across copper layers with deterministic
-via insertion**, keeping every existing API working and every generated route
-DRC-clean.
+`/home/sneak/vscode/KaiCad`. Week 8 is finished and verified. Your job is
+**Week 9: apply validated kAI suggestions through deterministic, atomic and
+reversible edits**, without adding a network or model dependency.
 
 Read this document fully before writing code.
 
@@ -13,7 +12,7 @@ Read this document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 188 passing, 0 failing
+- **Tests:** 205 passing, 0 failing
 - **Schema:** version 4 (`projects`, projection tables, `symbol_libraries`,
   `pcb_designs`)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
@@ -23,7 +22,7 @@ Read this document fully before writing code.
 
 | Crate | Role | Workspace dependencies |
 |-------|------|------------------------|
-| `core` | Shared data model, JSON, symbol libraries, PCB primitives | none |
+| `core` | Shared data model, JSON, symbol libraries, PCB primitives, change proposals | none |
 | `schematic` | Netlist, graph, ERC | `core` |
 | `pcb` | Board data, outline, layers, footprints, DRC, routing | `core` |
 | `renderer` | Vulkan configuration types (`ash`) | none |
@@ -33,33 +32,29 @@ Read this document fully before writing code.
 | `kicad-parser` | `.kicad_sym` import | `core` |
 | `kai-cad` | Binary and cross-crate smoke tests | all of the above |
 
-### Existing PCB support
+### Existing AI and editing support
 
-- `core::Point` with `distance_to`, `distance_to_segment` and
-  `core::geometry::segment_distance`; `core::PcbOutline` with area, perimeter,
-  containment and bounding box.
-- `pcb::PcbDesign { id, outline, layers, stackup, footprints, tracks, vias,
-  rules }`; tracks carry `net_id`, `layer`, `width` and a polyline path.
-- `pcb::Via { id, position, layer_start, layer_end, diameter, drill }`.
-- `pcb::Footprint { name, reference_designator, position, pad_positions,
-  outline }` and `pcb::PadPosition { x, y, pad_type, width, height, net_id }`.
-  Pads are copper rectangles placed at `footprint.position + (x, y)`;
-  through-hole pads cover every copper layer, SMD/tented pads the top layer.
-- `pcb::drc::{DrcRules, DrcRulesError, DrcSeverity, DrcViolation, DrcReport,
-  run_drc}`: eight geometry rules plus `drc-rules` limit validation. Clearance
-  covers track-track, track-via, pad-track, pad-via and pad-pad pairs on shared
-  copper layers; same-net copper is exempt.
-- `pcb::routing::{Router, RouterConfig, RouteRequest, RouteError, route}`:
-  deterministic single-layer A* on an origin-anchored grid, UUIDv5 track ids,
-  collinear simplification, obstacle avoidance for tracks, vias and pads, and
-  a documented `(f, g, y, x, direction)` tie-break.
-- `store` persists complete designs with `save_pcb_design` / `load_pcb_design` /
-  `delete_pcb_design` (schema v4, cascade on project delete).
+- `core::proposal::ChangeProposal { id, target, field, old_value, new_value }`
+  is a field-level change with JSON values. `ChangeProposal::new` currently
+  creates a random v4 id.
+- `ai::kAI { config }` with `kAIConfig`, `OptimizationContext`, `Constraint`,
+  `ConstraintType`, `OptimizationSuggestion`, `ValidationResult`,
+  `ValidationError`, `kAIError` and `SuggestionValidator`.
+- `OptimizationSuggestion { id, description, changes, confidence_score }` and
+  `is_applicable` (non-empty changes and confidence in `0.0..=1.0`).
+- `kAI::validate_suggestion` runs `SuggestionValidator` with no constraints.
+  `kAI::suggest_optimization` still returns `kAIError::NotImplemented`.
+- `core::Project { id, name, version, schematic, pcb, metadata }`;
+  `SchematicData { sheets, symbols, nets, components }`;
+  `Component { id, reference_designator, symbol_id, footprint_id, properties }`;
+  `ComponentProperty { name, value }`.
 
-What is missing for Week 8:
+What is missing for Week 9:
 
-- The router never changes layer and never creates a via, so any connection
-  that cannot be made on one layer fails even when the board has spare copper.
+- A validated suggestion cannot be applied to a project.
+- There is no atomic edit operation: a partially applied multi-change
+  suggestion would leave the project inconsistent.
+- There is no undo/redo, no stale-value detection, and no stable edit record.
 
 ---
 
@@ -67,150 +62,188 @@ What is missing for Week 8:
 
 1. **No KiCad wrapping.** KiCad formats are import/export targets only.
 2. **Local-first.** No network, cloud service or model may be required.
-3. **Deterministic operations.** No unseeded randomness. Identical requests
-   must produce byte-identical tracks and vias, including ids.
-4. **No silent data loss.** Preserve or report what cannot be represented.
-5. **AI output is untrusted.** Do not weaken `ai::SuggestionValidator`.
-6. **Zero warnings.** `cargo clippy --workspace --all-targets -- -D warnings`
+3. **AI output is untrusted.** Never apply a suggestion that has not passed
+   deterministic validation, and never weaken `SuggestionValidator`.
+4. **Deterministic operations.** No unseeded randomness. Applying the same
+   transaction twice to the same starting project must produce byte-identical
+   JSON, including transaction ids. Do not use `Uuid::new_v4` for new
+   transaction identifiers.
+5. **No silent data loss.** Report or preserve anything that cannot be
+   represented, and fail cleanly instead of dropping changes.
+6. **Atomicity.** A failed multi-change edit leaves the project exactly as it
+   was before the call.
+7. **Zero warnings.** `cargo clippy --workspace --all-targets -- -D warnings`
    and `cargo fmt --all -- --check` must pass.
-7. **No breaking changes.** Add APIs and serde-defaulted fields; do not rename
-   or remove existing ones. `route` must keep its current signature and
-   single-layer behaviour.
-8. **Never edit an applied migration.** Add `0005_*.sql` only if truly needed;
+8. **No breaking changes.** Add modules, variants and serde-defaulted fields;
+   do not rename or remove existing public APIs.
+9. **Never edit an applied migration.** Add `0005_*.sql` only if truly needed;
    this milestone should not need a schema change.
-9. **Update the docs** listed in §7 in the same change.
-10. **Do not commit.** Leave the working tree ready for the repository owner.
+10. **Update the docs** listed in §7 in the same change.
+11. **Do not commit.** Leave the working tree ready for the repository owner.
 
 ---
 
 ## 3. Deliverable
 
-### 3.1 Configuration
+### 3.1 Core edit transactions
 
-Extend `RouterConfig` with serde-defaulted fields:
+Add `core::edit` (exported as `core::edit` and re-exported where useful):
 
 ```rust
-pub struct RouterConfig {
-    pub grid: f64,              // existing: 0.5
-    pub bend_cost: f64,         // existing: 1.0
-    pub max_expansions: usize,  // existing: 200_000
-    pub allow_vias: bool,       // new: true
-    pub via_cost: f64,          // new: 5.0 (in grid steps)
-    pub max_vias: usize,        // new: 64
-    pub via_diameter: f64,      // new: 0.6
-    pub via_drill: f64,         // new: 0.3
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EditTransaction {
+    /// Stable UUIDv5 id derived from the label and applied changes.
+    pub id: uuid::Uuid,
+    pub label: String,
+    pub changes: Vec<AppliedChange>,
 }
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AppliedChange {
+    pub target: String,
+    pub field: String,
+    pub old_value: serde_json::Value,
+    pub new_value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditError {
+    UnknownTarget(String),
+    UnknownField { target: String, field: String },
+    StaleChange { target: String, field: String },
+    InvalidValue { target: String, field: String, message: String },
+}
+
+pub fn apply(
+    project: &mut core::Project,
+    label: &str,
+    changes: &[core::ChangeProposal],
+) -> Result<EditTransaction, EditError>;
+
+pub fn undo(project: &mut core::Project, transaction: &EditTransaction) -> Result<(), EditError>;
+
+pub fn redo(project: &mut core::Project, transaction: &EditTransaction) -> Result<(), EditError>;
 ```
 
-Validate all new values: `allow_vias` may be false, but `via_cost` must be
-finite and non-negative, `max_vias > 0`, and via dimensions finite and
-positive with `via_drill < via_diameter`.
+Required semantics:
 
-### 3.2 Multi-layer search
+- Validate every change against a **clone** of the project and only replace the
+  caller's project after all changes succeed. No partial edits.
+- Supported targets:
+  - `component:<reference_designator>` — exact match on a component's
+    reference designator.
+  - `project` — project-level fields.
+- Supported fields:
+  - `component:<ref>` + `value` — the `ComponentProperty` named `Value`.
+    If it is absent, `old_value` must be `null`; applying creates it, and undo
+    removes it again.
+  - `component:<ref>` + `property:<name>` — an arbitrary existing
+    `ComponentProperty`. Creating a missing property is allowed only with
+    `old_value: null`, and undo removes it.
+  - `component:<ref>` + `reference_designator` — non-empty string.
+  - `project` + `name`, `version`, `author`, `description` — strings.
+- Values use JSON strings for text fields. UUID-valued component fields are
+  out of scope for this pass unless you add explicit, documented support.
+- `old_value` must equal the current value exactly; otherwise return
+  `StaleChange` without mutating anything.
+- Apply changes in the order given; undo in reverse order. `redo` applies the
+  recorded `new_value`s again and must also reject stale state.
+- Derive the transaction id with UUIDv5 over the label and the ordered
+  `(target, field, old_value, new_value)` tuples. Repeated edits on the same
+  starting state must produce the same id.
+- `EditError` implements `Display` and `std::error::Error`.
 
-Add a new entry point and keep `route` intact:
+### 3.2 kAI application
+
+Extend `ai` without changing existing signatures:
 
 ```rust
 #[derive(Debug, Clone, PartialEq)]
-pub struct RouteResult {
-    pub tracks: Vec<Track>,
-    pub vias: Vec<Via>,
+pub struct AppliedSuggestion {
+    pub suggestion_id: uuid::Uuid,
+    pub transaction: core::edit::EditTransaction,
 }
 
-pub fn route_multilayer(
-    request: &RouteRequest,
-    design: &PcbDesign,
-    config: &RouterConfig,
-) -> Result<RouteResult, RouteError>;
+impl kAI {
+    pub fn apply_suggestion(
+        &self,
+        project: &mut core::Project,
+        suggestion: &OptimizationSuggestion,
+    ) -> Result<AppliedSuggestion, kAIError>;
+}
 ```
 
-- `RouteRequest` keeps `start`, `end`, `layer`, `net_id` and `width`: both
-  endpoints are on `request.layer`, but the path may leave that layer and
-  return.
-- The A* state becomes `(node, layer, direction)`. Four in-layer moves cost
-  `1.0` plus `bend_cost` on a direction change, as today.
-- A via transition stays on the same grid node and costs `via_cost`; it moves
-  to another copper layer in the design's stackup. Prefer deterministic
-  ordering (for example the next layer in stackup order, wrapping) and cap the
-  total via count at `max_vias`.
-- A candidate via is usable only when a through via of `config.via_diameter`
-  and `config.via_drill`, centred on the node, would pass the clearance checks
-  on **every** copper layer it spans and would satisfy `via-span` and
-  `via-drill` with the design's rules. It must also leave the node itself
-  unblocked on both the old and new layer.
-- Tracks are split at layer changes: one `Track` per contiguous run on a layer,
-  each simplified by merging collinear points. All runs use `request.net_id`
-  and `request.width`.
-- Vias are through vias spanning the first to the last copper layer in stackup
-  order, with the configured diameter/drill.
-- Ids must be deterministic UUIDv5 values derived from the request and the
-  transition's node/layer, never `Uuid::new_v4`.
-- With `allow_vias == false`, `route_multilayer` behaves like `route` (one
-  track, no vias; `NoPath` when a single layer cannot connect).
-- `route` itself must delegate to the same search with vias disabled and
-  return only its tracks, preserving current tests and output.
+Required semantics:
+
+- Run deterministic validation first. Invalid suggestions return
+  `kAIError::ValidationFailed` and must not mutate the project.
+- Reject a suggestion failing `is_applicable` (empty changes or out-of-range
+  confidence) before touching the project.
+- Apply all changes through `core::edit::apply`; on any `EditError`, return an
+  error that preserves the details and leaves the project unchanged. Add an
+  additive `kAIError::ApplyFailed(core::edit::EditError)` variant with
+  `Display` and `source` support.
+- The returned `AppliedSuggestion` carries the suggestion id and the exact
+  transaction that can be undone or redone.
+- No model call, no network access and no change to `SuggestionValidator`.
+- Suggestion generation (`suggest_optimization`) remains out of scope.
 
 ### 3.3 Application wiring
 
-Extend the `kai-cad` PCB self-check to:
+Extend the `kai-cad` self-check and cross-crate smoke tests to:
 
-1. Keep the existing single-layer route and its DRC-clean assertion.
-2. Build a board where a full-width wall on `F.Cu` can only be crossed by
-   changing layer, route across it with `route_multilayer`, and assert at
-   least one via and two or more tracks are returned.
-3. Add the tracks and vias to a clone of the design and assert `run_drc` is
-   valid.
-4. Print the track and via counts in the `pcb:` line.
+1. Build a project with at least two components and `Value` properties.
+2. Apply a valid suggestion (for example, change `R1`'s value), verify the
+   property changed, and assert the returned transaction has stable ids.
+3. Undo and assert the project's serialized JSON is byte-identical to the
+   starting project; redo and assert the change returns.
+4. Attempt a stale suggestion and an invalid-confidence suggestion; both must
+   fail without changing the project.
+5. Print the number of applied changes, the undo result and the transaction id
+   length or a short prefix in the `ai:` line.
 
-Add a cross-crate smoke test for a two-layer crossing: a wall on the top layer,
-a clean route with at least one via, DRC-clean output, and a deterministic
-repeat of the same request.
+Add a cross-crate smoke test that covers apply → undo → redo, failure atomicity
+and deterministic transaction ids.
 
 ### 3.4 Tests (target: 16–20 new tests)
 
 Cover at least:
 
-1. New `RouterConfig` defaults and JSON round trip, including legacy JSON.
-2. Config validation: negative/NaN `via_cost`, zero `max_vias`, invalid via
-   dimensions.
-3. A route crosses a full-width top-layer wall using a via.
-4. `allow_vias: false` returns `NoPath` for the same board.
-5. The via sits at a snapped node, spans the stackup, and its diameter/drill
-   match the config.
-6. Tracks are split at the transition, each on the correct layer, with no
-   duplicate or zero-length runs.
-7. Via transitions respect clearance on all spanned layers.
-8. `max_vias` is enforced.
-9. A via whose drill/diameter is invalid for the rules is not used.
-10. Multi-layer routing is byte-identical across repeated calls (including via
-    ids).
-11. The input design is not mutated.
-12. Adding the result to the design passes `run_drc` with no errors.
-13. A 4-layer board can use an inner layer, with a through via spanning top to
-    bottom.
-14. Single-layer `route` keeps its previous results for a board with no need
-    for vias.
-15. kai-cad smoke test for a two-layer crossing and a blocked route.
+1. Apply a `component:<ref>` `value` change and update the property.
+2. Create a missing property from `null` and remove it again on undo.
+3. Update an arbitrary `property:<name>`.
+4. Update project-level `name` and `version`.
+5. Unknown target is rejected.
+6. Unknown field is rejected.
+7. Stale `old_value` is rejected.
+8. Wrong JSON type is rejected.
+9. A multi-change transaction with one failing change leaves the project
+   byte-identical.
+10. Undo restores the exact starting JSON.
+11. Redo after undo restores the edited JSON.
+12. Undo/redo reject a project that changed underneath them.
+13. Transaction ids are UUIDv5, non-nil and repeatable for the same input.
+14. kAI applies a valid suggestion and returns its id and transaction.
+15. kAI rejects invalid confidence without mutation.
+16. kAI rejects stale changes without mutation.
+17. kAI rejects empty changes and no-op changes.
+18. `kai-cad` smoke test for apply, undo, redo and atomic failure.
 
----
+### 3.5 Definition of done
 
-## 4. Definition of done
-
-- [ ] `RouteResult`, `route_multilayer` and the new `RouterConfig` fields exist
-      with the documented semantics.
-- [ ] `route` is unchanged externally and still passes every Week 7 test.
-- [ ] Multi-layer routes are deterministic (UUIDv5 ids) and DRC-clean.
-- [ ] Vias respect clearance, span and drill rules on every layer they span.
-- [ ] `kai-cad` self-check routes across a wall using a via and ends
-      `self-check: ok`.
-- [ ] No public API was broken.
-- [ ] Test count rises from 188 to at least 204, all passing.
+- [ ] `core::edit` provides atomic apply, undo and redo with documented targets.
+- [ ] `kAI::apply_suggestion` validates first and never mutates on failure.
+- [ ] Transaction and applied-suggestion ids are deterministic UUIDv5 values.
+- [ ] The project JSON after apply → undo is byte-identical to the start.
+- [ ] `kai-cad` self-check and smoke tests cover apply/undo/redo and failures.
+- [ ] No public API was broken; existing 205 tests still pass.
+- [ ] Test count rises from 205 to at least 221, all passing.
 - [ ] Clippy, fmt, rustdoc and Markdown links are clean.
 - [ ] Documentation updated (§7).
 
 ---
 
-## 5. Verification commands
+## 4. Verification commands
 
 ```bash
 cargo fmt --all
@@ -230,49 +263,48 @@ cargo build --workspace --release
 
 ---
 
-## 6. Suggested implementation order
+## 5. Suggested implementation order
 
-1. Add and validate the config fields; add `RouteResult`/`route_multilayer`
-   stubs that delegate to the single-layer search.
-2. Generalise the A* state and queue item to include the layer; keep the
-   exact tie-break shape so single-layer output stays byte-identical.
-3. Add via transitions and via validity checks, then split and simplify the
-   path into per-layer tracks; add the via records.
-4. Add determinism, clearance and max-via tests.
+1. Add `core::edit` types and strict target/field resolution.
+2. Implement atomic apply on a project clone, then undo/redo and UUIDv5 ids.
+3. Add `kAI::apply_suggestion`, the `ApplyFailed` variant and error mapping.
+4. Add unit tests for core edits and kAI application.
 5. Wire the self-check and smoke test, then run the full verification suite.
 6. Update documentation and leave the changes uncommitted.
 
 ---
 
-## 7. Documentation updates (required)
+## 6. Documentation updates (required)
 
-- `README.md` — status, test count, PCB features and roadmap.
-- `docs/PLAN.md` — mark Week 8 complete and point to the Week 9 brief.
+- `README.md` — status, test count, AI features and roadmap.
+- `docs/PLAN.md` — mark Week 9 complete and point to the Week 10 brief.
 - `docs/PHASE1_TASKS.md` — update the status note.
-- `docs/ARCHITECTURE.md` — routing state, via insertion, new outputs and the
+- `docs/ARCHITECTURE.md` — core edit transactions, kAI application flow and the
   "Current milestone" section.
-- `docs/DEVELOPMENT.md` — test table, self-check sample and routing
+- `docs/DEVELOPMENT.md` — test table, self-check sample, apply/undo
   troubleshooting.
-- `docs/CONTRIBUTING.md` — determinism rules for via ids and tie-breaks.
-- `docs/NEXT_AGENT_PROMPT.md` — replace with the Week 9 brief.
-- `TODO.md` — mark Week 8 done and list Week 9.
+- `docs/CONTRIBUTING.md` — deterministic transaction ids and atomicity rules.
+- `docs/NEXT_AGENT_PROMPT.md` — replace with the Week 10 brief.
+- `TODO.md` — mark Week 9 done and list Week 10.
+- `PRD.md` — update the implementation-status paragraph.
 
 ---
 
-## 8. Out of scope for this pass
+## 7. Out of scope for this pass
 
-- Blind, buried or micro vias; back-drilling; via-in-pad.
-- Push-and-shove, rip-up/reroute, interactive routing or length matching.
-- Differential pairs, impedance, planes or thermal relief.
-- Pad rotation and full pad shapes (rectangles only today).
-- KiCad `.kicad_pcb` import/export.
+- LLM or model invocation, network transport, prompt construction and
+  `suggest_optimization` generation.
+- Multi-step undo history, branching history, persistence of transactions in
+  SQLite or collaboration merge.
 - GUI, windowing or Vulkan object creation.
-- Schema changes or database projections for tracks/vias.
-- Async, networking or collaboration transport.
+- PCB-level suggestions that edit tracks, vias or footprints.
+- Automatic symbol-to-footprint binding, impedance/length rules and
+  push-and-shove routing.
+- Schema changes.
 
 ---
 
-## 9. Reporting format
+## 8. Reporting format
 
-Report changed files (do not commit), the final routing API, test counts per
+Report changed files (do not commit), the final edit/kAI API, test counts per
 crate and total, verification tails, and anything deliberately deferred.

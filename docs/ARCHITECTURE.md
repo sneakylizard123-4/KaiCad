@@ -7,8 +7,9 @@
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
-> 5 (PCB core), 6 (PCB geometry and DRC) and 7 (deterministic routing) are
-> complete. The workspace has 188 passing tests.
+> 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
+> routing) and 8 (multi-layer routing with vias) are complete. The workspace
+> has 205 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -198,22 +199,28 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   validation listed below.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
   Hybrid}`, `RoutingOptimization`, `RouterConfig` (grid, bend cost, expansion
-  limit), `RouteRequest`, `RouteError` and `route`. The router snaps endpoints
-  to a grid, runs four-neighbour A* over nodes inside the outline, avoids
-  tracks, vias and pads with the design's clearance, merges collinear points
-  and derives UUIDv5 track ids. It is single-layer and does not insert vias.
+  limit, `allow_vias`, via cost/limit/dimensions), `RouteRequest`, `RouteError`,
+  `Route`, `RouteResult` and `route_multilayer`. A* state is `(node, layer,
+  direction)` plus the via count; in-layer moves avoid tracks, vias and pads
+  with the design's clearance, and a via transition stays on the node, costs
+  `via_cost` and moves to another copper layer. Candidate through vias must
+  clear every spanned layer and satisfy `via-drill` and annular-ring limits.
+  Tracks are split at layer changes and simplified per layer; ids are UUIDv5
+  values over the request and segment. `route` disables via insertion and
+  returns the tracks only.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
   `tracks`, `vias`, `rules`) built on `core::PcbOutline`/`core::PcbLayer`/
   `core::Stackup`/`core::Point`, plus `Track` (copper `width`, default
-  `0.25` mm) and `Via` (`diameter`/`drill`, defaults `0.6`/`0.3` mm). Missing
-  dimension fields load with those defaults, so older documents still open.
+  `0.25` mm) and `Via` (optional `net_id`, `diameter`/`drill`, defaults
+  `0.6`/`0.3` mm). Missing fields load with those defaults, so older documents
+  still open.
 
 `PcbDesign::copper_layer_count` is implemented and honours the stackup.
 Outline geometry lives on `core::PcbOutline`: `signed_area`, `area`,
 `perimeter`, `contains_point` (even-odd ray casting with boundary-inclusive
-edges) and `bounding_box`. Design-rule checking lives in `pcb::drc` and single-
-layer grid routing in `pcb::routing`. Multi-layer routing, via insertion and
-interactive routing do not exist yet.
+edges) and `bounding_box`. Design-rule checking lives in `pcb::drc`; single-
+layer and multi-layer grid routing live in `pcb::routing`. Interactive routing,
+blind/buried vias and pad rotation do not exist yet.
 
 ### `renderer` — Vulkan rendering engine
 
@@ -322,7 +329,8 @@ Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, and with no arguments runs a deterministic self-check:
 it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
 builds a PCB design (outline measurements, layer validation, a footprint
-library round trip, clean/dirty DRC runs and a DRC-clean route with a blocked-
+library round trip, clean/dirty DRC runs, a DRC-clean single-layer route, a
+multi-layer route across a full-width wall with through vias, and a blocked-
 route check), reads the default renderer, AI and collaboration configuration,
 exercises the SQLite store with an in-memory database including a PCB-design
 round trip, and parses a hermetic `.kicad_sym` fixture with `kicad-parser`. Integration tests live
@@ -331,8 +339,8 @@ root `tests/` directory would not be built.
 
 ## Data flow: schematic netlist to PCB
 
-The intended pipeline (steps 2, 3, 5 (single-layer), 6 and 7 (persistence) have
-real implementations; the rest are planned):
+The intended pipeline (steps 2, 3, 5 (single- and multi-layer), 6 and 7
+(persistence) have real implementations; the rest are planned):
 
 ```mermaid
 flowchart LR
@@ -369,9 +377,9 @@ flowchart LR
    matched to physical footprints. Binding logic is not written yet.
 5. **Board construction.** The PCB engine takes the netlist plus footprint
    assignments and populates `PcbDesign` (`footprints`, `tracks`, `vias`).
-   Tracks reference their net by `net_id`; vias record the layers they span.
-   `route` can add a single-layer track, but automatic symbol-to-footprint
-   binding is still manual.
+   Tracks reference their net by `net_id`; vias record the layers they span and
+   optionally their net. `route` and `route_multilayer` can add tracks and
+   through vias, but automatic symbol-to-footprint binding is still manual.
 6. **Validation and storage.** ERC runs on the schematic netlist and DRC runs on
    the PCB geometry, both with deterministic rules (see below). `store` can
    save and reload the complete PCB design with its rules.
@@ -425,8 +433,9 @@ requires two distinct, existing copper layers. Pad copper is an axis-aligned
 rectangle centred on `Footprint::position + PadPosition::{x, y}`: through-hole
 pads occupy every copper layer, surface-mount and tented pads the top copper
 layer, and pads in the same footprint are not compared with each other.
-Pad-to-track clearance is skipped when the pad net matches the track net.
-Limits live on
+Pad-to-track and track-to-via clearance is skipped when the shared net matches;
+generated vias carry `Some(net_id)`, while older documents load `None` and are
+compared as different nets. Limits live on
 `PcbDesign::rules` and serialize with the design; `DrcRules` defaults to a
 `0.15` mm minimum width, `0.2` mm clearance, `0.05` mm minimum annular ring
 and `0.2` mm minimum via drill. `DrcRules::validate` rejects non-finite or
@@ -489,7 +498,7 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–7, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–8, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v4) with migrations plus project, symbol-library and
 PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
@@ -497,17 +506,17 @@ PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
 traversal, five-rule ERC, board-outline geometry, layer-stack validation,
 JSON footprint libraries, distance primitives, track/via dimensions, pad
 copper, nine-rule DRC (eight geometry rules plus limit validation),
-deterministic single-layer grid routing with UUIDv5 ids, renderer/AI/collab
-configuration types, the `kai-cad` self-check binary, CI (including a Markdown
-link check and coverage job), and documentation.
+deterministic single-layer and multi-layer grid routing with through vias and
+UUIDv5 ids, renderer/AI/collab configuration types, the `kai-cad` self-check
+binary, CI (including a Markdown link check and coverage job), and
+documentation.
 
-**Next (Week 8):** multi-layer routing with deterministic via insertion. The
-planned work is:
+**Next (Week 9):** transactional kAI suggestion application. The planned work
+is:
 
-1. Extend the A* state with the copper layer and allow via transitions.
-2. Validate candidate vias against clearance, `via-span` and `via-drill`.
-3. Return tracks and vias from a new multi-layer entry point, keep `route`
-   single-layer, and wire both into the self-check and smoke tests.
+1. Add atomic, reversible core edits with stale-value detection.
+2. Let `kAI` apply only validated suggestions and return the edit transaction.
+3. Wire apply/undo/redo into the self-check and smoke tests.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
