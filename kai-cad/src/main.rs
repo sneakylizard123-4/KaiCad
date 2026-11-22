@@ -428,11 +428,108 @@ fn check_ai() -> Result<(), String> {
 
 fn check_collab() -> Result<(), String> {
     let mut manager = collab::CollabManager::new();
-    manager.create_session(Uuid::new_v4(), Uuid::new_v4());
+    let owner = Uuid::new_v4();
+    let editor = Uuid::new_v4();
+    let viewer = Uuid::new_v4();
+    let session = manager.create_session(Uuid::new_v4(), owner);
+    let session_id = session.session_id;
+    manager
+        .add_participant(
+            session_id,
+            collab::Participant {
+                user_id: editor,
+                username: "self-check-editor".to_string(),
+                role: collab::ParticipantRole::Editor,
+            },
+        )
+        .map_err(|error| format!("collab: failed to add editor: {error}"))?;
+    manager
+        .add_participant(
+            session_id,
+            collab::Participant {
+                user_id: viewer,
+                username: "self-check-viewer".to_string(),
+                role: collab::ParticipantRole::Viewer,
+            },
+        )
+        .map_err(|error| format!("collab: failed to add viewer: {error}"))?;
 
     ensure(manager.session_count() == 1, "collab: expected exactly one session")?;
+    ensure(manager.can_edit(session_id, owner), "collab: owner cannot edit")?;
+    ensure(manager.can_edit(session_id, editor), "collab: editor cannot edit")?;
+    ensure(!manager.can_edit(session_id, viewer), "collab: viewer can edit")?;
 
-    println!("  collab: {} session(s)", manager.session_count());
+    let mut project = core::Project::new("collab-self-check");
+    project.schematic.components.push(core::Component {
+        id: Uuid::new_v4(),
+        reference_designator: "R1".to_string(),
+        properties: vec![core::ComponentProperty {
+            name: "Value".to_string(),
+            value: "10k".to_string(),
+        }],
+        ..core::Component::default()
+    });
+    let before = core::serialization::to_json(&project)
+        .map_err(|error| format!("collab: project serialization failed: {error}"))?;
+    let changes = [core::ChangeProposal::new(
+        "component:R1",
+        "value",
+        serde_json::json!("10k"),
+        serde_json::json!("22k"),
+    )];
+
+    ensure(
+        manager.apply_edit(session_id, viewer, &mut project, "viewer edit", &changes).is_err(),
+        "collab: viewer edit was allowed",
+    )?;
+    ensure(manager.sessions[0].version == 0, "collab: rejected edit bumped the version")?;
+
+    let transaction = manager
+        .apply_edit(session_id, editor, &mut project, "editor edit", &changes)
+        .map_err(|error| format!("collab: edit failed: {error}"))?;
+    ensure(manager.sessions[0].version == 1, "collab: successful edit did not bump version")?;
+    ensure(
+        project.schematic.components[0].properties[0].value == "22k",
+        "collab: edit did not update the project",
+    )?;
+
+    let mut history = collab::VersioningManager::new();
+    let version = history
+        .record_transaction(editor, "editor edit", &transaction, &project)
+        .map_err(|error| format!("collab: version recording failed: {error}"))?;
+    ensure(version == 1, "collab: version history did not record version 1")?;
+    let entry = history.latest().ok_or("collab: version history is empty")?;
+    ensure(
+        entry.transaction_id == Some(transaction.id) && entry.project_digest.is_some(),
+        "collab: version did not retain the transaction and digest",
+    )?;
+
+    let mut sync = collab::sync::SyncManager::default();
+    ensure(sync.stage(transaction.clone()), "collab: transaction was not staged")?;
+    ensure(!sync.stage(transaction.clone()), "collab: duplicate transaction was staged")?;
+    ensure(sync.staged_count() == 1, "collab: staged transaction count is wrong")?;
+    let drained = sync.drain();
+    ensure(
+        drained.len() == 1 && drained[0].id == transaction.id && sync.staged_count() == 0,
+        "collab: staged transactions were not drained in order",
+    )?;
+
+    core::edit::undo(&mut project, &transaction)
+        .map_err(|error| format!("collab: undo failed: {error}"))?;
+    ensure(
+        core::serialization::to_json(&project)
+            .map_err(|error| format!("collab: project serialization failed: {error}"))?
+            == before,
+        "collab: undo did not restore the project",
+    )?;
+
+    println!(
+        "  collab: {} session(s), {} participant(s), session version {}, history {} entry, staged 1 -> 0",
+        manager.session_count(),
+        manager.sessions[0].participants.len(),
+        manager.sessions[0].version,
+        history.versions.len()
+    );
     Ok(())
 }
 

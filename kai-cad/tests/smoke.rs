@@ -223,6 +223,82 @@ fn ai_validation_accepts_good_and_rejects_bad_suggestion() {
 }
 
 #[test]
+fn collab_edits_enforce_roles_and_track_versions() {
+    let owner = Uuid::from_u128(10);
+    let editor = Uuid::from_u128(11);
+    let viewer = Uuid::from_u128(12);
+    let mut manager = collab::CollabManager::new();
+    let session = manager.create_session(Uuid::from_u128(1), owner);
+    let session_id = session.session_id;
+    for (user_id, username, role) in [
+        (editor, "editor", collab::ParticipantRole::Editor),
+        (viewer, "viewer", collab::ParticipantRole::Viewer),
+    ] {
+        manager
+            .add_participant(
+                session_id,
+                collab::Participant { user_id, username: username.to_string(), role },
+            )
+            .expect("add participant");
+    }
+
+    let mut project = core::Project::new("smoke-collab");
+    project.schematic.components.push(core::Component {
+        id: Uuid::from_u128(100),
+        reference_designator: "R1".to_string(),
+        properties: vec![core::ComponentProperty {
+            name: "Value".to_string(),
+            value: "10k".to_string(),
+        }],
+        ..core::Component::default()
+    });
+    let before = serde_json::to_string(&project).expect("serialize start");
+    let changes = [core::ChangeProposal::new(
+        "component:R1",
+        "value",
+        serde_json::json!("10k"),
+        serde_json::json!("22k"),
+    )];
+
+    assert!(manager.can_edit(session_id, owner));
+    assert!(manager.can_edit(session_id, editor));
+    assert!(!manager.can_edit(session_id, viewer));
+    assert!(matches!(
+        manager.apply_edit(session_id, viewer, &mut project, "viewer", &changes),
+        Err(collab::CollabError::ReadOnly)
+    ));
+    assert_eq!(manager.sessions[0].version, 0);
+    assert_eq!(before, serde_json::to_string(&project).expect("serialize after reject"));
+
+    let transaction = manager
+        .apply_edit(session_id, editor, &mut project, "editor edit", &changes)
+        .expect("editor edit");
+    assert_eq!(manager.sessions[0].version, 1);
+    assert_eq!(project.schematic.components[0].properties[0].value, "22k");
+
+    let mut history = collab::VersioningManager::new();
+    assert_eq!(
+        history
+            .record_transaction(editor, "editor edit", &transaction, &project)
+            .expect("record version"),
+        1
+    );
+    let entry = history.find_by_transaction(transaction.id).expect("version exists");
+    assert!(entry.project_digest.is_some_and(|digest| !digest.is_nil()));
+
+    let mut sync = collab::sync::SyncManager::default();
+    assert!(sync.stage(transaction.clone()));
+    assert!(!sync.stage(transaction.clone()));
+    let drained = sync.drain();
+    assert_eq!(drained.len(), 1);
+    assert_eq!(drained[0].id, transaction.id);
+    assert_eq!(sync.staged_count(), 0);
+
+    core::edit::undo(&mut project, &transaction).expect("undo");
+    assert_eq!(before, serde_json::to_string(&project).expect("serialize undo"));
+}
+
+#[test]
 fn kai_suggestion_application_is_atomic_and_reversible() {
     let mut project = core::Project::new("smoke-ai");
     project.schematic.components.push(core::Component {

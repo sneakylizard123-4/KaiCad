@@ -12,7 +12,7 @@ description = "KaiCad collaboration layer — project sharing, versioning, real-
 core = { path = "../core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [lints]

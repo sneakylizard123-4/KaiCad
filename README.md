@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Week 9 transactional kAI application complete (pre-alpha); Week 10 (collaborative edit sessions) is next
+- **Implementation:** Week 10 collaborative edit sessions complete (pre-alpha); Week 11 (multi-step edit history) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -47,7 +47,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (225 tests across the workspace)
+# Run tests (244 tests across the workspace)
 cargo test --workspace
 
 # Run the application (banner + subsystem self-check)
@@ -144,7 +144,7 @@ KaiCad/
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, layering, core data model, validation surfaces and design rules
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — prerequisites, toolchain, commands, examples, benchmarks, CI and troubleshooting
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) — branch/commit conventions, no-warnings policy, tests, review checklist, license headers
-- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 10)
+- [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 11)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
@@ -152,16 +152,16 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–9 are complete and verified: **225 tests pass**, `cargo clippy
+Weeks 1–10 are complete and verified: **244 tests pass**, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` are
-clean, and the release build succeeds. Week 9 added atomic, reversible project
-edits (`core::edit::{apply, undo, redo}`), stale-change detection, and
-`kAI::apply_suggestion`, which validates a suggestion before applying it and
-returns an undoable transaction.
+clean, and the release build succeeds. Week 10 added owner/editor/viewer
+permissions, permission-checked atomic collaborative edits,
+transaction-linked version entries with deterministic UUIDv5 project digests,
+and deterministic staged-transaction queues for sync.
 
-The next milestone is **Week 10 — collaborative edit sessions and version
-history**: participant permissions, transaction staging and edit-linked
-versions. The full brief is in
+The next milestone is **Week 11 — multi-step edit history and redo
+branching**: an undo/redo history with bounded capacity and branch clearing.
+The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -194,8 +194,10 @@ What each crate provides today:
   atomic `apply_suggestion` with undoable `core::edit` transactions. Every
   application is validated first and leaves the project untouched on failure.
   `kAI::suggest_optimization` returns `NotImplemented`.
-- 🚧 **collab** — `CollabManager` session creation, `VersioningManager`,
-  `SharingManager` and `Window`. No transport, merge or real-time sync.
+- 🚧 **collab** — sessions with owner/editor/viewer roles, permission-checked
+  atomic edits, transaction-linked version history with UUIDv5 project digests,
+  deterministic staged-transaction queues, sharing and windows. No transport,
+  merge or real-time sync.
 - ✅ **store** — SQLite engineering database (schema v4) with versioned
   migrations, project CRUD (`create`, `load`, `list`, `update`, `delete`),
   symbol-library CRUD, and PCB-design CRUD (`save`, `load`, `delete`) storing
@@ -206,7 +208,8 @@ What each crate provides today:
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,
   crosses a full-width top-layer wall using deterministic through vias, rejects
-  a blocked route, applies a validated suggestion and undoes/redoes it, and
+  a blocked route, applies a validated suggestion and undoes/redoes it, creates
+  a session and enforces roles, records a versioned edit, stages/drains it, and
   stores and reloads a PCB design.
 
 ## Roadmap
@@ -215,7 +218,7 @@ What each crate provides today:
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | 🚧 PCB core complete; renderer deferred |
-| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 In progress (kAI application complete) |
+| 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 In progress (kAI + collaboration) |
 | 4 | 13–16 | Polish, documentation, beta and KiCad 9/10 compatibility QA | ⬜ Not started |
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and

@@ -86,16 +86,23 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Apply/undo/redo and failure atomicity wired into the `kai-cad` self-check and smoke tests
 - Documentation updated; total tests: 225
 
-## 🚧 Next — Week 10: Collaborative edit sessions and version history
+### Week 10 — Collaborative edit sessions and version history
+- Owner/editor/viewer membership, duplicate rejection and `can_edit` permission checks
+- Permission-checked `apply_edit` that bumps the session version only after an atomic edit succeeds
+- `VersionEntry::transaction_id` and `project_digest`; `record_transaction` and `find_by_transaction` with UUIDv5 project digests
+- `SyncManager::stage`, `drain` and `staged_count` with id deduplication and insertion-order draining
+- Session permissions, version history and staging wired into the `kai-cad` self-check and smoke tests
+- Documentation updated; total tests: 244
+
+## 🚧 Next — Week 11: Multi-step edit history and redo branching
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
-- [ ] Add participant membership, roles and edit permission checks
-- [ ] Record versions linked to edit transactions and deterministic project digests
-- [ ] Stage transactions deterministically for sync and drain them in order
-- [ ] Wire collaboration sessions into the `kai-cad` self-check and smoke tests
+- [ ] Add a bounded undo/redo stack over `core::edit` transactions
+- [ ] Clear the redo branch on a new edit and evict the oldest undo entry at the limit
+- [ ] Wire multi-step history into the `kai-cad` self-check and smoke tests
 - [ ] Update docs (README, ARCHITECTURE, DEVELOPMENT, CONTRIBUTING, PLAN, PHASE1_TASKS)
-- [ ] Target: ≥241 tests, clippy/fmt/doc/link clean
+- [ ] Target: ≥260 tests, clippy/fmt/doc/link clean
 
 ## ⬜ Later milestones
 
@@ -119,11 +126,12 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Decide GUI scope and slot it into the roadmap (likely after Phase 2 or as a new phase)
 
 ### Phase 3 — kAI & collaboration (Weeks 9–12)
-- Circuit optimization suggestions
-- Deterministic validation integration
-- Project sharing and versioning
-- Real-time sync transport
-- Plugin architecture
+- ✅ Transactional kAI suggestion application (Week 9)
+- ✅ Permission-checked collaborative edits and version history (Week 10)
+- ⬜ Multi-step edit history and redo branching (Week 11)
+- ⬜ Circuit optimization suggestion generation
+- ⬜ Project sharing and real-time sync transport
+- ⬜ Plugin architecture
 
 ### Phase 4 — Polish & release (Weeks 13–16)
 - Performance optimization

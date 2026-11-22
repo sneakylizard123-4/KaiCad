@@ -8,8 +8,9 @@
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
 > 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
-> routing), 8 (multi-layer routing with vias) and 9 (transactional kAI
-> application) are complete. The workspace has 225 passing tests.
+> routing), 8 (multi-layer routing with vias), 9 (transactional kAI
+> application) and 10 (collaborative edit sessions) are complete. The
+> workspace has 244 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a Vulkan renderer skeleton, an AI subsystem (`kAI`), a collaboration layer and
@@ -265,11 +266,19 @@ switch to disable it.
 Dependencies: `core`, `serde`, `serde_json`, `uuid`, `chrono`. Modules:
 `versioning`, `sync`, `sharing`, `window`.
 
-- `CollabManager::{new, create_session, session_count}`. `create_session` uses
-  the passed `project_id` and seeds an `Owner` participant.
-- `VersioningManager::{new, record, latest}`.
-- `SharingManager::{share, unshare}`.
-- `Window::new`.
+- `CollabManager::{new, create_session, session_count, add_participant,
+  set_role, can_edit, apply_edit}`. `create_session` seeds an `Owner`;
+  `apply_edit` checks membership and role, applies a `core::edit` transaction,
+  and bumps the session version only on success. `CollabError` covers unknown
+  sessions/participants, duplicate participants, read-only viewers, edit
+  failures and history failures.
+- `VersioningManager::{new, record, record_transaction, latest,
+  find_by_transaction}`. Transaction-linked entries store the transaction id
+  and a UUIDv5 digest of the compact project JSON; legacy entries load with
+  `None` fields.
+- `SyncManager::{stage, drain, staged_count}` plus `pending_changes`; staging
+  deduplicates by transaction id and draining preserves insertion order.
+- `SharingManager::{share, unshare}` and `Window::new`.
 
 No transport, merge algorithm or real-time sync exists yet.
 
@@ -337,10 +346,11 @@ it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
 builds a PCB design (outline measurements, layer validation, a footprint
 library round trip, clean/dirty DRC runs, a DRC-clean single-layer route, a
 multi-layer route across a full-width wall with through vias, and a blocked-
-route check), applies a validated kAI suggestion and undoes/redoes it, reads
-the default renderer and collaboration configuration, exercises the SQLite
-store with an in-memory database including a PCB-design round trip, and parses
-a hermetic `.kicad_sym` fixture with `kicad-parser`. Integration tests live
+route check), applies a validated kAI suggestion and undoes/redoes it, creates
+a collaboration session with roles, records a versioned edit and stages/drains
+its transaction, exercises the SQLite store with an in-memory database
+including a PCB-design round trip, and parses a hermetic `.kicad_sym` fixture
+with `kicad-parser`. Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
 
@@ -490,8 +500,8 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
    must be preserved or reported, never dropped silently (`PRD.md` §1.3.10).
 6. **Transactional editing.** Design mutations are grouped into reversible
    `core::edit` transactions with stale-value checks (`PRD.md` §1.3.7).
-   Multi-step history, collaboration merge and PCB-object edits are not
-   implemented yet.
+   Collaborative sessions and version history build on these transactions;
+   multi-step history, merge and PCB-object edits are not implemented yet.
 7. **GPU-accelerated rendering.** Vulkan is the target rendering API on all
    platforms (`PRD.md` §1.1).
 8. **Modular, testable subsystems.** Each subsystem is a crate with a narrow
@@ -507,7 +517,7 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 ## Current milestone and next steps
 
-**Complete (Weeks 1–9, starting from commit `c864fbb`):** workspace and crate
+**Complete (Weeks 1–10, starting from commit `c864fbb`):** workspace and crate
 graph, shared `core` data model with JSON persistence, SQLite engineering
 database (`store`, schema v4) with migrations plus project, symbol-library and
 PCB-design CRUD, named symbol libraries and a deterministic `.kicad_sym` parser
@@ -517,17 +527,18 @@ JSON footprint libraries, distance primitives, track/via dimensions, pad
 copper, nine-rule DRC (eight geometry rules plus limit validation),
 deterministic single-layer and multi-layer grid routing with through vias and
 UUIDv5 ids, atomic core edit transactions with validated kAI suggestion
-application and undo/redo, renderer/AI/collab configuration types, the
-`kai-cad` self-check binary, CI (including a Markdown link check and coverage
-job), and documentation.
+application and undo/redo, permission-checked collaborative sessions with
+versioned project digests and staged transactions, renderer/AI/collab
+configuration types, the `kai-cad` self-check binary, CI (including a Markdown
+link check and coverage job), and documentation.
 
-**Next (Week 10):** collaborative edit sessions and version history. The
-planned work is:
+**Next (Week 11):** multi-step edit history and redo branching. The planned
+work is:
 
-1. Add participant membership, roles and edit permission checks.
-2. Record versions linked to `core::edit` transactions and project digests.
-3. Stage transactions deterministically for sync, then wire sessions into the
-   self-check and smoke tests.
+1. Add a bounded undo/redo stack over `core::edit` transactions.
+2. Clear the redo branch on a new edit and evict the oldest undo entry at the
+   capacity limit.
+3. Wire multi-step history into the self-check and smoke tests.
 
 The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 

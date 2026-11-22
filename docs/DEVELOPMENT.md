@@ -6,9 +6,9 @@ Practical instructions for building, testing and hacking on KaiCad.
 > exercised by tests, but most engine functions are stubs. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md) for what actually exists.
 >
-> **Current state:** Weeks 1–9 are complete (225 tests, clippy/fmt/doc/release
-> all clean). Week 10 — collaborative edit sessions and version history — is
-> next; its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–10 are complete (244 tests, clippy/fmt/doc/release
+> all clean). Week 11 — multi-step edit history and redo branching — is next;
+> its work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
 
@@ -121,19 +121,19 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **225 tests**, all passing:
+`cargo test --workspace` currently runs **244 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
-| `collab` (`src/lib.rs`) | 9 |
+| `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs` and inline modules) | 45 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 72 |
 | `renderer` (`src/lib.rs` and modules) | 5 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 23 |
-| `kai-cad/tests/smoke.rs` (cross-crate integration) | 14 |
+| `kai-cad/tests/smoke.rs` (cross-crate integration) | 15 |
 
 Unit tests live next to the code (inline `#[cfg(test)] mod tests`, or
 `src/tests.rs` for `core`). Cross-crate integration tests live in
@@ -160,7 +160,7 @@ subsystem self-check:
   pcb: outline 4 points, area 8000 mm^2, 2 layer(s), 2 copper layer(s), 1 footprint(s), DRC clean=true (1 violation(s) before fixing), routed 5 point(s), multi-layer 2 track(s)/2 via(s)
   renderer: window 1920x1080, vsync=true
   ai: endpoint=http://localhost:11434, deterministic validation=always, applied 1 change(s), undo/redo ok (tx 97f81c80)
-  collab: 1 session(s)
+  collab: 1 session(s), 3 participant(s), session version 1, history 1 entry, staged 1 -> 0
   store: created, loaded and deleted 1 project with its PCB design (schema v4)
   kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym
 self-check: ok
@@ -247,9 +247,8 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–9 are finished; Week 10 adds collaborative edit sessions with
-permission checks, staged transactions and edit-linked version history. Before
-starting, read
+Weeks 1–10 are finished; Week 11 adds a bounded multi-step undo/redo history
+with redo-branch clearing. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
@@ -385,6 +384,23 @@ you, check these semantics before changing a rule:
 If the report changes between identical runs, look for code that consumes
 `HashMap` iteration order or track insertion order instead of the sorted
 report.
+
+### Collaborative edits look wrong
+
+Collaboration builds on `core::edit`; check these rules before changing it:
+
+- `apply_edit` checks the session, participant and role before it touches the
+  project. Viewers, unknown users and unknown sessions leave both the project
+  and the session version unchanged.
+- The session version increments only after `core::edit::apply` succeeds. A
+  stale or failed edit returns `CollabError::Edit` and does not bump it.
+- `record_transaction` stores the transaction id and a UUIDv5 digest of the
+  compact project JSON. Identical JSON produces the same digest; an edit
+  changes it. `record` keeps storing `None` for both fields.
+- `SyncManager::stage` deduplicates by transaction id, and `drain` returns
+  transactions in insertion order without applying them.
+- No transport, merge or real-time sync exists; these APIs only prepare and
+  describe local edits.
 
 ### Applied edits or undo look wrong
 

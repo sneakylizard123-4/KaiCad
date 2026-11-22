@@ -4,7 +4,7 @@
 > ⬜ not started. Phase 1 (Weeks 1–4) is complete and verified, and Phase 2
 > began with Week 5 (PCB core). See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for
 > Week 1 evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
-> Week 10 brief.
+> Week 11 brief.
 
 ## Project Setup & Infrastructure
 
@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 225 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 244 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -195,10 +195,13 @@ routing, through-via insertion with per-layer clearance checks, and a
 via-network field so generated copper is exempt from its own clearance checks,
 with 17 more tests for a total of **205 passing tests**. Week 9 added atomic
 project edit transactions, validated kAI suggestion application and undo/redo,
-with 20 more tests for a total of **225 passing tests**. `cargo check`,
+with 20 more tests for a total of **225 passing tests**. Week 10 added
+permission-checked collaborative edits, transaction-linked version digests and
+deterministic sync staging, with 19 more tests for a total of **244 passing
+tests**. `cargo check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --
 --check`, `cargo doc --workspace --no-deps`,
 `python3 scripts/check_markdown_links.py` and `cargo build --workspace
 --release` all succeed. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1
-evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 10
-(collaborative edit sessions) work order.
+evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 11
+(multi-step edit history) work order.
