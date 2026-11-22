@@ -1,0 +1,33 @@
+[package]
+name = "gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "KaiCad Studio — desktop PCB viewer and inspection shell"
+
+[lib]
+name = "kaicad_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kai-cad-gui"
+path = "src/main.rs"
+
+[dependencies]
+core = { path = "../core" }
+pcb = { path = "../pcb" }
+renderer = { path = "../renderer" }
+eframe = { version = "0.32.3", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true

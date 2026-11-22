@@ -139,6 +139,16 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - Renderer, push-and-shove and interactive routing wired into the `kai-cad` self-check and cross-crate smoke test
 - 18 new tests; total tests: 319
 
+### GUI shell — KaiCad Studio
+- New `gui` crate with a native eframe/egui window and `kai-cad-gui` binary
+- Headless-testable `StudioState`: board, path, view, DRC report, revision and status
+- Deterministic `PcbDesign` JSON open/save with parent-directory creation and surfaced errors
+- Built-in DRC-clean two-layer demo board with five footprints, front/back tracks and two vias
+- Software-rendered 2D/3D viewport cached by size, view and revision, capped at 2048 px per side
+- Layer-stack, board-summary and footprint inspection; DRC counts and violation details
+- `Ctrl+O`/`Ctrl+S`/`F5`, path dialogs and drag-and-drop board opening
+- 12 new tests; total tests: 331
+
 ## 🚧 Next — Week 16: Beta readiness
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
@@ -147,7 +157,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥319 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥343 tests, clippy/fmt/doc/link/release clean
 
 ## ⬜ Later milestones
 
@@ -166,11 +176,14 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ Push-and-shove and interactive routing (Phase 2 completion)
 - ✅ Basic 2D/3D software renderer (Phase 2 completion; Vulkan GPU backend deferred)
 
-### Custom GUI (not yet scheduled)
-- No dedicated GUI week exists in the 16-week plan; the application shell is currently the `kai-cad` CLI.
-- Basic PCB rendering is available through the headless software renderer; a Vulkan GPU backend is still deferred.
-- The custom GUI should be scoped and scheduled after the rendering backend and interaction model are chosen.
-- [ ] Decide GUI scope and slot it into the roadmap (likely after Phase 2 or as a new phase)
+### Custom GUI (post-Phase-2 increment)
+- ✅ Native `gui` crate and `kai-cad-gui` binary using eframe/egui
+- ✅ Board JSON open/save, demo board, 2D/3D software viewport, DRC and stackup/footprint inspection
+- ✅ Keyboard shortcuts, drag-and-drop opening and headless state tests
+- ⬜ Copper editing, interactive routing and transactional GUI edits
+- ⬜ Pan/zoom, native file picker, selection/measurement tools and continuous DRC
+- ⬜ Schematic capture and cross-probing
+- [x] Decide GUI scope and slot it into the roadmap (viewer shell after Phase 2; full editor later)
 
 ### Phase 3 — kAI & collaboration (Weeks 9–12)
 - ✅ Transactional kAI suggestion application (Week 9)

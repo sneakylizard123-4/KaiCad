@@ -27,6 +27,7 @@
 | **Schematic Engine** | Netlist generation, rule checking, cross-probing | Rust |
 | **PCB Engine** | Multi-layer board design, stackups, routing | Rust + custom routing algorithm |
 | **Renderer** | Deterministic software 3D/2D visualization; Vulkan backend planned | Rust (Vulkan API planned) |
+| **GUI** | Native board viewing, inspection and DRC; editing planned | Rust + eframe/egui |
 | **AI Subsystem (kAI)** | Circuit optimization, design suggestions | Rust + LLM integration |
 | **Collaboration Layer** | Version control, sharing, real-time sync | Rust + WebSocket |
 | **Plugin/Scripting** | Extensible architecture | Rust + Cargo workspace |
@@ -78,9 +79,12 @@ application, permission-checked collaborative edit sessions with version
 history, bounded multi-step undo/redo history, and a validated plugin manifest
 registry with SQLite persistence, activation state and CLI management are in
 place. A deterministic headless software renderer produces framed 2D top views
-and depth-tested 3D board views; the Vulkan GPU backend remains deferred. PCB
+and depth-tested 3D board views; the Vulkan GPU backend remains deferred. A
+post-Phase-2 eframe-based KaiCad Studio shell opens and saves board documents,
+presents the software-rendered 2D/3D viewport, runs DRC, and inspects the
+stackup and footprints; copper editing and schematic capture are deferred. PCB
 designs persist with their tracks, vias and DRC rules in SQLite. The workspace
-has **319 passing tests**, clean `cargo clippy --workspace --all-targets -- -D
+has **331 passing tests**, clean `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo fmt --all -- --check`, and a successful release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 16 brief.
@@ -159,6 +163,8 @@ beta readiness and release validation.
 - [ ] Full schematic design (nets, symbols, rules) works
 - [x] Multi-layer PCB design with routing is functional
 - [x] Software renderer produces deterministic 2D/3D board visualizations
+- [x] Native GUI shell opens/saves boards, renders 2D/3D views and reports DRC
+- [ ] GUI supports interactive PCB and schematic editing
 - [ ] Vulkan GPU renderer produces accelerated 2D/3D visualizations
 - [ ] kAI provides meaningful circuit optimization suggestions
 - [ ] Collaborative features (sharing, versioning) are operational

@@ -3,13 +3,14 @@
 Practical instructions for building, testing and hacking on KaiCad.
 
 > KaiCad is **pre-alpha**. The data model, schematic and PCB engines, routing,
-> software renderer, persistence and collaboration primitives are implemented
-> and tested; the GUI, Vulkan GPU backend, AI generation and real-time
-> transport are not. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
+> software renderer, persistence, collaboration primitives and a desktop GUI
+> inspection shell are implemented and tested; full GUI editing, the Vulkan
+> GPU backend, AI generation and real-time transport are not. See
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
 >
-> **Current state:** Weeks 1–15 and the Phase 2 PCB/renderer scope are complete
-> (319 tests, clippy/fmt/doc/release all clean). Week 16 — beta readiness — is
-> next; its work order is in
+> **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope and the first
+> Studio GUI shell are complete (331 tests, clippy/fmt/doc/release all clean).
+> Week 16 — beta readiness — is next; its work order is in
 > [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 
 ## Prerequisites
@@ -73,6 +74,13 @@ rendering path never loads the loader. Building and running the renderer need
 no Vulkan SDK. For future GPU work, install a loader plus an ICD (Mesa, NVIDIA,
 AMD or MoltenVK) and verify with `vulkaninfo --summary`.
 
+### Desktop GUI runtime
+
+The `gui` crate builds the native KaiCad Studio window with eframe and glow.
+Running it needs an X11 or Wayland session, an OpenGL-capable driver and
+`libxkbcommon` at runtime. It does not need a Vulkan loader. Unit tests,
+`cargo check`, and the headless renderer run without a display.
+
 ## Toolchain
 
 | File | Setting |
@@ -110,7 +118,9 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Verify formatting without writing | `cargo fmt --all -- --check` |
 | Build API documentation | `cargo doc --workspace --no-deps` |
 | Run the application (banner + self-check) | `cargo run -p kai-cad` |
-| Print usage | `cargo run -p kai-cad -- --help` |
+| Run the desktop GUI with the demo board | `cargo run -p gui` |
+| Open a board in the GUI | `cargo run -p gui -- path/to/board.kaicad.json` |
+| Print CLI usage | `cargo run -p kai-cad -- --help` |
 | Print the version | `cargo run -p kai-cad -- --version` |
 | Build a release binary | `cargo build --workspace --release` |
 | Run the store CRUD example | `cargo run -p store --example project_crud` |
@@ -123,13 +133,14 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **319 tests**, all passing:
+`cargo test --workspace` currently runs **331 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
+| `gui` (`src/app.rs`, `demo.rs`, `document.rs`) | 12 |
 | `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 80 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
@@ -186,6 +197,37 @@ cargo run -p kai-cad -- plugins enable com.example.alpha --db my-project.db
 
 `discover` validates every manifest before opening the database. `list` prints
 `id`, `version`, state and comma-separated capabilities, one plugin per line.
+
+## Running the desktop GUI
+
+```bash
+# Built-in demo board
+cargo run -p gui
+
+# Open a board at startup
+cargo run -p gui -- path/to/board.kaicad.json
+```
+
+The `kai-cad-gui` binary opens **KaiCad Studio**, an eframe/egui window. The
+left panel owns the document path, view selector, board summary, design rules
+and DRC. The right panel lists the copper layer stack and placed footprints.
+The centre panel is a live texture rendered by the deterministic software
+rasterizer. Boards open from the Document path field, the File menu, a dropped
+file, or a command-line path; Save writes pretty `PcbDesign` JSON.
+
+| Input | Action |
+|-------|--------|
+| `Ctrl+O` | open the board-path dialog |
+| `Ctrl+S` | save to the current path, or open Save As |
+| `F5` | run DRC |
+| Drop a file on the window | open that board |
+
+Current limits: the shell is read-only (no track, via or pad editing), the
+2D/3D view auto-fits the board (no manual pan/zoom), open/save paths are typed
+rather than chosen from a native file picker, and schematic capture is not
+wired up. The viewport is capped at 2048 pixels on its longest side. The
+window uses OpenGL through eframe; board pixels still come from the CPU
+renderer, and no Vulkan loader is required.
 
 ## Examples
 
@@ -265,13 +307,14 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–15 and the Phase 2 PCB/renderer scope are finished; Week 16 hardens
-the CLI, adds user documentation and performance baselines, and completes the
-release checklist. Before starting, read
+Weeks 1–15, the Phase 2 PCB/renderer scope and the first Studio GUI shell are
+finished; Week 16 hardens the CLI, adds user documentation and performance
+baselines, and completes the release checklist. Before starting, read
 [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
-working while new persistence layers are added.
+working while new persistence layers are added. GUI editing features are
+post-beta work; keep the current shell compiling and tested.
 
 When a milestone changes the crate graph, commands or task status, update
 `docs/ARCHITECTURE.md`, this guide, `PLAN.md` and `PHASE1_TASKS.md` in the same

@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 319 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 331 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -219,6 +219,8 @@ evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 16
 Phase 2's functional PCB/renderer scope is also complete: rotated pads,
 blind/buried vias, deterministic push-and-shove rip-up/reroute, interactive
 route preview/commit/cancel, and a deterministic headless software 2D/3D
-renderer. These additions brought the total to **319 passing tests**. The
-Vulkan GPU backend is still deferred; the renderer is CPU software
-rasterization. Week 16 (beta readiness) is next.
+renderer. These additions brought the total to **319 passing tests**. A later
+post-Phase-2 Studio GUI shell added 12 more, for **331 passing tests**; it
+provides board viewing, open/save and DRC but remains read-only. The Vulkan
+GPU backend is still deferred; the renderer is CPU software rasterization.
+Week 16 (beta readiness) is next.

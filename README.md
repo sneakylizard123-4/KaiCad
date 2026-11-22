@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Phase 2 (PCB core + basic software renderer) complete (pre-alpha); Week 16 (beta readiness) is next
+- **Implementation:** Phase 2 (PCB core + software renderer) and a desktop GUI inspection shell complete (pre-alpha); Week 16 (beta readiness) is next
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -15,7 +15,7 @@ documentation, examples and a Criterion benchmark. It is **not** a usable EDA
 tool yet.
 
 ## Features
-- Custom GUI
+- Custom desktop GUI shell for board viewing, inspection and DRC (editing planned)
 - Deterministic software 2D/3D rendering (Vulkan GPU backend planned)
 - Native KiCad 9/10 bidirectional compatibility
 - Full schematic and PCB design capabilities
@@ -36,6 +36,10 @@ tool yet.
   - Fedora: `sudo dnf install pkgconf-pkg-config openssl-devel systemd-devel vulkan-loader-devel vulkan-tools`
   - macOS: `brew install pkg-config openssl`
 
+The Studio GUI needs an X11 or Wayland desktop session, an OpenGL-capable
+driver and `libxkbcommon` at runtime. The headless renderer and all tests need
+no display or Vulkan loader.
+
 See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full setup guide.
 
 ### Building
@@ -47,10 +51,16 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (319 tests across the workspace)
+# Run tests (331 tests across the workspace)
 cargo test --workspace
 
-# Run the application (banner + subsystem self-check)
+# Run the desktop GUI with the built-in demo board
+cargo run -p gui
+
+# Open a board document in the GUI
+cargo run -p gui -- path/to/board.kaicad.json
+
+# Run the CLI application (banner + subsystem self-check)
 cargo run -p kai-cad
 
 # Print usage or the version without running the self-check
@@ -112,6 +122,13 @@ KaiCad/
 │   └── examples/
 │       └── board_outline.rs
 ├── renderer/                   # software 2D/3D renderer + Vulkan config skeleton
+├── gui/                        # KaiCad Studio desktop shell (eframe)
+│   └── src/
+│       ├── app.rs              # StudioState, viewport and eframe panels
+│       ├── demo.rs             # built-in DRC-clean demo board
+│       ├── document.rs         # PcbDesign JSON open/save
+│       ├── lib.rs
+│       └── main.rs             # kai-cad-gui binary
 ├── ai/                         # kAI subsystem
 ├── collab/                     # collaboration layer
 ├── plugin/                     # plugin manifests, registry and discovery
@@ -155,8 +172,8 @@ KaiCad/
 
 ## Current State
 
-Weeks 1–15 and the Phase 2 PCB/renderer scope are complete and verified:
-**319 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+Weeks 1–15, the Phase 2 PCB/renderer scope and the first Studio GUI shell are
+complete and verified: **331 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
 routing, interactive route previews, and a headless software 2D/3D renderer
@@ -165,10 +182,17 @@ persistence (schema v6), activation state and deterministic capability
 filters, plus `kai-cad plugins list|show|enable|disable|discover`. Manifests
 never load or execute plugin code.
 
-The Vulkan GPU backend remains deferred; the current renderer is deterministic
-software rasterization with no window or GPU requirement. The next milestone is
-**Week 16 — beta readiness**: CLI hardening, user documentation, performance
-baselines and the release checklist. The full brief is in
+The post-Phase-2 `gui` crate adds **KaiCad Studio**, a native eframe/egui
+shell. It opens the demo board or a `PcbDesign` JSON document, renders the
+board in a 2D or 3D viewport through the deterministic CPU rasterizer, shows
+the layer stack and placed footprints, runs DRC, and saves the board. It is a
+viewer and inspection shell: copper editing, interactive routing, pan/zoom,
+native file pickers and schematic capture are not wired up yet.
+
+The Vulkan GPU backend remains deferred. Board rendering is deterministic CPU
+rasterization; eframe presents the framebuffer in a native window. The next
+milestone is **Week 16 — beta readiness**: CLI hardening, user documentation,
+performance baselines and the release checklist. The full brief is in
 [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 What each crate provides today:
@@ -201,6 +225,11 @@ What each crate provides today:
   depth buffer and flat shading. It is headless, needs no Vulkan loader and
   writes binary PPM via `Framebuffer::save_ppm`. A Vulkan GPU backend is not
   implemented.
+- 🚧 **gui (KaiCad Studio)** — native eframe shell with headless-testable
+  `StudioState`, board JSON open/save, a software-rendered 2D/3D viewport
+  (capped at 2048 px per side), layer-stack and footprint inspection, DRC
+  counts and violation details, status feedback, keyboard shortcuts and drag-
+  and-drop board opening. The viewport is read-only; editing is deferred.
 - 🚧 **ai (kAI)** — configuration, deterministic suggestion validation
   (confidence range, empty changes, no-op changes, negative constraints) and
   atomic `apply_suggestion` with undoable `core::edit` transactions. Every
@@ -238,6 +267,7 @@ What each crate provides today:
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ✅ Complete (basic software renderer; Vulkan GPU backend deferred) |
+| GUI | — | KaiCad Studio desktop inspection shell: open/save, 2D/3D, DRC | 🚧 Viewer complete; editing next |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 Week 12 complete; kAI generation, real-time sync and plugin execution deferred |
 | 4 | 13–16 | Plugin persistence and management, polish, beta and KiCad 9/10 compatibility QA | 🚧 Weeks 13–15 complete; release readiness next |
 

@@ -1,8 +1,9 @@
 # Next Agent Prompt — Week 16: Beta Readiness
 
 You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
-`/home/sneak/vscode/KaiCad`. Weeks 1–15 and the Phase 2 PCB/renderer scope are
-finished and verified. Your job is **Week 16: harden the CLI, document the
+`/home/sneak/vscode/KaiCad`. Weeks 1–15, the Phase 2 PCB/renderer scope and a
+basic Studio GUI inspection shell are finished and verified. Your job is
+**Week 16: harden the CLI, document the
 plugin workflow and release surface, add performance baselines, and complete
 the beta-readiness audit**. Do not add dynamic plugin execution or new
 engineering engines.
@@ -14,15 +15,15 @@ Read this document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 319 passing, 0 failing
+- **Tests:** 331 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
 
 ### Workspace crates
 
-`core`, `schematic`, `pcb`, `renderer`, `ai`, `collab`, `plugin`, `store`,
-`kicad-parser` and the `kai-cad` binary.
+`core`, `schematic`, `pcb`, `renderer`, `gui`, `ai`, `collab`, `plugin`, `store`,
+`kicad-parser`, the `kai-cad` CLI binary and the `kai-cad-gui` desktop binary.
 
 ### Weeks 13–15 foundation
 
@@ -48,6 +49,10 @@ Read this document fully before writing code.
 - `renderer` is a headless software 2D/3D rasterizer with a depth buffer and
   PPM output. It requires no Vulkan loader. The Vulkan GPU backend remains
   deferred.
+- A post-Phase-2 `gui` crate adds KaiCad Studio: a native eframe window with
+  board JSON open/save, a software-rendered 2D/3D viewport, layer/footprint
+  inspection and DRC. It is read-only; editing and schematic capture are not
+  implemented.
 
 ---
 
@@ -98,7 +103,8 @@ Add `docs/USER_GUIDE.md` covering:
 - Discovery, registration, listing, showing, enabling and disabling plugins.
 - The default `kaicad.db` location and how `--db` changes it.
 - What "enabled" means: registry state only; no code is executed.
-- Current limitations: no GUI, no Vulkan GPU backend (a headless software
+- Current limitations: the GUI is a read-only viewer/inspection shell (no
+  editing or schematic capture), no Vulkan GPU backend (a headless software
   renderer is available), no dynamic plugin loading and no network
   collaboration.
 - A short troubleshooting table for invalid manifests, duplicate ids, unsafe
@@ -134,14 +140,14 @@ Add `docs/RELEASE.md` with a beta checklist that records, at minimum:
 - Manual self-check output and exit code.
 - Schema version and migration policy.
 - Plugin registry limitations.
-- Known deferred features (GUI, Vulkan GPU renderer, dynamic plugins,
-  real-time collaboration, KiCad PCB/schematic parsing).
+- Known deferred features (full GUI editing, Vulkan GPU renderer, dynamic
+  plugins, real-time collaboration, KiCad PCB/schematic parsing).
 - Versioning and GPL-3.0-or-later licensing.
 
 The checklist must distinguish verified items from deferred ones; do not mark
 future work complete.
 
-### 3.5 Tests (target: 12–16 new tests, at least 331 total)
+### 3.5 Tests (target: 12–16 new tests, at least 343 total)
 
 Cover at least:
 
@@ -166,8 +172,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 319 tests still pass.
-- [ ] Test count rises to at least 331, all passing.
+- [ ] Existing 331 tests still pass.
+- [ ] Test count rises to at least 343, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).
@@ -215,7 +221,8 @@ cargo build --workspace --release
 ## 6. Out of scope for this pass
 
 - Dynamic plugin loading, execution, sandboxing, signing or installation UI.
-- Vulkan renderer implementation or GUI work.
+- Vulkan renderer implementation or new GUI editing features; only fixes to
+  the existing Studio viewer/DRC shell are in scope.
 - New schematic, PCB or routing features.
 - KiCad `.kicad_sch` / `.kicad_pcb` parsing or writing.
 - Network collaboration, telemetry or cloud services.

@@ -1,10 +1,11 @@
 # Contributing to KaiCad
 
 KaiCad is a pre-alpha Rust project. The core data model, schematic and PCB
-engines, routing, software renderer, persistence and collaboration primitives
-are implemented and tested, while the GUI, Vulkan GPU backend and some advanced
-engines remain incomplete. Contributions that move the architecture forward —
-or that honestly document what is missing — are welcome.
+engines, routing, software renderer, persistence, collaboration primitives and
+a desktop GUI inspection shell are implemented and tested, while full GUI
+editing, the Vulkan GPU backend and some advanced engines remain incomplete.
+Contributions that move the architecture forward — or that honestly document
+what is missing — are welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
@@ -29,6 +30,12 @@ in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
   discovery or persistence, ids are sorted deterministically, and entry points
   must remain relative. Discovery must never load or execute plugin code.
   Activation is separate registry state, not a manifest field.
+- **GUI state is headless.** `gui::StudioState` owns board, path, view and DRC
+  state so it can be tested without a window; `StudioApp` is only an eframe
+  adapter. Do not duplicate PCB geometry or rasterization in the UI. The
+  viewport must keep using `renderer::Renderer`, and future edits must go
+  through the existing engine and transactional APIs rather than mutating a
+  private copy of the design.
 - **Deterministic operations.** Do not introduce unseeded randomness into
   geometry, netlisting, routing or rule checks. DRC violations are sorted by
   `(rule_id, objects)`, each unordered track pair on different nets is checked

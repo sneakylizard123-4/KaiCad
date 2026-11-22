@@ -2,10 +2,10 @@
 
 > **Status: pre-alpha.** This document describes the intended architecture
 > and the code that exists today. The data model, schematic and PCB engines,
-> DRC, routing, software renderer, persistence and collaboration primitives
-> are implemented and tested; the GUI, Vulkan GPU backend, AI generation and
-> real-time transport remain incomplete. Do not read this as a description of
-> a finished EDA application.
+> DRC, routing, software renderer, persistence, collaboration primitives and a
+> desktop GUI inspection shell are implemented and tested; full GUI editing,
+> the Vulkan GPU backend, AI generation and real-time transport remain
+> incomplete. Do not read this as a description of a finished EDA application.
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
 > 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
@@ -15,19 +15,22 @@
 > history), 12 (plugin manifests and discovery), 13 (SQLite plugin registry),
 > 14 (plugin activation and capability queries), 15 (plugin CLI) and the
 > Phase 2 completion pass (rotated pads, blind/buried vias, push-and-shove,
-> interactive routing and the software renderer) are complete. The workspace
-> has 319 passing tests.
+> interactive routing and the software renderer) are complete. A post-Phase-2
+> Studio GUI shell adds native board viewing, inspection and DRC. The workspace
+> has 331 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
-layer and a thin application binary. The long-term goal is a complete EDA application
+layer, a native desktop inspection shell and a thin CLI binary. The long-term
+goal is a complete EDA application
 that is **not** a wrapper around KiCad (see `PRD.md`).
 
 ## Crate graph
 
 ```mermaid
 graph TD
-    app["kai-cad<br/>(binary)"]
+    app["kai-cad<br/>(CLI binary)"]
+    gui["gui<br/>KaiCad Studio"]
     core["core<br/>shared data model"]
     schematic["schematic<br/>netlist · graph · ERC"]
     pcb["pcb<br/>footprint · layer · drc · routing"]
@@ -48,6 +51,10 @@ graph TD
     app --> store
     app --> kicad_parser
 
+    gui --> core
+    gui --> pcb
+    gui --> renderer
+
     kicad_parser --> core
     schematic --> core
     pcb --> core
@@ -63,8 +70,10 @@ Arrows mean "depends on". `core` sits at the bottom of the graph and must not
 depend on any other workspace crate. There are no cross-engine edges between
 `schematic` and `pcb`: both depend only on `core`. `renderer` depends on `pcb`
 to rasterize a `PcbDesign`; it also keeps `ash` and `serde` for the Vulkan
-configuration skeleton and uses `core` only in dev-dependencies. It is wired
-into the application binary, not into the data model.
+configuration skeleton and uses `core` only in dev-dependencies. `gui` is a
+leaf application crate that depends on `core`, `pcb` and `renderer`, plus the
+external `eframe`/`egui` window stack. It is not part of the data model or the
+CLI binary.
 
 ## Application layering
 
@@ -78,7 +87,8 @@ flowchart BT
     collab["Collaboration<br/>collab"]
     plugin["Plugin metadata<br/>plugin"]
     store["Engineering database<br/>store"]
-    ui["UI / application shell<br/>kai-cad"]
+    cli["CLI / self-check<br/>kai-cad"]
+    studio["Studio GUI<br/>gui"]
 
     schematic --> data
     pcb --> data
@@ -87,21 +97,26 @@ flowchart BT
     collab --> data
     store --> data
     store --> plugin
-    ui --> data
-    ui --> schematic
-    ui --> pcb
-    ui --> render
-    ui --> ai
-    ui --> collab
-    ui --> plugin
-    ui --> store
+    cli --> data
+    cli --> schematic
+    cli --> pcb
+    cli --> render
+    cli --> ai
+    cli --> collab
+    cli --> plugin
+    cli --> store
+    studio --> data
+    studio --> pcb
+    studio --> render
 ```
 
-The UI layer is currently only a CLI (`kai-cad/src/main.rs`): it prints a
-banner, supports `--help`/`--version`, and runs a deterministic self-check that
-calls every subsystem. A custom GUI is planned but not started. The AI and
-collaboration layers are optional: KaiCad must remain usable without AI,
-network access or external services (`PRD.md` §1.2, §1.3).
+The UI layer has two front ends. `kai-cad` is the CLI (`kai-cad/src/main.rs`):
+it prints a banner, supports `--help`/`--version`, manages plugins, and runs a
+deterministic self-check that calls every subsystem. `kai-cad-gui` is KaiCad
+Studio (`gui/`): a native eframe window for board viewing, inspection and DRC.
+Full interactive editing, schematic capture and pan/zoom remain unimplemented.
+The AI and collaboration layers are optional: KaiCad must remain usable without
+AI, network access or external services (`PRD.md` §1.2, §1.3).
 
 ## Core data model
 
@@ -271,7 +286,8 @@ The 2D view fills the outline, draws copper in stackup order, rotated pad
 copper and vias, then outlines the board. The 3D view extrudes the outline,
 draws copper, pads and via prisms, projects them through the camera and uses
 a depth buffer with flat shading. Output is deterministic for a given design,
-camera and size. No window, GPU or Vulkan loader is used.
+camera and size. The renderer itself uses no window, GPU or Vulkan loader; the
+Studio GUI presents the resulting texture in an eframe window.
 
 The `ash`-based `device`, `swapchain`, `render_pass` and `pipeline` modules
 remain configuration scaffolding for a future Vulkan backend; they are not
@@ -411,6 +427,37 @@ plugin code is loaded or executed.
 - Persistence and activation live in `store` (schema v6); the `plugin` crate
   remains metadata validation, ordering and local discovery only.
 
+### `gui` — KaiCad Studio desktop shell
+
+Dependencies: `core`, `pcb`, `renderer`, `serde_json`, `uuid`, and the external
+`eframe`/`egui` window stack. The crate has a library (`kaicad_gui`) and the
+`kai-cad-gui` binary. Modules:
+
+- `app` — `StudioState` is the headless application model. It owns the current
+  `PcbDesign`, optional path, `ViewMode`, `DrcReport`, status notice and a
+  viewport revision. It opens and saves `PcbDesign` JSON, runs DRC and changes
+  the view; failures leave the current board untouched. `StudioApp` is the
+  `eframe::App` adapter. It draws a menu bar, a left document/DRC inspector, a
+  right layer-stack and footprint panel, a bottom status bar, and a central
+  image. The image is a texture populated from `renderer::Renderer` output at
+  a size capped by `MAX_VIEWPORT_SIDE` (2048 px). Renders are cached by size,
+  view and design revision, so idle frames do not rasterize again.
+- `demo` — deterministic two-layer demo board with five footprints, front and
+  back tracks, and two through vias. It is DRC-clean under the default rules
+  and renders in both views.
+- `document` — deterministic pretty JSON (`design_to_json`) with one trailing
+  newline, `design_from_json`, `load_design` and `save_design`. Saving creates
+  parent directories; any I/O or JSON failure is returned to the UI and shown
+  in the status bar.
+
+Input and shortcuts: `Ctrl+O` opens the path dialog, `Ctrl+S` saves to the
+current path or opens Save As, `F5` runs DRC, and a dropped file opens as a
+board. The shell currently auto-fits the 2D/3D view, offers a typed path rather
+than a native file picker, and is read-only: PCB and schematic editing are not
+wired to the engines yet. The window uses eframe/glow for presentation but the
+board image itself is still the deterministic CPU rasterizer; no Vulkan code
+is involved.
+
 ### `kai-cad` — application binary
 
 Depends on every library crate. `src/main.rs` prints a banner, supports
@@ -448,7 +495,7 @@ flowchart LR
     components["core::Component<br/>symbol_id ↔ footprint_id"]
     pcb["pcb::PcbDesign<br/>footprints · tracks · vias"]
     erc["ERC<br/>deterministic rules"]
-    render["renderer<br/>(planned)"]
+    render["renderer<br/>software 2D/3D"]
 
     sheets --> netlist
     symbols --> netlist
@@ -479,8 +526,9 @@ flowchart LR
    the PCB geometry, both with deterministic rules (see below). `store` can
    save and reload the complete PCB design with its rules.
 7. **Cross-probing and rendering.** The software renderer draws PCB data to a
-   headless framebuffer. Schematic drawing, cross-probing and view selection
-   synchronization are not implemented.
+   headless framebuffer, and the Studio GUI presents it in a native window.
+   Schematic drawing, cross-probing between schematic and PCB, and view
+   selection synchronization are not implemented.
 
 There is no code path yet that executes steps 4–7 end to end from a netlist.
 
@@ -618,8 +666,9 @@ collaborative sessions with versioned project digests and staged transactions,
 bounded multi-step undo/redo history with branch clearing, validated plugin
 manifests with deterministic registry ordering, local discovery, SQLite
 persistence, activation state, capability filters and CLI management, a
-deterministic software 2D/3D renderer, the `kai-cad` self-check binary, CI
-(including a Markdown link check and coverage job), and documentation.
+deterministic software 2D/3D renderer, the `kai-cad` self-check binary, a
+post-Phase-2 Studio GUI shell (`gui`) for board viewing, inspection and DRC,
+CI (including a Markdown link check and coverage job), and documentation.
 
 **Next (Week 16):** beta readiness. The planned work is:
 

@@ -12,6 +12,7 @@ members = [
     "kai-cad",
     "store",
     "kicad-parser",
+    "gui",
 ]
 
 [workspace.package]
