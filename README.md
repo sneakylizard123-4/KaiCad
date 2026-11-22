@@ -6,7 +6,7 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Phase 2 (PCB core + software renderer) and a desktop GUI inspection shell complete (pre-alpha); Week 16 (beta readiness) is next
+- **Implementation:** Phase 2 (PCB core + software renderer), board inspection, the first track-routing editor and supported-subset `.kicad_pcb` import/export complete (pre-alpha); full KiCad parity remains a multi-phase program
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
@@ -15,10 +15,10 @@ documentation, examples and a Criterion benchmark. It is **not** a usable EDA
 tool yet.
 
 ## Features
-- Custom desktop GUI shell for board viewing, inspection and DRC (editing planned)
+- Native Studio GUI for board viewing, DRC and undoable track routing (placement and schematic editing planned)
 - Deterministic software 2D/3D rendering (Vulkan GPU backend planned)
-- Native KiCad 9/10 bidirectional compatibility
-- Full schematic and PCB design capabilities
+- KiCad `.kicad_sym` symbol import and `.kicad_pcb` board subset import/export through `kai-cad pcb` (full project compatibility not implemented)
+- Full schematic and PCB design capabilities target (not complete)
 - Integrated design-rule and electrical-rule checking
 - Advanced PCB routing and engineering analysis
 - Built-in AI engineering assistance (kAI)
@@ -51,7 +51,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (331 tests across the workspace)
+# Run tests (353 tests across the workspace)
 cargo test --workspace
 
 # Run the desktop GUI with the built-in demo board
@@ -59,6 +59,12 @@ cargo run -p gui
 
 # Open a board document in the GUI
 cargo run -p gui -- path/to/board.kaicad.json
+
+# Import a supported KiCad PCB into KaiCad's JSON board format
+cargo run -p kai-cad -- pcb import path/to/board.kicad_pcb path/to/board.kaicad.json
+
+# Export a KaiCad board as a KiCad PCB
+cargo run -p kai-cad -- pcb export path/to/board.kaicad.json path/to/board.kicad_pcb
 
 # Run the CLI application (banner + subsystem self-check)
 cargo run -p kai-cad
@@ -144,8 +150,10 @@ KaiCad/
 │   │   └── 0006_plugin_enabled.sql
 │   └── examples/
 │       └── project_crud.rs
-├── kicad-parser/               # KiCad symbol-library import (S-expression)
+├── kicad-parser/               # KiCad symbol import and `.kicad_pcb` subset I/O
 │   ├── src/
+│   │   ├── lib.rs              # `.kicad_sym` parser
+│   │   └── pcb.rs              # `.kicad_pcb` importer/exporter with warnings
 │   └── examples/
 │       └── parse_library.rs
 ├── kai-cad/                    # application binary (kai-cad)
@@ -167,13 +175,15 @@ KaiCad/
 - [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — self-contained brief for the next implementation pass (Week 16)
 - [`PRD.md`](PRD.md) — master product requirements document
 - [`docs/PLAN.md`](docs/PLAN.md) — implementation roadmap and technical approach
+- [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) — full-KiCad gap analysis, parity milestones, current editor scope and the supported `.kicad_pcb` subset
 - [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) — Phase 1 (weeks 1–4) task breakdown
 - [`docs/WEEK1_TASKS.md`](docs/WEEK1_TASKS.md) — Week 1 deliverables and verification status
 
 ## Current State
 
-Weeks 1–15, the Phase 2 PCB/renderer scope and the first Studio GUI shell are
-complete and verified: **331 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
+increment and a KiCad PCB compatibility subset are complete and verified:
+**353 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
 routing, interactive route previews, and a headless software 2D/3D renderer
@@ -185,15 +195,20 @@ never load or execute plugin code.
 The post-Phase-2 `gui` crate adds **KaiCad Studio**, a native eframe/egui
 shell. It opens the demo board or a `PcbDesign` JSON document, renders the
 board in a 2D or 3D viewport through the deterministic CPU rasterizer, shows
-the layer stack and placed footprints, runs DRC, and saves the board. It is a
-viewer and inspection shell: copper editing, interactive routing, pan/zoom,
-native file pickers and schematic capture are not wired up yet.
+the layer stack and placed footprints, runs DRC, and saves the board. The 2D
+view now has an undoable track-routing tool: click a pad or free point, click
+a destination, and DRC-checked copper is added. The CLI can convert supported
+`.kicad_pcb` boards to and from KaiCad JSON with explicit warnings for skipped
+KiCad constructs; Studio does not yet open `.kicad_pcb` directly.
+Footprint/pad placement, pan/zoom, native file pickers and schematic capture
+remain unimplemented.
 
 The Vulkan GPU backend remains deferred. Board rendering is deterministic CPU
-rasterization; eframe presents the framebuffer in a native window. The next
-milestone is **Week 16 — beta readiness**: CLI hardening, user documentation,
-performance baselines and the release checklist. The full brief is in
-[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
+rasterization; eframe presents the framebuffer in a native window. Week 16
+release hardening is still outlined in
+[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md); the product path to a
+full KiCad replacement is in [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md),
+not in the 16-week foundation plan alone.
 
 What each crate provides today:
 
@@ -219,17 +234,22 @@ What each crate provides today:
   optional blind/buried vias, bounded push-and-shove rip-up/reroute, and an
   `InteractiveRouter` preview/commit/cancel session. Through vias remain the
   default; blind/buried vias are opt-in via `RouterConfig::allow_blind_buried`.
+  `net_ids` and `copper_layer_ids` expose the assigned nets and stackup order
+  needed by an editor.
 - ✅ **renderer (basic)** — deterministic CPU rasterizer for `PcbDesign` values.
   `ViewMode::TwoD` draws the board, copper, pads and vias; `ViewMode::ThreeD`
   extrudes the board and renders it through a fitted perspective camera with a
   depth buffer and flat shading. It is headless, needs no Vulkan loader and
-  writes binary PPM via `Framebuffer::save_ppm`. A Vulkan GPU backend is not
-  implemented.
+  writes binary PPM via `Framebuffer::save_ppm`. `BoardTransform` exposes the
+  exact 2D board-to-pixel fit for viewport hit-testing. A Vulkan GPU backend is
+  not implemented.
 - 🚧 **gui (KaiCad Studio)** — native eframe shell with headless-testable
   `StudioState`, board JSON open/save, a software-rendered 2D/3D viewport
   (capped at 2048 px per side), layer-stack and footprint inspection, DRC
   counts and violation details, status feedback, keyboard shortcuts and drag-
-  and-drop board opening. The viewport is read-only; editing is deferred.
+  and-drop board opening. The 2D viewport has an undoable click-to-route track
+  editor with DRC preflight. Footprint/pad editing and schematic capture remain
+  deferred.
 - 🚧 **ai (kAI)** — configuration, deterministic suggestion validation
   (confidence range, empty changes, no-op changes, negative constraints) and
   atomic `apply_suggestion` with undoable `core::edit` transactions. Every
@@ -248,8 +268,12 @@ What each crate provides today:
   symbol-library CRUD, PCB-design CRUD (`save`, `load`, `delete`) storing
   tracks, vias, footprints and DRC rules as JSON, and validated plugin CRUD
   with persisted enable/disable state and capability filters.
-- ✅ **kicad-parser** — deterministic S-expression reader and `.kicad_sym`
-  loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids.
+- ✅ **kicad-parser** — deterministic S-expression reader, `.kicad_sym`
+  loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids,
+  and `.kicad_pcb` supported-subset import/export. Board conversion preserves
+  layer tables, named nets, Edge.Cuts outlines, footprints/pads, tracks and
+  vias; skipped zones, arcs, graphics, models and other unsupported constructs
+  are reported as warnings rather than silently claimed as round-tripped.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,
@@ -257,7 +281,8 @@ What each crate provides today:
   a blocked route, applies a validated suggestion and undoes/redoes it, drives
   a bounded multi-step undo/redo history, discovers and registers validated
   plugin manifests, manages the persisted plugin registry through `plugins
-  list|show|enable|disable|discover`, creates a session and enforces roles,
+  list|show|enable|disable|discover`, converts supported KiCad PCBs through
+  `pcb import|export`, creates a session and enforces roles,
   records a versioned edit, stages/drains it, stores and reloads a PCB design,
   shoves and interactively routes copper, and renders the board in 2D and 3D.
 
@@ -267,12 +292,15 @@ What each crate provides today:
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ✅ Complete (basic software renderer; Vulkan GPU backend deferred) |
-| GUI | — | KaiCad Studio desktop inspection shell: open/save, 2D/3D, DRC | 🚧 Viewer complete; editing next |
+| GUI | — | KaiCad Studio desktop editor: open/save, 2D/3D, DRC, track routing | 🚧 Viewer + track routing; footprint placement next |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 Week 12 complete; kAI generation, real-time sync and plugin execution deferred |
-| 4 | 13–16 | Plugin persistence and management, polish, beta and KiCad 9/10 compatibility QA | 🚧 Weeks 13–15 complete; release readiness next |
+| 4 | 13–16 | Plugin persistence and management, polish, beta and foundation-level KiCad compatibility work | 🚧 Weeks 13–15 complete; `.kicad_pcb` subset landed; release readiness next |
+| Parity | post-beta | Full KiCad workflow and project-file compatibility | ⬜ Multi-phase; see the parity plan |
 
-See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and
-[`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) for the Phase 1 breakdown.
+See [`docs/PLAN.md`](docs/PLAN.md) for the foundation roadmap,
+[`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) for the full replacement
+program, and [`docs/PHASE1_TASKS.md`](docs/PHASE1_TASKS.md) for the Phase 1
+breakdown.
 
 ## License
 GPL-3.0-or-later

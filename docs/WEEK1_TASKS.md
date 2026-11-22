@@ -102,11 +102,11 @@ that commit.
 
 ## Next step
 
-Week 2 (engineering database) is complete and verified; Week 3 (symbol
-management) is next. The Week 3 work order — symbol-library data structures,
-KiCad `.kicad_sym` loading and store persistence — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). Week 1's JSON persistence API
-must keep working.
+This document records Week 1 evidence and is intentionally historical. For the
+current state, see [`README.md`](../README.md) and
+[`KICAD_PARITY.md`](KICAD_PARITY.md). The tree has since added SQLite
+persistence, schematic/PCB engines, Studio, and supported `.kicad_pcb`
+import/export; Week 1's JSON persistence API still works.
 
 ## Post-review fixes
 

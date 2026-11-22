@@ -11,7 +11,7 @@
 **Primary EDA compatibility:** KiCad 10  
 **Secondary EDA compatibility:** KiCad 9  
 **Rendering:** Vulkan target; deterministic software 2D/3D renderer implemented\
-**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope and the first KaiCad Studio GUI shell implemented; pre-alpha
+**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor and supported-subset `.kicad_pcb` import/export implemented; full KiCad project compatibility remains a post-beta program; pre-alpha
 
 ---
 
@@ -157,7 +157,9 @@ milestones and task breakdowns are maintained separately:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, data model and
   design rules as implemented.
 - [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) — the current
-  implementation brief.
+  release-hardening brief.
+- [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) — full-KiCad gap analysis,
+  milestone sequence and current editor scope.
 
 Implementation status: Weeks 1–15 and the Phase 2 PCB/renderer scope are
 complete — scaffolding, the shared data model, the SQLite engineering database,
@@ -169,6 +171,14 @@ undo/redo, permission-checked collaborative edit sessions with version history
 and sync staging, bounded multi-step edit history, and a validated local
 plugin registry with SQLite persistence, activation state and CLI management.
 A native eframe-based Studio shell now opens and saves board documents, renders
-2D/3D views and reports DRC, stackup and footprint information. The Vulkan GPU
-renderer, full GUI editing and a usable end-to-end editing workflow remain
-deferred. Week 16 (beta readiness) is next. KaiCad is pre-alpha.
+2D/3D views, reports DRC, stackup and footprint information, and supports
+undoable click-to-route track editing with DRC preflight. Footprint placement,
+schematic capture, manufacturing outputs and full KiCad project-file
+compatibility have not been implemented. A supported subset of `.kicad_pcb`
+can be imported and exported through `kai-cad pcb import|export`, preserving
+layers, named nets, board outlines, footprints, pads, tracks and vias while
+reporting skipped zones, arcs, graphics and models. `.kicad_pro` and
+`.kicad_sch` are still absent, so KaiCad is not yet a usable end-to-end KiCad
+replacement. Week 16 release hardening remains outstanding; the full parity
+sequence and the exact board-conversion limits are in
+[`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md). KaiCad is pre-alpha.

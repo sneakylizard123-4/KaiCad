@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "KaiCad Studio — desktop PCB viewer and inspection shell"
+description = "KaiCad Studio — desktop PCB editor and inspection shell"
 
 [lib]
 name = "kaicad_gui"

@@ -1406,6 +1406,7 @@ name = "kicad-parser"
 version = "0.1.0"
 dependencies = [
  "core",
+ "pcb",
  "tempfile",
  "uuid",
 ]

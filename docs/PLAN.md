@@ -27,7 +27,7 @@
 | **Schematic Engine** | Netlist generation, rule checking, cross-probing | Rust |
 | **PCB Engine** | Multi-layer board design, stackups, routing | Rust + custom routing algorithm |
 | **Renderer** | Deterministic software 3D/2D visualization; Vulkan backend planned | Rust (Vulkan API planned) |
-| **GUI** | Native board viewing, inspection and DRC; editing planned | Rust + eframe/egui |
+| **GUI** | Native board viewing, DRC and track routing; more editing planned | Rust + eframe/egui |
 | **AI Subsystem (kAI)** | Circuit optimization, design suggestions | Rust + LLM integration |
 | **Collaboration Layer** | Version control, sharing, real-time sync | Rust + WebSocket |
 | **Plugin/Scripting** | Extensible architecture | Rust + Cargo workspace |
@@ -81,13 +81,19 @@ registry with SQLite persistence, activation state and CLI management are in
 place. A deterministic headless software renderer produces framed 2D top views
 and depth-tested 3D board views; the Vulkan GPU backend remains deferred. A
 post-Phase-2 eframe-based KaiCad Studio shell opens and saves board documents,
-presents the software-rendered 2D/3D viewport, runs DRC, and inspects the
-stackup and footprints; copper editing and schematic capture are deferred. PCB
-designs persist with their tracks, vias and DRC rules in SQLite. The workspace
-has **331 passing tests**, clean `cargo clippy --workspace --all-targets -- -D
-warnings`, `cargo fmt --all -- --check`, and a successful release build. See
-[`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence and
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 16 brief.
+presents the software-rendered 2D/3D viewport, runs DRC, inspects the stackup
+and footprints, and adds undoable click-to-route track editing with DRC
+preflight. `kicad-parser` also imports and exports a supported `.kicad_pcb`
+subset, exposed through `kai-cad pcb import|export`, with explicit warnings for
+zones, arcs, graphics and other constructs the board model cannot preserve.
+Footprint placement, schematic capture and full KiCad project compatibility are
+deferred. PCB designs persist with their tracks, vias and DRC rules in SQLite.
+The workspace has **353 passing tests**, clean `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
+release build. See
+[`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence,
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the Week 16 release brief,
+and [`KICAD_PARITY.md`](KICAD_PARITY.md) for the full-replacement sequence.
 
 Phase 1 progress:
 
@@ -115,10 +121,15 @@ Phase 2 progress:
 | 15 | Plugin management CLI and end-to-end tests | ✅ Complete |
 | 16 | Beta readiness: CLI hardening, docs, performance baselines, release checklist | ⬜ Not started |
 
-The detailed brief for the next implementation pass — including API
+The detailed brief for the next release-hardening pass — including API
 requirements, acceptance criteria and verification commands — is in
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It currently covers Week 16:
-beta readiness and release validation.
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). It covers Week 16: release
+validation, not full KiCad parity.
+
+The 16-week plan is the foundation program. The long-range full-KiCad target,
+capability gaps and delivery sequence are in
+[`KICAD_PARITY.md`](KICAD_PARITY.md); do not mark parity complete from the
+16-week milestones alone.
 
 ## 4. Key Milestones
 
@@ -127,7 +138,7 @@ beta readiness and release validation.
 | **M1** | End of Week 4 | Working engineering database + basic schematic editor |
 | **M2** | End of Week 8 | Phase 2 PCB scope + basic renderer — ✅ complete (software renderer) |
 | **M3** | End of Week 12 | AI optimization features + collaboration layer |
-| **M4** | End of Week 16 | Beta release, documentation, ready for open-source launch |
+| **M4** | End of Week 16 | Foundation beta, documentation and release validation; KiCad parity follows separately |
 
 ## 5. Technical Approach
 
@@ -144,8 +155,12 @@ beta readiness and release validation.
 - Caching of geometry and rule-check results
 
 ### 5.3 Compatibility
-- Maintain bidirectional sync with KiCad 9/10 project files
-- Use KiCad's file format as a reference for import/export
+- Maintain bidirectional sync with KiCad 9/10 project files — full project
+  compatibility remains the target
+- Support the documented `.kicad_pcb` subset bidirectionally through
+  `kicad-parser` and the `kai-cad pcb import|export` CLI
+- Use KiCad's file format as a reference for import/export and report skipped
+  constructs rather than claiming lossless conversion
 - Abstract EDA operations behind stable APIs
 
 ## 6. Risks & Mitigations
@@ -159,12 +174,15 @@ beta readiness and release validation.
 
 ## 7. Success Criteria
 
-- [ ] KaiCad can import/export KiCad 9/10 projects
+- 🚧 KaiCad can import/export the supported KiCad `.kicad_pcb` subset; full
+  KiCad 9/10 project import/export is not implemented
 - [ ] Full schematic design (nets, symbols, rules) works
 - [x] Multi-layer PCB design with routing is functional
 - [x] Software renderer produces deterministic 2D/3D board visualizations
 - [x] Native GUI shell opens/saves boards, renders 2D/3D views and reports DRC
-- [ ] GUI supports interactive PCB and schematic editing
+- [x] GUI supports basic interactive track routing with undo/redo and DRC preflight
+- [ ] GUI supports footprint placement and complete PCB editing
+- [ ] GUI supports schematic editing and schematic/PCB cross-probing
 - [ ] Vulkan GPU renderer produces accelerated 2D/3D visualizations
 - [ ] kAI provides meaningful circuit optimization suggestions
 - [ ] Collaborative features (sharing, versioning) are operational

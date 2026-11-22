@@ -19,9 +19,24 @@ pub struct PcbDesign {
     pub footprints: Vec<footprint::Footprint>,
     pub tracks: Vec<Track>,
     pub vias: Vec<Via>,
+    /// Named nets used by tracks, vias and pads.
+    ///
+    /// Documents from before this field existed load with an empty list. Ids
+    /// are stable UUIDs; names are metadata and do not affect connectivity.
+    #[serde(default)]
+    pub nets: Vec<PcbNet>,
     /// Design-rule limits used when checking this design.
     #[serde(default)]
     pub rules: drc::DrcRules,
+}
+
+/// A named PCB net.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PcbNet {
+    /// Stable net id referenced by tracks, vias and pads.
+    pub id: uuid::Uuid,
+    /// Human-readable net name, for example `GND`.
+    pub name: String,
 }
 
 impl Default for PcbDesign {
@@ -34,6 +49,7 @@ impl Default for PcbDesign {
             footprints: Vec::new(),
             tracks: Vec::new(),
             vias: Vec::new(),
+            nets: Vec::new(),
             rules: drc::DrcRules::default(),
         }
     }
@@ -192,7 +208,7 @@ impl PcbDesign {
     }
 
     /// Copper layer ids in stackup order, or layer order when the stackup is empty.
-    pub(crate) fn copper_layer_ids(&self) -> Vec<u16> {
+    pub fn copper_layer_ids(&self) -> Vec<u16> {
         let mut ids = Vec::new();
         for id in &self.stackup.layers {
             if !ids.contains(id)
@@ -201,7 +217,6 @@ impl PcbDesign {
                 ids.push(*id);
             }
         }
-
         if ids.is_empty() {
             for layer in &self.layers {
                 if layer.is_copper() && !ids.contains(&layer.id) {
@@ -209,6 +224,50 @@ impl PcbDesign {
                 }
             }
         }
+
+        ids
+    }
+
+    /// Look up the name of an assigned net.
+    ///
+    /// Returns `None` for the nil UUID or a net id absent from
+    /// [`PcbDesign::nets`].
+    pub fn net_name(&self, id: uuid::Uuid) -> Option<&str> {
+        if id.is_nil() {
+            return None;
+        }
+        self.nets.iter().find(|net| net.id == id).map(|net| net.name.as_str())
+    }
+
+    /// Assigned net ids, sorted and deduplicated.
+    ///
+    /// Nets are collected from tracks, vias and footprint pads. The nil UUID
+    /// used by unassigned tracks is omitted.
+    pub fn net_ids(&self) -> Vec<uuid::Uuid> {
+        let mut ids = Vec::new();
+        for track in &self.tracks {
+            if !track.net_id.is_nil() {
+                ids.push(track.net_id);
+            }
+        }
+        for via in &self.vias {
+            if let Some(net_id) = via.net_id {
+                if !net_id.is_nil() {
+                    ids.push(net_id);
+                }
+            }
+        }
+        for footprint in &self.footprints {
+            for pad in &footprint.pad_positions {
+                if let Some(net_id) = pad.net_id {
+                    if !net_id.is_nil() {
+                        ids.push(net_id);
+                    }
+                }
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
         ids
     }
 
@@ -438,6 +497,52 @@ mod tests {
         };
 
         assert_eq!(design.copper_layer_count(), 1);
+    }
+
+    #[test]
+    fn net_ids_are_sorted_unique_and_skip_unassigned_nets() {
+        let first = uuid::Uuid::from_u128(1);
+        let second = uuid::Uuid::from_u128(2);
+        let design = PcbDesign {
+            tracks: vec![
+                Track { net_id: second, ..Track::default() },
+                Track { net_id: uuid::Uuid::nil(), ..Track::default() },
+                Track { net_id: first, ..Track::default() },
+            ],
+            vias: vec![Via { net_id: Some(first), ..Via::default() }],
+            footprints: vec![crate::Footprint {
+                pad_positions: vec![crate::PadPosition {
+                    net_id: Some(second),
+                    ..crate::PadPosition::default()
+                }],
+                ..crate::Footprint::default()
+            }],
+            ..PcbDesign::default()
+        };
+
+        assert_eq!(design.net_ids(), vec![first, second]);
+    }
+
+    #[test]
+    fn named_nets_round_trip_and_old_designs_load_without_names() {
+        let id = uuid::Uuid::from_u128(41);
+        let design = PcbDesign {
+            nets: vec![crate::PcbNet { id, name: "GND".to_string() }],
+            ..PcbDesign::default()
+        };
+
+        assert_eq!(design.net_name(id), Some("GND"));
+        assert_eq!(design.net_name(uuid::Uuid::nil()), None);
+        assert_eq!(design.net_name(uuid::Uuid::from_u128(42)), None);
+
+        let json = serde_json::to_string(&design).expect("design serializes");
+        let restored: PcbDesign = serde_json::from_str(&json).expect("design parses");
+        assert_eq!(restored.nets, design.nets);
+
+        let mut value = serde_json::to_value(&design).expect("design serializes");
+        value.as_object_mut().expect("design is an object").remove("nets");
+        let old: PcbDesign = serde_json::from_value(value).expect("old design parses");
+        assert!(old.nets.is_empty());
     }
 
     #[test]

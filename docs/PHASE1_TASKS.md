@@ -50,7 +50,7 @@
 - **Acceptance Criteria:**
   - ✅ Schema defines: projects, components, symbols, nets, sheets, footprints
   - ✅ Migration scripts for schema evolution
-  - Schema supports KiCad 9/10 bidirectional compatibility (deferred to import/export work)
+  - Full KiCad 9/10 project compatibility remains deferred; the `.kicad_pcb` board subset is converted at the file boundary and does not change the schema
 - **Done:** `store/migrations/0001_initial.sql` creates `projects`, `sheets`,
   `symbols`, `components`, `nets`, `footprints` and `schema_migrations` tables;
   `0002` scopes projection keys per project and `0003` adds
@@ -64,7 +64,7 @@
 - **Acceptance Criteria:**
   - ✅ `Project` struct with: id, name, version, schematic, PCB, metadata
   - ✅ Basic CRUD operations working
-  - Can serialize/deserialize project to/from KiCad .kicad_sch and .kicad_pcb format (deferred)
+  - Full `Project` serialization to/from `.kicad_sch` and `.kicad_pcb` remains deferred; board-level `.kicad_pcb` subset I/O is now provided by `kicad-parser`
 - **Done:** the `Project` struct and JSON persistence (`core::serialization`) keep
   working. The new `store` crate provides synchronous SQLite-backed CRUD
   (`Store::open`, `open_in_memory`, `create_project`, `load_project`,
@@ -142,7 +142,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 331 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 353 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — 🚧 partial
@@ -150,12 +150,15 @@
 - **Deliverable:** Test fixtures for project load/save cycles
 - **Dependencies:** Task 1.5
 - **Acceptance Criteria:**
-  - Can load a minimal KiCad project and save it back
-  - Round-trip preserves basic structure
-  - Can detect data loss during import/export
+  - Can load a supported `.kicad_pcb` board and save it back
+  - Round-trip preserves the documented board subset
+  - Can detect and report unsupported data during import/export
 - **Done:** `kai-cad/tests/smoke.rs` exercises cross-crate round trips,
-  including JSON project save/load.
-- **Remaining:** KiCad-format fixtures and data-loss detection.
+  including JSON project save/load. `kicad-parser` now imports/exports the
+  supported `.kicad_pcb` subset, reports skipped constructs as warnings, and
+  has fixture coverage for layers, nets, pads, tracks, vias and outlines.
+- **Remaining:** `.kicad_sch`/`.kicad_pro` round trips, full-fidelity
+  `.kicad_pcb` preservation and a KiCad 9/10 compatibility corpus.
 
 ## Phase 1 Completion Criteria
 
@@ -220,7 +223,14 @@ Phase 2's functional PCB/renderer scope is also complete: rotated pads,
 blind/buried vias, deterministic push-and-shove rip-up/reroute, interactive
 route preview/commit/cancel, and a deterministic headless software 2D/3D
 renderer. These additions brought the total to **319 passing tests**. A later
-post-Phase-2 Studio GUI shell added 12 more, for **331 passing tests**; it
-provides board viewing, open/save and DRC but remains read-only. The Vulkan
-GPU backend is still deferred; the renderer is CPU software rasterization.
-Week 16 (beta readiness) is next.
+post-Phase-2 Studio GUI shell added 12 more, for **331 passing tests**; a
+further interactive track-routing increment added 11, for **342 passing
+tests**. The KiCad PCB compatibility increment added 9 parser tests and 2
+PCB-model tests, for a total of **353 passing tests**. Studio provides board
+viewing, open/save, DRC and undoable track routing, but not yet footprint
+placement or schematic capture. The CLI imports/exports the documented
+`.kicad_pcb` subset and warns about skipped data; `.kicad_sch`, `.kicad_pro`
+and full-fidelity board round trips remain deferred. The Vulkan GPU backend is
+still deferred; the renderer is CPU software rasterization. Week 16 release
+hardening is next; full KiCad parity is tracked separately in
+[`KICAD_PARITY.md`](KICAD_PARITY.md).

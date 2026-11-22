@@ -16,7 +16,16 @@ fn net(id: u128) -> Uuid {
 }
 
 fn pad(x: f64, y: f64, pad_type: PadType, width: f64, height: f64, net_id: u128) -> PadPosition {
-    PadPosition { x, y, pad_type, width, height, rotation: 0.0, net_id: Some(net(net_id)) }
+    PadPosition {
+        number: String::new(),
+        x,
+        y,
+        pad_type,
+        width,
+        height,
+        rotation: 0.0,
+        net_id: Some(net(net_id)),
+    }
 }
 
 fn footprint(

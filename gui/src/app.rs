@@ -2,12 +2,15 @@
 
 use std::path::{Path, PathBuf};
 
+use core::Point;
 use eframe::egui::{self, Color32, RichText, TextureHandle, TextureOptions};
 use pcb::{DrcReport, DrcSeverity, PcbDesign, run_drc};
-use renderer::{Framebuffer, Renderer, RendererConfig, ViewMode, WindowConfig};
+use renderer::{BoardTransform, Framebuffer, Renderer, RendererConfig, ViewMode, WindowConfig};
+use uuid::Uuid;
 
 use crate::demo::demo_design;
 use crate::document::{DocumentError, save_design};
+use crate::editor::{RouteClick, RouteEditError, TrackEditor};
 
 /// Largest viewport side, in pixels, sent to the software rasterizer.
 pub const MAX_VIEWPORT_SIDE: u32 = 2048;
@@ -47,7 +50,14 @@ impl Notice {
     }
 }
 
-/// Headless application state: the board, path, view, DRC report and status.
+/// Active pointer tool in the 2D viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StudioTool {
+    Inspect,
+    Route,
+}
+
+/// Headless application state: the board, editing history, DRC and status.
 #[derive(Debug)]
 pub struct StudioState {
     design: PcbDesign,
@@ -56,6 +66,9 @@ pub struct StudioState {
     report: DrcReport,
     notice: Notice,
     revision: u64,
+    editor: TrackEditor,
+    tool: StudioTool,
+    dirty: bool,
 }
 
 impl StudioState {
@@ -63,13 +76,17 @@ impl StudioState {
     pub fn new_demo() -> Self {
         let design = demo_design();
         let report = run_drc(&design, &design.rules);
+        let editor = TrackEditor::new(&design);
         Self {
             design,
             path: None,
             view: ViewMode::TwoD,
             report,
-            notice: Notice::info("Demo board loaded. Run DRC or open a board."),
+            notice: Notice::info("Demo board loaded. Select Route to edit copper."),
             revision: 0,
+            editor,
+            tool: StudioTool::Inspect,
+            dirty: false,
         }
     }
 
@@ -77,7 +94,18 @@ impl StudioState {
     pub fn from_design(design: PcbDesign) -> Self {
         let report = run_drc(&design, &design.rules);
         let notice = report_notice(&report, "Board loaded");
-        Self { design, path: None, view: ViewMode::TwoD, report, notice, revision: 0 }
+        let editor = TrackEditor::new(&design);
+        Self {
+            design,
+            path: None,
+            view: ViewMode::TwoD,
+            report,
+            notice,
+            revision: 0,
+            editor,
+            tool: StudioTool::Inspect,
+            dirty: false,
+        }
     }
 
     /// Replace the current board with a fresh demo and clear its path.
@@ -86,6 +114,9 @@ impl StudioState {
         self.path = None;
         self.revision = self.revision.wrapping_add(1);
         self.report = run_drc(&self.design, &self.design.rules);
+        self.editor.reset(&self.design);
+        self.tool = StudioTool::Inspect;
+        self.dirty = false;
         self.notice = Notice::info("Demo board loaded.");
     }
 
@@ -98,6 +129,9 @@ impl StudioState {
                 self.path = Some(path.to_path_buf());
                 self.revision = self.revision.wrapping_add(1);
                 self.report = run_drc(&self.design, &self.design.rules);
+                self.editor.reset(&self.design);
+                self.tool = StudioTool::Inspect;
+                self.dirty = false;
                 self.notice = report_notice(&self.report, &format!("Opened {}", path.display()));
                 Ok(())
             }
@@ -114,6 +148,7 @@ impl StudioState {
         match save_design(&self.design, path) {
             Ok(()) => {
                 self.path = Some(path.to_path_buf());
+                self.dirty = false;
                 self.notice = Notice::info(format!("Saved {}", path.display()));
                 Ok(())
             }
@@ -137,6 +172,133 @@ impl StudioState {
 
     pub fn set_view(&mut self, view: ViewMode) {
         self.view = view;
+    }
+
+    /// Select the active viewport tool.
+    pub fn set_tool(&mut self, tool: StudioTool) {
+        self.tool = tool;
+        self.notice = match tool {
+            StudioTool::Inspect => Notice::info("Inspect tool active."),
+            StudioTool::Route => {
+                Notice::info("Route tool: click a start point, then a destination.")
+            }
+        };
+    }
+
+    /// Active viewport tool.
+    pub fn tool(&self) -> StudioTool {
+        self.tool
+    }
+
+    /// Whether the board has unsaved edits.
+    pub fn dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Headless routing state and history.
+    pub fn editor(&self) -> &TrackEditor {
+        &self.editor
+    }
+
+    /// Select the copper layer for new routes.
+    pub fn set_route_layer(&mut self, layer: u16) {
+        if self.design.copper_layer_ids().contains(&layer) {
+            self.editor.set_layer(layer);
+            self.notice = Notice::info(format!("Route layer set to id {layer}."));
+        } else {
+            self.notice = Notice::error(format!("Layer {layer} is not a copper layer."));
+        }
+    }
+
+    /// Select the net for new routes.
+    pub fn set_route_net(&mut self, net_id: Uuid) {
+        self.editor.set_net(net_id);
+        self.notice = Notice::info("Route net updated.");
+    }
+
+    /// Set the width for new tracks.
+    pub fn set_route_width(&mut self, width: f64) {
+        if self.editor.set_width(width) {
+            self.notice = Notice::info(format!("Track width set to {width:.2} mm."));
+        } else {
+            self.notice = Notice::error("Track width must be finite and positive.");
+        }
+    }
+
+    /// Handle a 2D viewport click at `point` in board millimetres.
+    ///
+    /// The first click sets a start, the second routes and commits copper. A
+    /// failed attempt leaves the board and any pending start unchanged.
+    pub fn route_at(&mut self, point: Point) -> Result<RouteClick, RouteEditError> {
+        let result = if self.editor.pending_start().is_some() {
+            self.editor.route_to(&mut self.design, point)
+        } else {
+            self.editor.begin_route(&self.design, point)
+        };
+
+        match result {
+            Ok(click) => {
+                match click {
+                    RouteClick::Started => {
+                        if let Some(start) = self.editor.pending_start() {
+                            self.notice = Notice::info(format!(
+                                "Start set at {:.2}, {:.2} mm. Click a destination.",
+                                start.x, start.y
+                            ));
+                        }
+                    }
+                    RouteClick::Routed { tracks, vias } => {
+                        self.revision = self.revision.wrapping_add(1);
+                        self.report = run_drc(&self.design, &self.design.rules);
+                        self.dirty = true;
+                        let errors = self.report.count(DrcSeverity::Error);
+                        self.notice = Notice {
+                            text: format!(
+                                "Routed {tracks} track(s) and {vias} via(s); {errors} DRC error(s)."
+                            ),
+                            kind: if errors == 0 { NoticeKind::Info } else { NoticeKind::Error },
+                        };
+                    }
+                }
+                Ok(click)
+            }
+            Err(error) => {
+                self.notice = Notice::error(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    /// Cancel a pending route start.
+    pub fn cancel_route(&mut self) {
+        self.editor.cancel_route();
+        self.notice = Notice::info("Route cancelled.");
+    }
+
+    /// Undo the most recent committed route.
+    pub fn undo_edit(&mut self) -> bool {
+        if !self.editor.undo(&mut self.design) {
+            self.notice = Notice::info("Nothing to undo.");
+            return false;
+        }
+        self.revision = self.revision.wrapping_add(1);
+        self.report = run_drc(&self.design, &self.design.rules);
+        self.dirty = true;
+        self.notice = Notice::info("Undid the last track edit.");
+        true
+    }
+
+    /// Redo the most recently undone route.
+    pub fn redo_edit(&mut self) -> bool {
+        if !self.editor.redo(&mut self.design) {
+            self.notice = Notice::info("Nothing to redo.");
+            return false;
+        }
+        self.revision = self.revision.wrapping_add(1);
+        self.report = run_drc(&self.design, &self.design.rules);
+        self.dirty = true;
+        self.notice = Notice::info("Redid the last track edit.");
+        true
     }
 
     pub fn design(&self) -> &PcbDesign {
@@ -399,6 +561,7 @@ impl StudioApp {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
+        let typing = ctx.wants_keyboard_input();
         let (save, open) = ctx.input_mut(|input| {
             (
                 input.consume_key(egui::Modifiers::COMMAND, egui::Key::S),
@@ -411,11 +574,48 @@ impl StudioApp {
         if open {
             self.open_dialog();
         }
+
+        let (undo, redo) = if typing || self.file_dialog.is_some() {
+            (false, false)
+        } else {
+            ctx.input_mut(|input| {
+                (
+                    input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z),
+                    input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y),
+                )
+            })
+        };
+        if undo {
+            self.state.undo_edit();
+        }
+        if redo {
+            self.state.redo_edit();
+        }
+
+        if !typing
+            && self.file_dialog.is_none()
+            && ctx.input(|input| input.key_pressed(egui::Key::R))
+        {
+            let tool = if self.state.tool() == StudioTool::Route {
+                StudioTool::Inspect
+            } else if self.state.view() == ViewMode::TwoD {
+                StudioTool::Route
+            } else {
+                self.state.set_status("Switch to the 2D view to route tracks.", NoticeKind::Error);
+                self.state.tool()
+            };
+            self.state.set_tool(tool);
+        }
+
         if ctx.input(|input| input.key_pressed(egui::Key::F5)) {
             self.state.run_drc_checks();
         }
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            self.file_dialog = None;
+            if self.file_dialog.is_some() {
+                self.file_dialog = None;
+            } else if self.state.editor().pending_start().is_some() {
+                self.state.cancel_route();
+            }
         }
 
         let dropped =
@@ -452,6 +652,35 @@ impl StudioApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
+                ui.menu_button("Edit", |ui| {
+                    if ui
+                        .add_enabled(
+                            self.state.editor().can_undo(),
+                            egui::Button::new("Undo track edit (Ctrl+Z)"),
+                        )
+                        .clicked()
+                    {
+                        self.state.undo_edit();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.state.editor().can_redo(),
+                            egui::Button::new("Redo track edit (Ctrl+Y)"),
+                        )
+                        .clicked()
+                    {
+                        self.state.redo_edit();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.state.editor().pending_start().is_some(),
+                            egui::Button::new("Cancel route (Esc)"),
+                        )
+                        .clicked()
+                    {
+                        self.state.cancel_route();
+                    }
+                });
                 ui.menu_button("View", |ui| {
                     if ui
                         .selectable_label(self.state.view() == ViewMode::TwoD, "2D top view")
@@ -467,6 +696,29 @@ impl StudioApp {
                     }
                 });
                 ui.menu_button("Tools", |ui| {
+                    if ui
+                        .selectable_label(self.state.tool() == StudioTool::Inspect, "Inspect")
+                        .clicked()
+                    {
+                        self.state.set_tool(StudioTool::Inspect);
+                    }
+                    if ui
+                        .selectable_label(
+                            self.state.tool() == StudioTool::Route,
+                            "Route tracks (R)",
+                        )
+                        .clicked()
+                    {
+                        if self.state.view() != ViewMode::TwoD {
+                            self.state.set_status(
+                                "Switch to the 2D view to route tracks.",
+                                NoticeKind::Error,
+                            );
+                        } else {
+                            self.state.set_tool(StudioTool::Route);
+                        }
+                    }
+                    ui.separator();
                     if ui.button("Run DRC (F5)").clicked() {
                         self.state.run_drc_checks();
                     }
@@ -508,6 +760,8 @@ impl StudioApp {
                     });
                     ui.separator();
                     self.document_section(ui);
+                    ui.separator();
+                    self.routing_section(ui);
                     ui.separator();
                     self.board_summary(ui);
                     ui.separator();
@@ -554,6 +808,125 @@ impl StudioApp {
             }
             if ui.button("Save as…").clicked() {
                 self.open_save_dialog();
+            }
+        });
+    }
+
+    fn routing_section(&mut self, ui: &mut egui::Ui) {
+        let layers = self.state.design().copper_layer_ids();
+        let nets = self.state.design().net_ids();
+        let layer = self.state.editor().layer();
+        let net_id = self.state.editor().net_id();
+        let mut width = self.state.editor().width();
+        let pending = self.state.editor().pending_start();
+        let can_undo = self.state.editor().can_undo();
+        let can_redo = self.state.editor().can_redo();
+        let view = self.state.view();
+
+        ui.heading("Route copper");
+        ui.horizontal(|ui| {
+            if ui.selectable_label(self.state.tool() == StudioTool::Inspect, "Inspect").clicked() {
+                self.state.set_tool(StudioTool::Inspect);
+            }
+            if ui.selectable_label(self.state.tool() == StudioTool::Route, "Route").clicked() {
+                if view == ViewMode::TwoD {
+                    self.state.set_tool(StudioTool::Route);
+                } else {
+                    self.state
+                        .set_status("Switch to the 2D view to route tracks.", NoticeKind::Error);
+                }
+            }
+        });
+
+        if self.state.tool() == StudioTool::Route {
+            ui.label(
+                RichText::new("Click a pad, same-net copper or free point, then a destination.")
+                    .weak()
+                    .small(),
+            );
+            if view != ViewMode::TwoD {
+                ui.label(
+                    RichText::new("Routing is only available in the 2D view.")
+                        .color(WARNING_COLOR)
+                        .small(),
+                );
+            }
+
+            let mut selected_layer = layer;
+            egui::ComboBox::from_id_salt("route-layer")
+                .selected_text(layer_label(self.state.design(), layer))
+                .show_ui(ui, |ui| {
+                    for id in &layers {
+                        ui.selectable_value(
+                            &mut selected_layer,
+                            *id,
+                            layer_label(self.state.design(), *id),
+                        );
+                    }
+                });
+            if selected_layer != layer {
+                self.state.set_route_layer(selected_layer);
+            }
+
+            if nets.is_empty() {
+                ui.label(RichText::new("No assigned nets on this board.").weak().small());
+            } else {
+                let mut selected_net = net_id;
+                egui::ComboBox::from_id_salt("route-net").selected_text(net_label(net_id)).show_ui(
+                    ui,
+                    |ui| {
+                        for id in &nets {
+                            ui.selectable_value(&mut selected_net, *id, net_label(*id));
+                        }
+                    },
+                );
+                if selected_net != net_id {
+                    self.state.set_route_net(selected_net);
+                }
+            }
+
+            ui.horizontal(|ui| {
+                ui.label("Width");
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut width)
+                            .range(0.05..=5.0)
+                            .speed(0.01)
+                            .suffix(" mm"),
+                    )
+                    .changed()
+                {
+                    self.state.set_route_width(width);
+                }
+            });
+
+            if let Some(start) = pending {
+                ui.label(
+                    RichText::new(format!("Start: {:.2}, {:.2} mm", start.x, start.y))
+                        .color(ACCENT),
+                );
+                if ui.button("Cancel route").clicked() {
+                    self.state.cancel_route();
+                }
+            } else {
+                ui.label(RichText::new("No start point set.").weak().small());
+            }
+            ui.label(
+                RichText::new("Routes commit immediately and run DRC before applying.")
+                    .weak()
+                    .small(),
+            );
+        }
+
+        ui.horizontal(|ui| {
+            if ui.add_enabled(can_undo, egui::Button::new("Undo")).clicked() {
+                self.state.undo_edit();
+            }
+            if ui.add_enabled(can_redo, egui::Button::new("Redo")).clicked() {
+                self.state.redo_edit();
+            }
+            if self.state.dirty() {
+                ui.label(RichText::new("modified").color(WARNING_COLOR).small());
             }
         });
     }
@@ -781,26 +1154,85 @@ impl StudioApp {
                 return;
             }
 
-            let design = self.state.design();
             let view = self.state.view();
             let revision = self.state.revision();
-            let texture =
-                self.viewport.prepare(ctx, design, view, revision, [available.x, available.y]);
+            let texture = self.viewport.prepare(
+                ctx,
+                self.state.design(),
+                view,
+                revision,
+                [available.x, available.y],
+            );
+            let [pixel_width, pixel_height] =
+                viewport_size([available.x, available.y], ctx.pixels_per_point());
+            let transform = if view == ViewMode::TwoD {
+                BoardTransform::for_board(self.state.design(), pixel_width, pixel_height).ok()
+            } else {
+                None
+            };
             let error = self.viewport.error().map(str::to_owned);
 
-            if let Some(texture_id) = texture {
-                let image = egui::Image::new(egui::load::SizedTexture::new(texture_id, available))
-                    .fit_to_exact_size(available);
-                ui.add(image);
+            let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click());
+            let response = if self.state.tool() == StudioTool::Route && view == ViewMode::TwoD {
+                response.on_hover_cursor(egui::CursorIcon::Crosshair)
             } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        RichText::new(
-                            error.unwrap_or_else(|| "Waiting for a viewport…".to_string()),
-                        )
-                        .color(ERROR_COLOR),
+                response
+            };
+
+            if let Some(texture_id) = texture {
+                ui.painter().image(
+                    texture_id,
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            } else {
+                ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(10, 13, 19));
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    error.unwrap_or_else(|| "Waiting for a viewport…".to_string()),
+                    egui::FontId::proportional(14.0),
+                    ERROR_COLOR,
+                );
+            }
+
+            if response.clicked() && self.state.tool() == StudioTool::Route {
+                if view != ViewMode::TwoD {
+                    self.state
+                        .set_status("Switch to the 2D view to route tracks.", NoticeKind::Error);
+                } else if let (Some(transform), Some(pointer)) =
+                    (transform, response.interact_pointer_pos())
+                {
+                    let local = pointer - rect.min;
+                    let x = local.x as f64 / rect.width().max(1.0) as f64 * pixel_width as f64;
+                    let y = local.y as f64 / rect.height().max(1.0) as f64 * pixel_height as f64;
+                    let [board_x, board_y] = transform.pixel_to_board(x, y);
+                    let _ = self.state.route_at(Point::new(board_x, board_y));
+                }
+            }
+
+            if view == ViewMode::TwoD {
+                if let (Some(start), Some(transform)) =
+                    (self.state.editor().pending_start(), transform)
+                {
+                    let [x, y] = transform.board_to_pixel(start.x, start.y);
+                    let screen = rect.min
+                        + egui::vec2(
+                            x as f32 / pixel_width as f32 * rect.width(),
+                            y as f32 / pixel_height as f32 * rect.height(),
+                        );
+                    let stroke = egui::Stroke::new(1.5_f32, ACCENT);
+                    ui.painter().circle_stroke(screen, 6.0, stroke);
+                    ui.painter().line_segment(
+                        [screen - egui::vec2(9.0, 0.0), screen + egui::vec2(9.0, 0.0)],
+                        stroke,
                     );
-                });
+                    ui.painter().line_segment(
+                        [screen - egui::vec2(0.0, 9.0), screen + egui::vec2(0.0, 9.0)],
+                        stroke,
+                    );
+                }
             }
         });
     }
@@ -879,7 +1311,7 @@ impl StudioApp {
             .show(ctx, |ui| {
                 ui.heading("KaiCad Studio");
                 ui.label(format!("Version {} (pre-alpha)", env!("CARGO_PKG_VERSION")));
-                ui.label("A native PCB viewer and inspection shell.");
+                ui.label("A native PCB editor and inspection shell.");
                 ui.add_space(6.0);
                 ui.label(
                     "The viewport is rendered by the deterministic CPU rasterizer. \
@@ -887,9 +1319,11 @@ impl StudioApp {
                 );
                 ui.label(
                     "Current shell: board opening/saving, 2D/3D views, stackup and \
-                     footprint inspection, and DRC.",
+                     footprint inspection, DRC, and undoable track routing in 2D.",
                 );
-                ui.label("Copper editing and interactive routing are not wired up yet.");
+                ui.label(
+                    "Footprint placement, schematic capture and cross-probing are not implemented.",
+                );
             });
         self.show_about = open;
     }
@@ -906,6 +1340,23 @@ impl eframe::App for StudioApp {
         self.file_dialog_window(ctx);
         self.about_window(ctx);
     }
+}
+
+fn layer_label(design: &PcbDesign, id: u16) -> String {
+    design
+        .layers
+        .iter()
+        .find(|layer| layer.id == id)
+        .map(|layer| layer.name.clone())
+        .unwrap_or_else(|| format!("layer {id}"))
+}
+
+fn net_label(net_id: Uuid) -> String {
+    if net_id.is_nil() {
+        return "unassigned".to_string();
+    }
+    let text = net_id.simple().to_string();
+    format!("net {}", &text[..8])
 }
 
 fn configure_style(ctx: &egui::Context) {
@@ -1013,6 +1464,51 @@ mod tests {
         assert_eq!(state.display_name(), "Demo board");
         assert_eq!(state.revision(), revision + 1);
         assert!(state.report().is_valid());
+
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn routing_through_state_updates_revision_history_and_dirty_flag() {
+        let mut state = StudioState::new_demo();
+        let original_tracks = state.design().tracks.len();
+        state.set_tool(StudioTool::Route);
+
+        let first = state.route_at(Point::new(10.0, 10.0)).expect("start");
+        assert_eq!(first, RouteClick::Started);
+        assert!(state.editor().pending_start().is_some());
+        let revision = state.revision();
+
+        let second = state.route_at(Point::new(20.0, 10.0)).expect("route");
+        assert!(matches!(second, RouteClick::Routed { tracks, .. } if tracks > 0));
+        assert_eq!(state.design().tracks.len(), original_tracks + 1);
+        assert_eq!(state.revision(), revision + 1);
+        assert!(state.dirty());
+        assert!(state.editor().can_undo());
+        assert!(state.report().is_valid());
+
+        assert!(state.undo_edit());
+        assert_eq!(state.design().tracks.len(), original_tracks);
+        assert!(state.editor().can_redo());
+        assert!(state.dirty());
+    }
+
+    #[test]
+    fn saving_clears_the_modified_flag_and_opening_resets_history() {
+        let directory = temp_dir();
+        let path = directory.join("edited.json");
+        let mut state = StudioState::new_demo();
+        state.route_at(Point::new(10.0, 10.0)).expect("start");
+        state.route_at(Point::new(20.0, 10.0)).expect("route");
+        assert!(state.dirty());
+
+        state.save_path(&path).expect("save");
+        assert!(!state.dirty());
+
+        state.open_path(&path).expect("open");
+        assert!(!state.dirty());
+        assert!(!state.editor().can_undo());
+        assert_eq!(state.tool(), StudioTool::Inspect);
 
         let _ = std::fs::remove_dir_all(directory);
     }

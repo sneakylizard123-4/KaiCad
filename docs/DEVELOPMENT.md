@@ -4,14 +4,17 @@ Practical instructions for building, testing and hacking on KaiCad.
 
 > KaiCad is **pre-alpha**. The data model, schematic and PCB engines, routing,
 > software renderer, persistence, collaboration primitives and a desktop GUI
-> inspection shell are implemented and tested; full GUI editing, the Vulkan
-> GPU backend, AI generation and real-time transport are not. See
-> [`ARCHITECTURE.md`](ARCHITECTURE.md) for details.
+> editor/inspection shell are implemented and tested, together with a supported
+> `.kicad_pcb` import/export subset. Full board and schematic editing, full
+> KiCad project-file compatibility, the Vulkan GPU backend, AI generation and
+> real-time transport are not. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for
+> details.
 >
-> **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope and the first
-> Studio GUI shell are complete (331 tests, clippy/fmt/doc/release all clean).
-> Week 16 — beta readiness — is next; its work order is in
-> [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+> **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
+> Studio editing increment and the `.kicad_pcb` subset I/O are complete (353
+> tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
+> described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md); full KiCad parity is tracked
+> separately in [`KICAD_PARITY.md`](KICAD_PARITY.md).
 
 ## Prerequisites
 
@@ -120,6 +123,8 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Run the application (banner + self-check) | `cargo run -p kai-cad` |
 | Run the desktop GUI with the demo board | `cargo run -p gui` |
 | Open a board in the GUI | `cargo run -p gui -- path/to/board.kaicad.json` |
+| Import a supported KiCad PCB | `cargo run -p kai-cad -- pcb import board.kicad_pcb board.json` |
+| Export a board as KiCad PCB | `cargo run -p kai-cad -- pcb export board.json board.kicad_pcb` |
 | Print CLI usage | `cargo run -p kai-cad -- --help` |
 | Print the version | `cargo run -p kai-cad -- --version` |
 | Build a release binary | `cargo build --workspace --release` |
@@ -133,18 +138,18 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **331 tests**, all passing:
+`cargo test --workspace` currently runs **353 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
-| `gui` (`src/app.rs`, `demo.rs`, `document.rs`) | 12 |
-| `kicad-parser` (`src/lib.rs` and inline modules) | 12 |
-| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 80 |
+| `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 19 |
+| `kicad-parser` (`src/lib.rs`, `pcb.rs` and inline modules) | 21 |
+| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 84 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
-| `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 14 |
+| `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 16 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 38 |
 | `kai-cad/tests/smoke.rs` (cross-crate integration) | 22 |
@@ -177,7 +182,7 @@ subsystem self-check:
   ai: endpoint=http://localhost:11434, deterministic validation=always, applied 1 change(s), undo/redo ok (tx 97f81c80)
   collab: 1 session(s), 3 participant(s), session version 1, history 1 entry, staged 1 -> 0
   store: created, loaded and deleted 1 project with its PCB design (schema v6), 2 plugin(s) persisted/2 enabled
-  kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym
+  kicad-parser: loaded 1 symbol(s) from <temp path>.kicad_sym, PCB round trip 1 track / 1 via
 self-check: ok
 ```
 
@@ -209,25 +214,39 @@ cargo run -p gui -- path/to/board.kaicad.json
 ```
 
 The `kai-cad-gui` binary opens **KaiCad Studio**, an eframe/egui window. The
-left panel owns the document path, view selector, board summary, design rules
-and DRC. The right panel lists the copper layer stack and placed footprints.
-The centre panel is a live texture rendered by the deterministic software
-rasterizer. Boards open from the Document path field, the File menu, a dropped
-file, or a command-line path; Save writes pretty `PcbDesign` JSON.
+left panel owns the document path, view selector, routing controls, board
+summary, design rules and DRC. The right panel lists the copper layer stack and
+placed footprints. The centre panel is a live texture rendered by the
+deterministic software rasterizer. Boards open from the Document path field,
+the File menu, a dropped file, or a command-line path; Save writes pretty
+`PcbDesign` JSON.
+
+In the 2D view, select **Route**, a copper layer, a net and a width, then click
+a start point and a destination. A click within 2 mm of a pad snaps to its
+centre and adopts its net. The grid router adds copper immediately, runs DRC
+before applying it, and stores a board snapshot for undo. A route that adds a
+new DRC finding is rejected without changing the board. This is a first editor
+increment: there is no route preview, footprint placement, pad/via editing,
+schematic capture or KiCad project-file import/export yet.
 
 | Input | Action |
 |-------|--------|
 | `Ctrl+O` | open the board-path dialog |
 | `Ctrl+S` | save to the current path, or open Save As |
+| `Ctrl+Z` | undo the last routed track edit |
+| `Ctrl+Y` | redo the last track edit |
 | `F5` | run DRC |
+| `R` | toggle Inspect / Route |
+| `Esc` | cancel a pending route or close the file dialog |
 | Drop a file on the window | open that board |
 
-Current limits: the shell is read-only (no track, via or pad editing), the
-2D/3D view auto-fits the board (no manual pan/zoom), open/save paths are typed
-rather than chosen from a native file picker, and schematic capture is not
-wired up. The viewport is capped at 2048 pixels on its longest side. The
-window uses OpenGL through eframe; board pixels still come from the CPU
-renderer, and no Vulkan loader is required.
+Current limits: footprint, pad and via editing are not implemented; the
+2D/3D view auto-fits the board (no manual pan/zoom); open/save paths are typed
+rather than chosen from a native file picker; Studio cannot open `.kicad_pcb`
+directly (use `kai-cad pcb import` first); and schematic capture is not wired
+up. The viewport is capped at 2048 pixels on its longest side. The window uses
+OpenGL through eframe; board pixels still come from the CPU renderer, and no
+Vulkan loader is required.
 
 ## Examples
 
@@ -247,6 +266,10 @@ cargo run -p store --example project_crud
 
 # Parse a KiCad symbol library and print a summary
 cargo run -p kicad-parser --example parse_library
+
+# Convert a supported KiCad PCB through the CLI
+cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
+cargo run -p kai-cad -- pcb export board.json board.kicad_pcb
 ```
 
 List the examples of a package with:
@@ -307,14 +330,16 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–15, the Phase 2 PCB/renderer scope and the first Studio GUI shell are
-finished; Week 16 hardens the CLI, adds user documentation and performance
-baselines, and completes the release checklist. Before starting, read
-[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
+Weeks 1–15, the Phase 2 PCB/renderer scope and the first Studio editing
+increment are finished; Week 16 hardens the CLI, adds user documentation and
+performance baselines, and completes the release checklist. Before starting,
+read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
 persistence in `core::serialization` and the footprint-library format must keep
-working while new persistence layers are added. GUI editing features are
-post-beta work; keep the current shell compiling and tested.
+working while new persistence layers are added. Footprint placement, schematic
+capture, full project-file compatibility and manufacturing outputs are parity
+work, not Week 16 work; see [`KICAD_PARITY.md`](KICAD_PARITY.md). Keep the
+current shell compiling and tested.
 
 When a milestone changes the crate graph, commands or task status, update
 `docs/ARCHITECTURE.md`, this guide, `PLAN.md` and `PHASE1_TASKS.md` in the same
@@ -370,24 +395,44 @@ take a minute or two while `libsqlite3-sys` builds; later builds are
 incremental. This feature avoids requiring a system `libsqlite3` and keeps CI
 and Windows/macOS builds self-contained.
 
-### KiCad symbol parsing looks wrong
+### KiCad import or export looks wrong
 
-`kicad-parser` reads only `.kicad_sym` symbol libraries, not `.kicad_sch`
-schematics or `.kicad_pcb` boards. Known limits of the Week 3 import:
+`kicad-parser` reads `.kicad_sym` symbol libraries and the supported subset of
+`.kicad_pcb` boards. It does not read `.kicad_sch` or `.kicad_pro` files, and
+it is not a full-fidelity `.kicad_pcb` converter. Convert boards through:
 
-- The library name is the file stem; KiCad files do not record a library name.
-- Pin positions are stored exactly as KiCad's symbol-space `(at x y angle)` in
-  millimetres; no axis conversion is applied. `PinDirection` is derived from
-  the electrical type (`input` → `In`, `output` → `Out`, `bidirectional` and
-  `tri_state` → `InOut`, otherwise `Unspecified`).
-- Every KiCad electrical type maps to a `PinType`, including `free` and
-  `no_connect`. Only genuinely unknown non-standard types become
-  `PinType::Unspecified`, so a pin is never silently dropped.
+```bash
+cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
+cargo run -p kai-cad -- pcb export board.json board.kicad_pcb
+```
+
+Import warnings on stderr are part of the result, not noise. Known limits:
+
+- Zones, arcs, top-level drawings/text, groups, dimensions, images, targets,
+  rule areas, footprint graphics, non-reference properties and 3D models are
+  skipped with warnings. DRC setup is not imported; KaiCad's default rules
+  apply.
+- Non-rectangular pads, including roundrects, are imported as their bounding
+  rectangles and warned about. Rotated footprints are flattened into rotated
+  pad coordinates because the current `Footprint` model has no placement-angle
+  field. Back-side SMD copper is reported and placed on the top copper layer.
+- Pad numbers, net names, layer tables and track/via UUIDs are preserved where
+  KiCad supplies them. Net UUIDs are derived from net names because KiCad's net
+  table has no UUID.
+- Symbol libraries use the file stem as the library name because KiCad files do
+  not record one. Pin positions remain in KiCad symbol space; no axis
+  conversion is applied.
 - Symbol and pin ids are UUIDv5 derivations, so re-parsing the same library
   yields the same ids. If ids differ, check that the file content changed.
 
 Malformed S-expressions return `ParseError::Syntax`; unreadable files return
-`ParseError::Io`. Neither path panics.
+`ParseError::Io`; valid but unrepresentable data is warned about through
+`PcbImport::warnings`. None of these paths panics.
+
+The exporter has been smoke-validated with KiCad 10.0.6 (`kicad-cli pcb export
+svg` parsed and plotted a generated fixture). KiCad DRC may still report the
+documented simplified-footprint and omitted-DRC-setup warnings. A full KiCad
+compatibility corpus is still required before claiming file-format parity.
 
 ### KiCad netlist export looks wrong
 
@@ -539,10 +584,12 @@ or blind/buried vias when `allow_blind_buried` is enabled.
 Check these semantics before changing the router:
 
 - The start and end nodes must be inside the outline and not blocked by
-  existing copper. A blocked endpoint is an `InvalidRequest`, not `NoPath`.
+  copper on another net. A blocked endpoint is an `InvalidRequest`, not
+  `NoPath`.
 - Nodes and each moved segment are tested against tracks, vias and pads on the
   requested layer, using the design's clearance plus half of the route width.
-  Same-net pads are ignored so a route can connect to its own pad.
+  Same-net pads, tracks and vias are ignored, so a route can start on its own
+  pad, existing trace or via and form a T-junction.
 - Search ties are broken by `(f, g, y, x, direction, layer, vias)`, and track
   and via ids are UUIDv5 values over the request and path segment. Routing the
   same request twice must produce identical JSON.

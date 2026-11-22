@@ -62,7 +62,7 @@ fn run() -> Result<(), String> {
 }
 
 fn print_help() {
-    println!("KaiCad Studio — native PCB viewer and inspection shell (pre-alpha).");
+    println!("KaiCad Studio — native PCB editor and inspection shell (pre-alpha).");
     println!();
     println!("usage:");
     println!("  {USAGE}");
@@ -71,5 +71,6 @@ fn print_help() {
     println!("  -V, --version  print the version and exit");
     println!();
     println!("With no board path, KaiCad Studio opens a built-in demo board.");
+    println!("Use the Route tool in the 2D view to add and undo tracks.");
     println!("The viewport uses the deterministic software renderer; no Vulkan runtime is needed.");
 }

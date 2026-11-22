@@ -1,7 +1,7 @@
 //! Deterministic PCB routing on a configurable grid.
 //!
 //! [`route`] snaps the requested endpoints to a grid, runs four-neighbour A*
-//! over nodes inside the board outline, avoids existing copper and returns
+//! over nodes inside the board outline, avoids copper on other nets and returns
 //! simplified single-layer tracks. [`route_multilayer`] uses the same search
 //! but may insert vias and continue on other copper layers.
 //! [`route_push_and_shove`] retries a blocked route after removing a bounded
@@ -213,8 +213,9 @@ impl std::error::Error for RouteError {}
 ///
 /// Endpoints snap to the nearest node of an origin-anchored grid, so exact
 /// half-grid ties round away from zero. The search avoids existing tracks,
-/// vias and pads on the requested copper layer, using the design's clearance,
-/// and keeps every node inside the board outline. The returned track uses
+/// vias and pads on other nets on the requested copper layer, using the
+/// design's clearance; same-net copper is traversable. It keeps every node
+/// inside the board outline. The returned track uses
 /// `request.net_id`, `request.width` and `request.layer`; adding it to the
 /// design produces no DRC error for clearance or containment.
 ///
@@ -716,7 +717,7 @@ impl SearchContext<'_> {
         let gap = self.clearance + self.width / 2.0;
 
         for track in &self.design.tracks {
-            if track.layer != layer || !track.width.is_finite() {
+            if track.layer != layer || !track.width.is_finite() || track.net_id == self.net_id {
                 continue;
             }
             let required = gap + track.width / 2.0;
@@ -728,7 +729,10 @@ impl SearchContext<'_> {
         }
 
         for via in &self.design.vias {
-            if !self.design.via_covers_layer(via, layer) || !via.diameter.is_finite() {
+            if !self.design.via_covers_layer(via, layer)
+                || !via.diameter.is_finite()
+                || via.net_id == Some(self.net_id)
+            {
                 continue;
             }
             if point.distance_to(&via.position) < gap + via.diameter / 2.0 {
@@ -754,7 +758,7 @@ impl SearchContext<'_> {
         let gap = self.clearance + self.width / 2.0;
 
         for track in &self.design.tracks {
-            if track.layer != layer || !track.width.is_finite() {
+            if track.layer != layer || !track.width.is_finite() || track.net_id == self.net_id {
                 continue;
             }
             let required = gap + track.width / 2.0;
@@ -766,7 +770,10 @@ impl SearchContext<'_> {
         }
 
         for via in &self.design.vias {
-            if !self.design.via_covers_layer(via, layer) || !via.diameter.is_finite() {
+            if !self.design.via_covers_layer(via, layer)
+                || !via.diameter.is_finite()
+                || via.net_id == Some(self.net_id)
+            {
                 continue;
             }
             if via.position.distance_to_segment(start, end) < gap + via.diameter / 2.0 {
@@ -1205,6 +1212,25 @@ mod tests {
     }
 
     #[test]
+    fn route_can_start_on_existing_same_net_track() {
+        let mut design = design();
+        design.tracks.push(Track {
+            id: Uuid::new_v4(),
+            net_id: Uuid::from_u128(7),
+            layer: 0,
+            width: 0.25,
+            path: vec![Point::new(5.0, 5.0), Point::new(10.0, 5.0)],
+        });
+
+        let tracks = routed_tracks(
+            &request(Point::new(6.0, 5.0), Point::new(6.0, 10.0)),
+            &design,
+            &config(),
+        );
+        assert_eq!(tracks[0].path.first(), Some(&Point::new(6.0, 5.0)));
+    }
+
+    #[test]
     fn enclosed_start_returns_no_path() {
         let mut design = design();
         wall(&mut design, Point::new(5.0, 5.0), Point::new(10.0, 5.0));
@@ -1302,6 +1328,7 @@ mod tests {
         design.footprints.push(crate::Footprint {
             position: Point::new(5.0, 5.0),
             pad_positions: vec![crate::PadPosition {
+                number: "1".to_string(),
                 x: 0.0,
                 y: 0.0,
                 pad_type: crate::PadType::SurfaceMount,

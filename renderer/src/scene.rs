@@ -25,16 +25,6 @@ struct Bounds {
     max_y: f64,
 }
 
-impl Bounds {
-    fn width(self) -> f64 {
-        self.max_x - self.min_x
-    }
-
-    fn height(self) -> f64 {
-        self.max_y - self.min_y
-    }
-}
-
 #[derive(Debug, Clone)]
 struct PadShape {
     corners: [(f64, f64); 4],
@@ -55,21 +45,12 @@ pub(crate) fn render_pcb(
 
 fn render_2d(design: &PcbDesign, framebuffer: &mut Framebuffer) -> Result<(), RendererError> {
     framebuffer.clear(BACKGROUND);
-    let bounds = board_bounds(design)?;
-    let width = framebuffer.width() as f64;
-    let height = framebuffer.height() as f64;
-    let margin = (width.min(height) * 0.08).max(4.0);
-    let usable_width = (width - margin * 2.0).max(1.0);
-    let usable_height = (height - margin * 2.0).max(1.0);
-    let scale =
-        (usable_width / bounds.width().max(1e-9)).min(usable_height / bounds.height().max(1e-9));
-    let x_offset = margin + (usable_width - bounds.width() * scale) / 2.0;
-    let y_offset = margin + (usable_height - bounds.height() * scale) / 2.0;
+    let transform =
+        crate::BoardTransform::for_board(design, framebuffer.width(), framebuffer.height())?;
+    let scale = transform.scale();
     let map = |point: (f64, f64)| {
-        (
-            x_offset + (point.0 - bounds.min_x) * scale,
-            height - y_offset - (point.1 - bounds.min_y) * scale,
-        )
+        let [x, y] = transform.board_to_pixel(point.0, point.1);
+        (x, y)
     };
 
     let outline: Vec<(f64, f64)> =

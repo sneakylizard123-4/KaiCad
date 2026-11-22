@@ -1,8 +1,9 @@
 # KaiCad TODO
 
-A living list of completed work and upcoming tasks. For the full roadmap see
-[`docs/PLAN.md`](docs/PLAN.md); for the immediate next pass see
-[`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
+A living list of completed work and upcoming tasks. For the foundation roadmap
+see [`docs/PLAN.md`](docs/PLAN.md); for the full-KiCad parity program see
+[`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md); for the immediate release pass
+see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 
 ## ✅ Done
 
@@ -149,7 +150,22 @@ A living list of completed work and upcoming tasks. For the full roadmap see
 - `Ctrl+O`/`Ctrl+S`/`F5`, path dialogs and drag-and-drop board opening
 - 12 new tests; total tests: 331
 
-## 🚧 Next — Week 16: Beta readiness
+### Interactive board editor
+- `renderer::BoardTransform` shares the exact 2D board-to-pixel fit between rendering and hit-testing
+- `pcb::PcbDesign::{net_ids, copper_layer_ids}` expose assigned nets and stackup order
+- `gui::TrackEditor`: pad snapping, grid routing, DRC preflight, bounded undo/redo snapshots
+- Studio Route tool: click a pad or free point, then a destination; start marker and undo/redo controls
+- 7 new GUI tests, 2 renderer tests and 2 PCB tests; total tests: 342
+
+### KiCad PCB compatibility subset
+- `kicad-parser` now reads and writes `.kicad_pcb` boards for the subset represented by `PcbDesign`
+- Preserves layers, named nets (`PcbNet`), Edge.Cuts outlines, footprints/pads (including pad numbers and rotated placement), tracks and vias
+- Reports skipped zones, arcs, graphics, 3D models and approximated pad shapes as explicit warnings instead of claiming lossless conversion
+- Added `kai-cad pcb import <input.kicad_pcb> <output.json>` and `kai-cad pcb export <input.json> <output.kicad_pcb>`
+- Added named-net and pad-number fields with serde defaults for older board documents
+- 9 parser tests and 2 PCB-model tests; total tests: 353
+
+## 🚧 Next — Week 16: Foundation release readiness
 
 See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 
@@ -157,7 +173,20 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥343 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥354 tests, clippy/fmt/doc/link/release clean
+
+## 🚧 Full KiCad parity — post-beta program
+
+See [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) for the gap matrix, exit
+criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
+
+- [ ] Integrated project document owning schematic and PCB
+- [ ] Schematic capture, annotation, hierarchy and geometry-based connectivity
+- [x] `.kicad_pcb` supported-subset read/write, CLI conversion and explicit loss warnings
+- [ ] Full-fidelity `.kicad_pcb` round trip, `.kicad_pro` / `.kicad_sch` read/write and a KiCad 9/10 compatibility corpus
+- [ ] Footprint placement/editing, zones, net classes, differential pairs and length matching
+- [ ] Gerber, drill, BOM and pick-and-place outputs
+- [ ] Symbol/footprint editors, scripting, collaboration transport and complete kAI
 
 ## ⬜ Later milestones
 
@@ -180,10 +209,11 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ Native `gui` crate and `kai-cad-gui` binary using eframe/egui
 - ✅ Board JSON open/save, demo board, 2D/3D software viewport, DRC and stackup/footprint inspection
 - ✅ Keyboard shortcuts, drag-and-drop opening and headless state tests
-- ⬜ Copper editing, interactive routing and transactional GUI edits
+- ✅ Click-to-route track editing with DRC preflight and undo/redo
+- ⬜ Footprint/pad placement and full transactional board editing
 - ⬜ Pan/zoom, native file picker, selection/measurement tools and continuous DRC
 - ⬜ Schematic capture and cross-probing
-- [x] Decide GUI scope and slot it into the roadmap (viewer shell after Phase 2; full editor later)
+- [x] Decide GUI scope and slot it into the roadmap (editable PCB shell after Phase 2; full parity later)
 
 ### Phase 3 — kAI & collaboration (Weeks 9–12)
 - ✅ Transactional kAI suggestion application (Week 9)
@@ -199,7 +229,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - ✅ SQLite plugin registry, activation state and CLI (Weeks 13–15; schema v6)
 - ⬜ Performance baselines
 - ⬜ User guides and API reference
-- ⬜ KiCad 9/10 import/export QA
+- 🚧 KiCad 9/10 board-subset import/export QA; project files remain deferred
 - ⬜ Beta release
 
 ## 🏠 Housekeeping

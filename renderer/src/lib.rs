@@ -123,6 +123,86 @@ impl Camera {
     }
 }
 
+/// Mapping between board millimetres and 2D viewport pixels.
+///
+/// The transform matches the framing used by [`ViewMode::TwoD`] exactly, so a
+/// click in the presented viewport can be converted back into board
+/// coordinates. Pixel coordinates have their origin at the top-left of the
+/// rendered image; board Y increases upward.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoardTransform {
+    min_x: f64,
+    min_y: f64,
+    scale: f64,
+    x_offset: f64,
+    y_offset: f64,
+    image_height: f64,
+}
+
+impl BoardTransform {
+    /// Fit a board into a rendered image of `width` by `height` pixels.
+    ///
+    /// Returns [`RendererError::InvalidConfig`] when the image size or board
+    /// outline cannot be transformed.
+    pub fn for_board(design: &PcbDesign, width: u32, height: u32) -> Result<Self, RendererError> {
+        validate_size(width, height)?;
+        let bbox = design
+            .outline
+            .bounding_box()
+            .ok_or_else(|| RendererError::InvalidConfig("board outline is empty".to_string()))?;
+        let values = [bbox.min.x, bbox.min.y, bbox.max.x, bbox.max.y];
+        if values.iter().any(|value| !value.is_finite())
+            || bbox.max.x < bbox.min.x
+            || bbox.max.y < bbox.min.y
+        {
+            return Err(RendererError::InvalidConfig(
+                "board outline has invalid bounds".to_string(),
+            ));
+        }
+
+        let width = width as f64;
+        let height = height as f64;
+        let margin = (width.min(height) * 0.08).max(4.0);
+        let usable_width = (width - margin * 2.0).max(1.0);
+        let usable_height = (height - margin * 2.0).max(1.0);
+        let board_width = (bbox.max.x - bbox.min.x).max(1e-9);
+        let board_height = (bbox.max.y - bbox.min.y).max(1e-9);
+        let scale = (usable_width / board_width).min(usable_height / board_height);
+        let x_offset = margin + (usable_width - board_width * scale) / 2.0;
+        let y_offset = margin + (usable_height - board_height * scale) / 2.0;
+
+        Ok(Self {
+            min_x: bbox.min.x,
+            min_y: bbox.min.y,
+            scale,
+            x_offset,
+            y_offset,
+            image_height: height,
+        })
+    }
+
+    /// Pixels per board millimetre.
+    pub fn scale(&self) -> f64 {
+        self.scale
+    }
+
+    /// Convert a board point in millimetres to image pixels.
+    pub fn board_to_pixel(&self, x: f64, y: f64) -> [f64; 2] {
+        [
+            self.x_offset + (x - self.min_x) * self.scale,
+            self.image_height - self.y_offset - (y - self.min_y) * self.scale,
+        ]
+    }
+
+    /// Convert image pixels to a board point in millimetres.
+    pub fn pixel_to_board(&self, x: f64, y: f64) -> [f64; 2] {
+        [
+            self.min_x + (x - self.x_offset) / self.scale,
+            self.min_y + (self.image_height - y - self.y_offset) / self.scale,
+        ]
+    }
+}
+
 /// Main renderer handle.
 pub struct Renderer {
     pub config: RendererConfig,
@@ -236,6 +316,7 @@ mod tests {
                 reference_designator: "R".to_string(),
                 position: Point::new(10.0, 8.0),
                 pad_positions: vec![PadPosition {
+                    number: "1".to_string(),
                     x: -1.5,
                     y: 0.0,
                     pad_type: PadType::ThroughHole,
@@ -283,6 +364,29 @@ mod tests {
             .chunks_exact(4)
             .filter(|pixel| pixel[..3] != [background.r, background.g, background.b])
             .count()
+    }
+
+    #[test]
+    fn board_transform_round_trips_board_coordinates() {
+        let design = test_design();
+        let transform = BoardTransform::for_board(&design, 160, 120).expect("transform");
+        assert!(transform.scale() > 0.0);
+
+        for (x, y) in [(0.0, 0.0), (20.0, 0.0), (10.0, 8.0), (0.0, 16.0), (20.0, 16.0)] {
+            let [pixel_x, pixel_y] = transform.board_to_pixel(x, y);
+            let [round_x, round_y] = transform.pixel_to_board(pixel_x, pixel_y);
+            assert!((round_x - x).abs() < 1e-9, "x {x} became {round_x}");
+            assert!((round_y - y).abs() < 1e-9, "y {y} became {round_y}");
+        }
+    }
+
+    #[test]
+    fn board_transform_rejects_empty_outlines_and_zero_sized_images() {
+        let design = test_design();
+
+        assert!(BoardTransform::for_board(&PcbDesign::default(), 160, 120).is_err());
+        assert!(BoardTransform::for_board(&design, 0, 120).is_err());
+        assert!(BoardTransform::for_board(&design, 160, 0).is_err());
     }
 
     #[test]

@@ -1,12 +1,15 @@
-//! Minimal, deterministic KiCad symbol-library parsing.
+//! Deterministic KiCad symbol-library and PCB import/export support.
 //!
 //! KiCad's file format is an import/export target only; it never becomes
-//! KaiCad's internal representation. This crate reads a `.kicad_sym` file and
-//! maps it into [`core::SymbolLibrary`].
+//! KaiCad's internal representation. This crate reads `.kicad_sym` symbol
+//! libraries into [`core::SymbolLibrary`] and reads/writes the supported
+//! subset of `.kicad_pcb` boards through [`pcb`].
 //!
-//! The parser deliberately implements only the S-expression subset KiCad
-//! symbol libraries use. It never panics on malformed input and performs no I/O
-//! beyond reading the requested file.
+//! The parser deliberately implements only the S-expression constructs KaiCad
+//! can represent. It never panics on malformed input and performs no I/O
+//! beyond the requested file.
+
+pub mod pcb;
 
 use std::fmt;
 use std::path::Path;
@@ -14,6 +17,8 @@ use std::path::Path;
 use core::symbol::{Pin, PinDirection, PinPosition, PinType, Symbol};
 use core::symbol_library::{SymbolLibrary, SymbolLibrarySource};
 use uuid::Uuid;
+
+pub use pcb::{PcbImport, load_pcb, parse_pcb, save_pcb, write_pcb};
 
 /// Errors raised while reading a KiCad symbol library.
 #[derive(Debug)]

@@ -1,21 +1,27 @@
-# Next Agent Prompt — Week 16: Beta Readiness
+# Next Agent Prompt — Week 16: Foundation Release Readiness
 
 You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
-`/home/sneak/vscode/KaiCad`. Weeks 1–15, the Phase 2 PCB/renderer scope and a
-basic Studio GUI inspection shell are finished and verified. Your job is
-**Week 16: harden the CLI, document the
-plugin workflow and release surface, add performance baselines, and complete
-the beta-readiness audit**. Do not add dynamic plugin execution or new
-engineering engines.
+`/home/sneak/vscode/KaiCad`. Weeks 1–15, the Phase 2 PCB/renderer scope and the
+first Studio editing increment and the supported `.kicad_pcb` import/export
+subset are finished and verified. Your job is **Week 16: harden the CLI,
+document the plugin workflow and release surface, add performance baselines,
+and complete the foundation release-readiness audit**. Do not add dynamic
+plugin execution or new engineering engines.
 
-Read this document fully before writing code.
+This brief is release hardening, not the full-KiCad replacement program. The
+current Studio shell is no longer read-only (it has track routing), and the CLI
+can convert supported `.kicad_pcb` boards, but footprint placement, schematic
+capture, manufacturing outputs and full project-file compatibility remain
+future work. The long-range gap analysis and
+delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md). Read this
+document fully before writing code.
 
 ---
 
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 331 passing, 0 failing
+- **Tests:** 353 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -51,8 +57,12 @@ Read this document fully before writing code.
   deferred.
 - A post-Phase-2 `gui` crate adds KaiCad Studio: a native eframe window with
   board JSON open/save, a software-rendered 2D/3D viewport, layer/footprint
-  inspection and DRC. It is read-only; editing and schematic capture are not
-  implemented.
+  inspection, DRC and undoable click-to-route track editing with DRC preflight.
+  Footprint placement and schematic capture are not implemented.
+- `kicad-parser` imports/exports the supported `.kicad_pcb` subset, preserving
+  layers, named nets, pad numbers, Edge.Cuts outlines, footprints, pads, tracks
+  and vias, and warning about skipped or approximated constructs. The CLI
+  exposes `pcb import|export`; this is not full KiCad project compatibility.
 
 ---
 
@@ -103,9 +113,11 @@ Add `docs/USER_GUIDE.md` covering:
 - Discovery, registration, listing, showing, enabling and disabling plugins.
 - The default `kaicad.db` location and how `--db` changes it.
 - What "enabled" means: registry state only; no code is executed.
-- Current limitations: the GUI is a read-only viewer/inspection shell (no
-  editing or schematic capture), no Vulkan GPU backend (a headless software
-  renderer is available), no dynamic plugin loading and no network
+- Current limitations: the GUI supports track routing but not footprint/pad
+  editing, pan/zoom or schematic capture; no Vulkan GPU backend (a headless
+  software renderer is available); only supported-subset `.kicad_pcb`
+  import/export (no `.kicad_pro`/`.kicad_sch` or full-fidelity board round
+  trip); no manufacturing outputs; no dynamic plugin loading and no network
   collaboration.
 - A short troubleshooting table for invalid manifests, duplicate ids, unsafe
   entry points and corrupt registry rows.
@@ -140,14 +152,16 @@ Add `docs/RELEASE.md` with a beta checklist that records, at minimum:
 - Manual self-check output and exit code.
 - Schema version and migration policy.
 - Plugin registry limitations.
-- Known deferred features (full GUI editing, Vulkan GPU renderer, dynamic
-  plugins, real-time collaboration, KiCad PCB/schematic parsing).
+- Known deferred features (footprint placement, full PCB and schematic
+  editing, manufacturing outputs, Vulkan GPU renderer, dynamic plugins,
+  real-time collaboration, full KiCad project/schematic parsing and
+  full-fidelity `.kicad_pcb` support).
 - Versioning and GPL-3.0-or-later licensing.
 
 The checklist must distinguish verified items from deferred ones; do not mark
 future work complete.
 
-### 3.5 Tests (target: 12–16 new tests, at least 343 total)
+### 3.5 Tests (target: 12–16 new tests, at least 354 total)
 
 Cover at least:
 
@@ -172,8 +186,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 331 tests still pass.
-- [ ] Test count rises to at least 343, all passing.
+- [ ] Existing 353 tests still pass.
+- [ ] Test count rises to at least 354, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).
@@ -193,6 +207,8 @@ cargo bench --workspace --no-run
 python3 scripts/check_markdown_links.py
 cargo run -p core --example project_roundtrip
 cargo run -p kicad-parser --example parse_library
+cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
+cargo run -p kai-cad -- pcb export board.json board.kicad_pcb
 cargo run -p store --example project_crud
 cargo run -p pcb --example board_outline
 cargo run -p kai-cad
@@ -204,7 +220,9 @@ cargo build --workspace --release
 ## 5. Documentation updates (required)
 
 - `README.md` — status, test count, user-guide/release links and roadmap.
-- `docs/PLAN.md` — mark Week 16 complete and close the 16-week plan.
+- `docs/PLAN.md` — mark Week 16 complete and close the 16-week foundation plan.
+- `docs/KICAD_PARITY.md` — keep the post-beta parity sequence and exit criteria
+  current; do not mark parity complete from Week 16 work.
 - `docs/PHASE1_TASKS.md` — update the status note.
 - `docs/ARCHITECTURE.md` — CLI behavior, benchmark layout and "Current
   milestone" section.
@@ -222,9 +240,10 @@ cargo build --workspace --release
 
 - Dynamic plugin loading, execution, sandboxing, signing or installation UI.
 - Vulkan renderer implementation or new GUI editing features; only fixes to
-  the existing Studio viewer/DRC shell are in scope.
+  the existing Studio inspection/DRC/track-routing shell are in scope.
 - New schematic, PCB or routing features.
-- KiCad `.kicad_sch` / `.kicad_pcb` parsing or writing.
+- KiCad `.kicad_sch` / `.kicad_pro` parsing or writing, or expanding
+  `.kicad_pcb` beyond the documented supported subset.
 - Network collaboration, telemetry or cloud services.
 - Schema changes; migrations 0001–0006 remain immutable.
 - Rewriting or reformatting unrelated modules.

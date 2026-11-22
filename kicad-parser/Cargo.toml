@@ -6,10 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "KiCad file-format parser for KaiCad import/export"
+description = "KiCad symbol-library and PCB file parser for KaiCad import/export"
 
 [dependencies]
 core = { path = "../core" }
+pcb = { path = "../pcb" }
 uuid = { version = "1", features = ["v5"] }
 
 [dev-dependencies]

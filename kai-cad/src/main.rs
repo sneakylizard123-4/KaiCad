@@ -1,6 +1,6 @@
 //! KaiCad main entry point.
 //!
-//! The GUI is not wired up yet, so the binary acts as a deterministic smoke
+//! The desktop Studio GUI is a separate binary, so this binary acts as a deterministic smoke
 //! test of the workspace's public library surface: it serializes a project,
 //! generates and checks a netlist, builds a PCB design, and reads the default
 //! configuration of the renderer, AI, and collaboration subsystems.
@@ -13,6 +13,8 @@ use uuid::Uuid;
 const USAGE: &str = "kai-cad [--version|--help]";
 const PLUGIN_USAGE: &str =
     "kai-cad plugins <list|show|enable|disable|discover> [arguments] [--db <path>]";
+const PCB_USAGE: &str =
+    "kai-cad pcb <import <input.kicad_pcb> <output.json> | export <input.json> <output.kicad_pcb>>";
 const DEFAULT_DB_PATH: &str = "kaicad.db";
 
 fn main() -> ExitCode {
@@ -29,6 +31,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         [command, rest @ ..] if command == "plugins" => run_plugins(rest),
+        [command, rest @ ..] if command == "pcb" => run_pcb(rest),
         _ => {
             eprintln!("error: unrecognized arguments: {}", args.join(" "));
             eprintln!("usage: {USAGE}");
@@ -43,12 +46,16 @@ fn print_help() {
     println!("usage:");
     println!("  {USAGE}");
     println!("  {PLUGIN_USAGE}");
+    println!("  {PCB_USAGE}");
     println!();
     println!("  -h, --help     print this help and exit");
     println!("  -V, --version  print the version and exit");
     println!();
     println!("Plugin commands:");
     print_plugin_help();
+    println!();
+    println!("PCB compatibility commands:");
+    print_pcb_help();
     println!();
     println!("With no arguments, runs a deterministic self-check of every workspace subsystem.");
 }
@@ -61,6 +68,97 @@ fn print_plugin_help() {
     println!("  plugins discover <directory> register every valid manifest in a directory");
     println!();
     println!("  --db <path>                  registry database (default: {DEFAULT_DB_PATH})");
+}
+
+fn print_pcb_help() {
+    println!("  pcb import <input.kicad_pcb> <output.json>  import supported KiCad board data");
+    println!("  pcb export <input.json> <output.kicad_pcb>  write supported KiCad board data");
+    println!();
+    println!(
+        "  Import reports skipped KiCad constructs on stderr; it does not claim full round-trip fidelity."
+    );
+}
+
+fn run_pcb(args: &[String]) -> ExitCode {
+    match pcb_command(args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            eprintln!("usage: {PCB_USAGE}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn pcb_command(args: &[String]) -> Result<(), String> {
+    match args {
+        [] => {
+            print_pcb_help();
+            Ok(())
+        }
+        [command] if command == "help" || command == "--help" || command == "-h" => {
+            print_pcb_help();
+            Ok(())
+        }
+        [command, input, output] if command == "import" => {
+            let imported = kicad_parser::load_pcb(input)
+                .map_err(|error| format!("failed to import {input}: {error}"))?;
+            for warning in &imported.warnings {
+                eprintln!("warning: {warning}");
+            }
+            let mut json = serde_json::to_string_pretty(&imported.design)
+                .map_err(|error| format!("failed to serialize imported board: {error}"))?;
+            json.push('\n');
+            write_output(output, &json)?;
+            println!(
+                "imported {} into {} ({} track(s), {} via(s), {} footprint(s), {} warning(s))",
+                input,
+                output,
+                imported.design.tracks.len(),
+                imported.design.vias.len(),
+                imported.design.footprints.len(),
+                imported.warnings.len()
+            );
+            Ok(())
+        }
+        [command, input, output] if command == "export" => {
+            let json = std::fs::read_to_string(input)
+                .map_err(|error| format!("failed to read {input}: {error}"))?;
+            let design: pcb::PcbDesign = serde_json::from_str(&json)
+                .map_err(|error| format!("invalid KaiCad board JSON in {input}: {error}"))?;
+            let document = kicad_parser::write_pcb(&design)
+                .map_err(|error| format!("failed to export {input}: {error}"))?;
+            write_output(output, &document)?;
+            println!(
+                "exported {} to {} ({} track(s), {} via(s), {} footprint(s))",
+                input,
+                output,
+                design.tracks.len(),
+                design.vias.len(),
+                design.footprints.len()
+            );
+            Ok(())
+        }
+        [command, ..] if command == "import" || command == "export" => {
+            Err(format!("pcb {command} expects an input and an output path"))
+        }
+        [command, ..] => Err(format!("unknown pcb command: {command}")),
+    }
+}
+
+fn write_output(path: &str, contents: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty() {
+        return Err("output path must not be empty".to_string());
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        }
+    }
+    std::fs::write(path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
 fn run_plugins(args: &[String]) -> ExitCode {
@@ -1170,6 +1268,37 @@ fn check_kicad_parser() -> Result<(), String> {
         "kicad-parser: expected two pins on the fixture symbol",
     )?;
 
-    println!("  kicad-parser: loaded {} symbol(s) from {}", library.symbols.len(), path.display());
+    const PCB_FIXTURE: &str = r#"(kicad_pcb (version 20240108) (generator pcbnew)
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+      (net 0 "") (net 1 "GND")
+      (gr_line (start 0 0) (end 10 0) (layer "Edge.Cuts") (width 0.05))
+      (gr_line (start 10 0) (end 10 10) (layer "Edge.Cuts") (width 0.05))
+      (gr_line (start 10 10) (end 0 10) (layer "Edge.Cuts") (width 0.05))
+      (gr_line (start 0 10) (end 0 0) (layer "Edge.Cuts") (width 0.05))
+      (segment (start 1 1) (end 2 1) (width 0.25) (layer "F.Cu") (net 1))
+      (via (at 2 1) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+    )"#;
+    let imported = kicad_parser::parse_pcb(PCB_FIXTURE)
+        .map_err(|error| format!("kicad-parser: PCB import failed: {error}"))?;
+    ensure(imported.design.tracks.len() == 1, "kicad-parser: PCB import lost its track")?;
+    ensure(imported.design.vias.len() == 1, "kicad-parser: PCB import lost its via")?;
+    ensure(
+        imported.design.net_name(imported.design.tracks[0].net_id) == Some("GND"),
+        "kicad-parser: PCB import lost its net name",
+    )?;
+    let exported = kicad_parser::write_pcb(&imported.design)
+        .map_err(|error| format!("kicad-parser: PCB export failed: {error}"))?;
+    let round_trip = kicad_parser::parse_pcb(&exported)
+        .map_err(|error| format!("kicad-parser: exported PCB did not parse: {error}"))?;
+    ensure(
+        round_trip.design.tracks.len() == 1 && round_trip.design.vias.len() == 1,
+        "kicad-parser: exported PCB lost copper objects",
+    )?;
+
+    println!(
+        "  kicad-parser: loaded {} symbol(s) from {}, PCB round trip 1 track / 1 via",
+        library.symbols.len(),
+        path.display()
+    );
     Ok(())
 }

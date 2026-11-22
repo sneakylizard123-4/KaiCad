@@ -27,6 +27,12 @@ fn default_pad_height() -> f64 {
 /// A single pad position on a footprint.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PadPosition {
+    /// Pad number or name from the footprint, for example `1` or `A1`.
+    ///
+    /// Older KaiCad documents and programmatically created pads load with an
+    /// empty number; exporters generate one from the pad index in that case.
+    #[serde(default)]
+    pub number: String,
     pub x: f64,
     pub y: f64,
     pub pad_type: PadType,
@@ -48,6 +54,7 @@ pub struct PadPosition {
 impl Default for PadPosition {
     fn default() -> Self {
         Self {
+            number: String::new(),
             x: 0.0,
             y: 0.0,
             pad_type: PadType::default(),
@@ -404,5 +411,19 @@ mod tests {
 
         let legacy = PadPosition::default();
         assert_eq!(legacy.rotation, 0.0);
+        assert!(legacy.number.is_empty());
+    }
+
+    #[test]
+    fn pad_numbers_round_trip_and_default_for_old_documents() {
+        let pad = PadPosition { number: "A1".to_string(), ..PadPosition::default() };
+        let json = serde_json::to_string(&pad).expect("pad serializes");
+        let restored: PadPosition = serde_json::from_str(&json).expect("pad parses");
+        assert_eq!(restored.number, "A1");
+
+        let mut value = serde_json::to_value(&pad).expect("pad serializes");
+        value.as_object_mut().expect("pad is an object").remove("number");
+        let old: PadPosition = serde_json::from_value(value).expect("old pad parses");
+        assert!(old.number.is_empty());
     }
 }

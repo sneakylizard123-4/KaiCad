@@ -2,26 +2,31 @@
 
 KaiCad is a pre-alpha Rust project. The core data model, schematic and PCB
 engines, routing, software renderer, persistence, collaboration primitives and
-a desktop GUI inspection shell are implemented and tested, while full GUI
-editing, the Vulkan GPU backend and some advanced engines remain incomplete.
-Contributions that move the architecture forward — or that honestly document
-what is missing — are welcome.
+a desktop GUI editor/inspection shell are implemented and tested, along with
+the supported `.kicad_pcb` import/export subset, while full board and schematic
+editing, full KiCad project-file compatibility, the Vulkan GPU backend and some
+advanced engines remain incomplete. Contributions that move
+the architecture forward — or that honestly document what is missing — are
+welcome.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the crate layout and design
 rules, and [`DEVELOPMENT.md`](DEVELOPMENT.md) for build, test and tooling
-instructions. The current implementation brief — Week 16, beta readiness — is
-in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+instructions. The current release brief — Week 16, beta readiness — is in
+[`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). The full-KiCad gap analysis and
+delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md).
 
 ## Ground rules
 
 - **No KiCad wrapping.** KaiCad implements its own engines. KiCad file formats
-  are an import/export target only: `kicad-parser` maps `.kicad_sym` input into
-  `core` types, and those types remain the internal representation. KiCad
-  netlist output from `schematic::to_kicad_netlist` is likewise export-only and
-  must never become the internal representation or gain a parser in the same
-  layer. `pcb::FootprintLibrary` persists KaiCad's own JSON; a KiCad
-  `.kicad_mod` reader is separate import work and must not become the storage
-  format.
+  are an import/export target only: `kicad-parser` maps `.kicad_sym` and the
+  supported `.kicad_pcb` subset into `core`/`pcb` types, and those types remain
+  the internal representation. KiCad netlist output from
+  `schematic::to_kicad_netlist` is likewise export-only and must never become
+  the internal representation or gain a parser in the same layer.
+  `pcb::FootprintLibrary` persists KaiCad's own JSON; a KiCad `.kicad_mod`
+  reader is separate import work and must not become the storage format.
+  Board import must return explicit warnings for skipped constructs rather
+  than claim a lossless round trip.
 - **Local-first.** No change may make a network connection, cloud service or
   AI model mandatory for normal editing.
 - **AI output is untrusted.** Any AI-proposed change must pass deterministic
@@ -33,9 +38,10 @@ in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
 - **GUI state is headless.** `gui::StudioState` owns board, path, view and DRC
   state so it can be tested without a window; `StudioApp` is only an eframe
   adapter. Do not duplicate PCB geometry or rasterization in the UI. The
-  viewport must keep using `renderer::Renderer`, and future edits must go
-  through the existing engine and transactional APIs rather than mutating a
-  private copy of the design.
+  viewport must keep using `renderer::Renderer`. Board edits must go through
+  the PCB/routing engines, preflight DRC, and preserve an undoable headless
+  history; project edits use `core::edit` transactions. Do not mutate an
+  unvalidated private copy of the design.
 - **Deterministic operations.** Do not introduce unseeded randomness into
   geometry, netlisting, routing or rule checks. DRC violations are sorted by
   `(rule_id, objects)`, each unordered track pair on different nets is checked

@@ -3,12 +3,13 @@
 > **Status: pre-alpha.** This document describes the intended architecture
 > and the code that exists today. The data model, schematic and PCB engines,
 > DRC, routing, software renderer, persistence, collaboration primitives and a
-> desktop GUI inspection shell are implemented and tested; full GUI editing,
-> the Vulkan GPU backend, AI generation and real-time transport remain
-> incomplete. Do not read this as a description of a finished EDA application.
+> desktop GUI editor/inspection shell are implemented and tested; full board and
+> schematic editing, full KiCad project-file compatibility, the Vulkan GPU backend,
+> AI generation and real-time transport remain incomplete. Do not read this as
+> a description of a finished EDA application.
 >
 > Weeks 1 (workspace, core data model, CI), 2 (SQLite engineering database),
-> 3 (symbol libraries and KiCad `.kicad_sym` import), 4 (schematic engine),
+> 3 (symbol libraries, KiCad `.kicad_sym` import and `.kicad_pcb` subset I/O), 4 (schematic engine),
 > 5 (PCB core), 6 (PCB geometry and DRC), 7 (deterministic single-layer
 > routing), 8 (multi-layer routing with vias), 9 (transactional kAI
 > application), 10 (collaborative edit sessions), 11 (multi-step edit
@@ -16,12 +17,13 @@
 > 14 (plugin activation and capability queries), 15 (plugin CLI) and the
 > Phase 2 completion pass (rotated pads, blind/buried vias, push-and-shove,
 > interactive routing and the software renderer) are complete. A post-Phase-2
-> Studio GUI shell adds native board viewing, inspection and DRC. The workspace
-> has 331 passing tests.
+> Studio shell adds native board viewing, inspection, DRC and click-to-route
+> track editing and `.kicad_pcb` subset import/export. The workspace has 353
+> passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
-layer, a native desktop inspection shell and a thin CLI binary. The long-term
+layer, a native desktop editor/inspection shell and a thin CLI binary. The long-term
 goal is a complete EDA application
 that is **not** a wrapper around KiCad (see `PRD.md`).
 
@@ -39,7 +41,7 @@ graph TD
     collab["collab<br/>sessions · versioning · sharing"]
     plugin["plugin<br/>manifests · registry"]
     store["store<br/>SQLite persistence"]
-    kicad_parser["kicad-parser<br/>KiCad symbol import"]
+    kicad_parser["kicad-parser<br/>KiCad symbol and PCB import/export"]
 
     app --> core
     app --> schematic
@@ -56,6 +58,7 @@ graph TD
     gui --> renderer
 
     kicad_parser --> core
+    kicad_parser --> pcb
     schematic --> core
     pcb --> core
     renderer --> pcb
@@ -113,8 +116,9 @@ flowchart BT
 The UI layer has two front ends. `kai-cad` is the CLI (`kai-cad/src/main.rs`):
 it prints a banner, supports `--help`/`--version`, manages plugins, and runs a
 deterministic self-check that calls every subsystem. `kai-cad-gui` is KaiCad
-Studio (`gui/`): a native eframe window for board viewing, inspection and DRC.
-Full interactive editing, schematic capture and pan/zoom remain unimplemented.
+Studio (`gui/`): a native eframe window for board viewing, inspection, DRC and
+2D track routing. Footprint/pad editing, schematic capture and pan/zoom remain
+unimplemented.
 The AI and collaboration layers are optional: KaiCad must remain usable without
 AI, network access or external services (`PRD.md` §1.2, §1.3).
 
@@ -247,7 +251,8 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   returns the tracks only. `route_push_and_shove` tries a bounded, id-sorted
   rip-up and reroute when a direct route returns `NoPath`. `InteractiveRouter`
   keeps a preview separate from the design until `commit`, with `cancel` and
-  `preview_result` helpers.
+  `preview_result` helpers. Same-net tracks and vias are traversable, so a
+  route can start or T off existing copper; other nets remain obstacles.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
   `tracks`, `vias`, `rules`) built on `core::PcbOutline`/`core::PcbLayer`/
   `core::Stackup`/`core::Point`, plus `Track` (copper `width`, default
@@ -256,7 +261,9 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   still open.
 
 `PcbDesign::copper_layer_count` is implemented and honours the stackup.
-Outline geometry lives on `core::PcbOutline`: `signed_area`, `area`,
+`copper_layer_ids` exposes stackup order and `net_ids` returns sorted, unique
+assigned nets from tracks, vias and pads. Outline geometry lives on
+`core::PcbOutline`: `signed_area`, `area`,
 `perimeter`, `contains_point` (even-odd ray casting with boundary-inclusive
 edges) and `bounding_box`. Design-rule checking lives in `pcb::drc`; single-
 layer and multi-layer grid routing, push-and-shove and interactive sessions
@@ -288,6 +295,8 @@ draws copper, pads and via prisms, projects them through the camera and uses
 a depth buffer with flat shading. Output is deterministic for a given design,
 camera and size. The renderer itself uses no window, GPU or Vulkan loader; the
 Studio GUI presents the resulting texture in an eframe window.
+`BoardTransform::for_board` exposes the same 2D fit as a board↔pixel mapping,
+so viewport clicks and the rasterizer use identical coordinates.
 
 The `ash`-based `device`, `swapchain`, `render_pass` and `pipeline` modules
 remain configuration scaffolding for a future Vulkan backend; they are not
@@ -382,21 +391,34 @@ not part of the manifest. Migrations are numbered SQL files
 embedded with `include_str!`; once applied they are immutable — add a new
 numbered file rather than editing an old one.
 
-### `kicad-parser` — KiCad symbol import
+### `kicad-parser` — KiCad symbol and PCB import/export
 
-Dependencies: `core`, `uuid` (with the `v5` feature). The crate is import-only;
-KiCad's file format never becomes the internal representation.
+Dependencies: `core`, `pcb`, `uuid` (with the `v5` feature). KiCad's file
+format never becomes the internal representation.
 
 - `parse_symbol_library(path) -> Result<core::SymbolLibrary, ParseError>` reads
 a `.kicad_sym` file and maps each top-level `(symbol ...)` to
   `core::Symbol`, including pins nested inside unit sub-symbols.
+- `parse_pcb(input) -> Result<PcbImport, ParseError>` and
+  `load_pcb(path)` map supported `.kicad_pcb` content into `pcb::PcbDesign`.
+  `PcbImport` carries the board and deterministic warnings for skipped or
+  approximated constructs.
+- `write_pcb(design) -> Result<String, ParseError>` and `save_pcb` emit the same
+  supported subset as a KiCad-openable board document. The CLI exposes these as
+  `kai-cad pcb import|export`.
+- PCB conversion preserves the layer table and copper stackup, named nets,
+  Edge.Cuts outlines, footprints/references/pad numbers, pad copper geometry,
+  tracks and vias. It warns about zones, arcs, graphics, groups, models, DRC
+  setup requiring a richer model, non-rectangular pad shapes and flattened
+  footprint rotation. Back-side SMD copper is warned because the current pad
+  model only places SMD pads on the top layer.
 - `ParseError::{Io, Syntax, Unsupported}` implements `Display` and
   `std::error::Error`; malformed input never panics.
 - The parser implements a minimal deterministic S-expression tokenizer/parser
   (atoms, quoted strings, nested lists). No generic expression crate is used.
 - Library and symbol names become UUIDv5 ids with `Uuid::NAMESPACE_OID`, so
-  parsing the same content twice yields identical ids. The library name is the
-  file stem because KiCad libraries do not record one.
+  parsing the same content twice yields identical ids. PCB net ids use the net
+  name, while track/via ids use KiCad's UUID when present.
 - Pins map name, number, electrical type, position (`at` x/y/angle in KiCad
   symbol space, no axis conversion) and direction derived from the electrical
   type. Known types include `free` and `no_connect`; only genuinely unknown
@@ -434,14 +456,21 @@ Dependencies: `core`, `pcb`, `renderer`, `serde_json`, `uuid`, and the external
 `kai-cad-gui` binary. Modules:
 
 - `app` — `StudioState` is the headless application model. It owns the current
-  `PcbDesign`, optional path, `ViewMode`, `DrcReport`, status notice and a
-  viewport revision. It opens and saves `PcbDesign` JSON, runs DRC and changes
-  the view; failures leave the current board untouched. `StudioApp` is the
-  `eframe::App` adapter. It draws a menu bar, a left document/DRC inspector, a
-  right layer-stack and footprint panel, a bottom status bar, and a central
-  image. The image is a texture populated from `renderer::Renderer` output at
-  a size capped by `MAX_VIEWPORT_SIDE` (2048 px). Renders are cached by size,
-  view and design revision, so idle frames do not rasterize again.
+  `PcbDesign`, optional path, `ViewMode`, `DrcReport`, `TrackEditor`, active
+  tool, dirty flag, status notice and a viewport revision. It opens and saves
+  `PcbDesign` JSON, runs DRC, changes the view and forwards 2D clicks to the
+  editor; failed operations leave the current board untouched. `StudioApp` is
+  the `eframe::App` adapter. It draws a menu bar, a left document/routing/DRC
+  inspector, a right layer-stack and footprint panel, a bottom status bar, and
+  a central image. The image is a texture populated from `renderer::Renderer`
+  output at a size capped by `MAX_VIEWPORT_SIDE` (2048 px). Renders are cached
+  by size, view and design revision, so idle frames do not rasterize again.
+- `editor` — `TrackEditor` owns route layer, net, width and router settings, a
+  pending start point, and bounded undo/redo snapshots of the board. A click
+  near a pad snaps to its centre and adopts its net. `route_to` runs the grid
+  router on a candidate clone, rejects any candidate with more DRC findings
+  than the current board, and only then commits it. `renderer::BoardTransform`
+  converts the viewport click back to board millimetres.
 - `demo` — deterministic two-layer demo board with five footprints, front and
   back tracks, and two through vias. It is DRC-clean under the default rules
   and renders in both views.
@@ -451,19 +480,21 @@ Dependencies: `core`, `pcb`, `renderer`, `serde_json`, `uuid`, and the external
   in the status bar.
 
 Input and shortcuts: `Ctrl+O` opens the path dialog, `Ctrl+S` saves to the
-current path or opens Save As, `F5` runs DRC, and a dropped file opens as a
-board. The shell currently auto-fits the 2D/3D view, offers a typed path rather
-than a native file picker, and is read-only: PCB and schematic editing are not
-wired to the engines yet. The window uses eframe/glow for presentation but the
-board image itself is still the deterministic CPU rasterizer; no Vulkan code
-is involved.
+current path or opens Save As, `Ctrl+Z`/`Ctrl+Y` undo and redo track edits,
+`R` toggles Inspect/Route, `F5` runs DRC, `Esc` cancels a pending route, and a
+dropped file opens as a board. The shell auto-fits the 2D/3D view, offers a
+typed path rather than a native file picker, and has no footprint/pad/via
+editing or schematic capture. The window uses eframe/glow for presentation but
+the board image itself is still the deterministic CPU rasterizer; no Vulkan
+code is involved.
 
 ### `kai-cad` — application binary
 
 Depends on every library crate. `src/main.rs` prints a banner, supports
 `--help`/`--version`, exposes `plugins list|show|enable|disable|discover` with
-an optional `--db <path>` registry database, and with no arguments runs a
-deterministic self-check: it serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
+an optional `--db <path>` registry database, converts supported boards through
+`pcb import|export`, and with no arguments runs a deterministic self-check: it
+serializes a `Project`, generates, ERC-checks and exports a KiCad netlist,
 builds a PCB design (outline measurements, layer validation, a footprint
 library round trip, clean/dirty DRC runs, a DRC-clean single-layer route, a
 multi-layer route across a full-width wall with through vias, a blocked-route
@@ -473,8 +504,9 @@ creates
 a collaboration session with roles, records a versioned edit and stages/drains
 its transaction, discovers and registers validated plugin manifests, exercises
 the SQLite store with an in-memory database including plugin persistence and a
-PCB-design round trip, and parses a hermetic `.kicad_sym` fixture with
-`kicad-parser`. Integration tests live
+PCB-design round trip, parses a hermetic `.kicad_sym` fixture, and imports,
+exports and re-imports a small `.kicad_pcb` fixture with `kicad-parser`.
+Integration tests live
 in `kai-cad/tests/smoke.rs`; the workspace root is a virtual manifest, so a
 root `tests/` directory would not be built.
 
@@ -644,9 +676,10 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 
 - **Primary:** KiCad 10 project files.
 - **Secondary:** KiCad 9 project files.
-- `kicad-parser` imports `.kicad_sym` symbol libraries and `schematic` exports
-  a KiCad netlist. No `.kicad_sch` or `.kicad_pcb` parser or writer and no
-  netlist importer exist yet.
+- `kicad-parser` imports `.kicad_sym` symbol libraries, imports/exports the
+  supported `.kicad_pcb` subset, and `schematic` exports a KiCad netlist. No
+  `.kicad_sch` or `.kicad_pro` parser/writer, full-fidelity board round trip,
+  unknown-field preservation or netlist importer exists yet.
 
 ## Current milestone and next steps
 
@@ -667,16 +700,20 @@ bounded multi-step undo/redo history with branch clearing, validated plugin
 manifests with deterministic registry ordering, local discovery, SQLite
 persistence, activation state, capability filters and CLI management, a
 deterministic software 2D/3D renderer, the `kai-cad` self-check binary, a
-post-Phase-2 Studio GUI shell (`gui`) for board viewing, inspection and DRC,
-CI (including a Markdown link check and coverage job), and documentation.
+post-Phase-2 Studio shell (`gui`) for board viewing, inspection, DRC and
+undoable track routing, a `.kicad_pcb` supported-subset importer/exporter with
+CLI conversion and explicit loss warnings, CI (including a Markdown link check
+and coverage job), and documentation. The workspace has **353 passing tests**.
 
-**Next (Week 16):** beta readiness. The planned work is:
+**Next (Week 16):** foundation release hardening. The planned work is:
 
 1. Harden the CLI parser and add user-facing plugin documentation.
 2. Add performance baselines for serialization, routing and plugin CRUD.
-3. Complete the release checklist and final compatibility audit.
+3. Complete the release checklist and foundation-level compatibility audit.
 
-The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md).
+The full work order is in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md). Full
+KiCad parity is a separate, longer program; see
+[`KICAD_PARITY.md`](KICAD_PARITY.md).
 
 ## Licensing
 
