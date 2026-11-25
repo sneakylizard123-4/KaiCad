@@ -51,14 +51,14 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (363 tests across the workspace)
+# Run tests (366 tests across the workspace)
 cargo test --workspace
 
 # Run the desktop GUI with the built-in demo board
 cargo run -p gui
 
-# Open a board document in the GUI
-cargo run -p gui -- path/to/board.kaicad.json
+# Open a KiCad board directly in the GUI
+cargo run -p gui -- path/to/board.kicad_pcb
 
 # Import a supported KiCad PCB into KaiCad's JSON board format
 cargo run -p kai-cad -- pcb import path/to/board.kicad_pcb path/to/board.kaicad.json
@@ -71,6 +71,9 @@ cargo run -p kai-cad -- sch import path/to/main.kicad_sch path/to/main.json
 cargo run -p kai-cad -- sch export path/to/main.json path/to/main.kicad_sch
 cargo run -p kai-cad -- footprint import path/to/part.kicad_mod path/to/part.json
 cargo run -p kai-cad -- footprint export path/to/part.json path/to/part.kicad_mod
+
+# Recursively round-trip a project, its child sheets and its board
+cargo run -p kai-cad -- project bundle path/to/project.kicad_pro path/to/output-dir
 
 # Run the CLI application (banner + subsystem self-check)
 cargo run -p kai-cad
@@ -138,7 +141,7 @@ KaiCad/
 │   └── src/
 │       ├── app.rs              # StudioState, viewport and eframe panels
 │       ├── demo.rs             # built-in DRC-clean demo board
-│       ├── document.rs         # PcbDesign JSON open/save
+│       ├── document.rs         # native .kicad_pcb open/save (JSON optional)
 │       ├── lib.rs
 │       └── main.rs             # kai-cad-gui binary
 ├── ai/                         # kAI subsystem
@@ -191,7 +194,7 @@ KaiCad/
 
 Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
 increment and a KiCad file-interchange layer are complete and verified:
-**363 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+**366 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
 routing, interactive route previews, and a headless software 2D/3D renderer
@@ -201,15 +204,16 @@ filters, plus `kai-cad plugins list|show|enable|disable|discover`. Manifests
 never load or execute plugin code.
 
 The post-Phase-2 `gui` crate adds **KaiCad Studio**, a native eframe/egui
-shell. It opens the demo board or a `PcbDesign` JSON document, renders the
-board in a 2D or 3D viewport through the deterministic CPU rasterizer, shows
-the layer stack and placed footprints, runs DRC, and saves the board. The 2D
-view now has an undoable track-routing tool: click a pad or free point, click
-a destination, and DRC-checked copper is added. The CLI can convert supported
-`.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` files with explicit
-warnings for constructs retained opaquely; Studio still opens KaiCad board JSON
-rather than KiCad files. Zones, arcs, graphics and DRC setup round-trip but are
-not semantically editable; recursive sheet loading and library tables remain.
+shell. It opens `.kicad_pcb` boards directly, renders them in a 2D or 3D
+viewport through the deterministic CPU rasterizer, shows the layer stack and
+placed footprints, runs DRC, and saves back to `.kicad_pcb`; `.json` remains an
+explicit interchange format. The 2D view has an undoable track-routing tool:
+click a pad or free point, click a destination, and DRC-checked copper is added.
+The CLI can also convert supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
+`.kicad_pro` files with explicit warnings for constructs retained opaquely.
+Zones, arcs, graphics and DRC setup round-trip but are not semantically
+editable; recursive sheet loading works through `project bundle`, while library
+tables remain.
 Footprint/pad placement, pan/zoom, native file pickers and schematic capture
 remain unimplemented.
 
@@ -254,10 +258,10 @@ What each crate provides today:
   exact 2D board-to-pixel fit for viewport hit-testing. A Vulkan GPU backend is
   not implemented.
 - 🚧 **gui (KaiCad Studio)** — native eframe shell with headless-testable
-  `StudioState`, board JSON open/save, a software-rendered 2D/3D viewport
-  (capped at 2048 px per side), layer-stack and footprint inspection, DRC
-  counts and violation details, status feedback, keyboard shortcuts and drag-
-  and-drop board opening. The 2D viewport has an undoable click-to-route track
+  `StudioState`, native `.kicad_pcb` open/save with optional JSON, a
+  software-rendered 2D/3D viewport (capped at 2048 px per side), layer-stack
+  and footprint inspection, DRC counts and violation details, status feedback,
+  keyboard shortcuts and drag-and-drop board opening. The 2D viewport has an undoable click-to-route track
   editor with DRC preflight. Footprint/pad editing and schematic capture remain
   deferred.
 - 🚧 **ai (kAI)** — configuration, deterministic suggestion validation
@@ -281,9 +285,9 @@ What each crate provides today:
 - ✅ **kicad-parser** — deterministic S-expression reader, `.kicad_sym`
   loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids,
   plus `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file
-  interchange. Unknown board/schematic nodes are retained for export; zones,
-  arcs, graphics, DRC setup and 3D models round-trip without becoming
-  semantically editable.
+  interchange. `ProjectBundle` follows child sheet files recursively. Unknown
+  board/schematic nodes are retained for export; zones, arcs, graphics, DRC
+  setup and 3D models round-trip without becoming semantically editable.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,

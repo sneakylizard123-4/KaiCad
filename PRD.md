@@ -170,7 +170,7 @@ headless software 2D/3D renderer, atomic kAI suggestion application with
 undo/redo, permission-checked collaborative edit sessions with version history
 and sync staging, bounded multi-step edit history, and a validated local
 plugin registry with SQLite persistence, activation state and CLI management.
-A native eframe-based Studio shell now opens and saves board documents, renders
+A native eframe-based Studio shell now opens and saves `.kicad_pcb` boards, renders
 2D/3D views, reports DRC, stackup and footprint information, and supports
 undoable click-to-route track editing with DRC preflight. Footprint placement,
 schematic capture, manufacturing outputs and full KiCad project-file
@@ -178,8 +178,8 @@ compatibility have not been implemented. The CLI imports and exports supported `
 and `.kicad_pro` files. Board and schematic constructs KaiCad does not model —
 zones, arcs, graphics, DRC setup, library symbols and unknown nodes — are
 retained for export instead of being silently dropped. They are not yet
-semantically editable, recursive project/sheet loading and library tables are
-missing, and the compatibility corpus is small, so KaiCad is not yet a usable
+semantically editable, library tables are missing, and the compatibility corpus
+is small, so KaiCad is not yet a usable
 end-to-end KiCad replacement. Week 16 release hardening remains outstanding; the full parity
 sequence and the exact board-conversion limits are in
 [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md). KaiCad is pre-alpha.

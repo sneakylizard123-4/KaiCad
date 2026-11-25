@@ -31,6 +31,9 @@ pub struct Sheet {
     /// Source constructs with no KaiCad model field, retained for export.
     #[serde(default)]
     pub preserved: Vec<crate::PreservedNode>,
+    /// Source document for a child sheet file, retained for bundle export.
+    #[serde(default)]
+    pub source: Option<crate::SourceDocument>,
 }
 
 /// An electrical junction where three or more wires meet.

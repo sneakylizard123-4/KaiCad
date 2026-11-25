@@ -143,7 +143,7 @@ see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 ### GUI shell — KaiCad Studio
 - New `gui` crate with a native eframe/egui window and `kai-cad-gui` binary
 - Headless-testable `StudioState`: board, path, view, DRC report, revision and status
-- Deterministic `PcbDesign` JSON open/save with parent-directory creation and surfaced errors
+- Native `.kicad_pcb` open/save with parent-directory creation, preservation warnings and optional JSON
 - Built-in DRC-clean two-layer demo board with five footprints, front/back tracks and two vias
 - Software-rendered 2D/3D viewport cached by size, view and revision, capped at 2048 px per side
 - Layer-stack, board-summary and footprint inspection; DRC counts and violation details
@@ -170,10 +170,10 @@ see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 - `.kicad_sch` subset read/write for components, wires, labels, junctions, no-connects and sheet symbols; `lib_symbols` and unknown nodes retained
 - `.kicad_mod` read/write with pad shapes, graphics, text and models preserved
 - `.kicad_pro` JSON preserved through the CLI
-- `kai-cad pcb|sch|footprint|project import|export` commands and CLI self-check round trips
-- Four-file compatibility corpus and structural round-trip tests
+- `kai-cad pcb|sch|footprint|project import|export` and `project bundle` commands; CLI self-check round trips
+- Four-file compatibility corpus, recursive project-bundle test and structural round trips
 - KiCad 10.0.6 plotted the generated schematic and footprint; ERC/DRC parsed the generated schematic/board
-- 10 new tests (5 schematic, 1 standalone footprint, 4 corpus); total tests: 363
+- 13 new tests (5 schematic, 1 standalone footprint, 5 corpus, 2 native GUI/parser); total tests: 366
 
 ## 🚧 Next — Week 16: Foundation release readiness
 
@@ -183,7 +183,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥364 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥365 tests, clippy/fmt/doc/link/release clean
 
 ## 🚧 Full KiCad parity — post-beta program
 
@@ -194,7 +194,7 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - [ ] Schematic capture, annotation, hierarchy and geometry-based connectivity
 - [x] `.kicad_pcb` supported-subset read/write, CLI conversion and unknown-construct preservation
 - [x] `.kicad_pro` / `.kicad_sch` / `.kicad_mod` file-level read/write and unknown-node preservation
-- [ ] Semantic zones/arcs/graphics/DRC rules, recursive project bundles, library tables and a broad KiCad 9/10 corpus
+- [ ] Semantic zones/arcs/graphics/DRC rules, library tables and a broad KiCad 9/10 corpus
 - [ ] Footprint placement/editing, zones, net classes, differential pairs and length matching
 - [ ] Gerber, drill, BOM and pick-and-place outputs
 - [ ] Symbol/footprint editors, scripting, collaboration transport and complete kAI
@@ -218,7 +218,7 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 
 ### Custom GUI (post-Phase-2 increment)
 - ✅ Native `gui` crate and `kai-cad-gui` binary using eframe/egui
-- ✅ Board JSON open/save, demo board, 2D/3D software viewport, DRC and stackup/footprint inspection
+- ✅ Native `.kicad_pcb` open/save (JSON optional), demo board, 2D/3D software viewport, DRC and stackup/footprint inspection
 - ✅ Keyboard shortcuts, drag-and-drop opening and headless state tests
 - ✅ Click-to-route track editing with DRC preflight and undo/redo
 - ⬜ Footprint/pad placement and full transactional board editing

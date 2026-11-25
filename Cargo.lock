@@ -1054,6 +1054,7 @@ version = "0.1.0"
 dependencies = [
  "core",
  "eframe",
+ "kicad-parser",
  "pcb",
  "renderer",
  "serde_json",

@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use kaicad_gui::StudioApp;
 
-const USAGE: &str = "kai-cad-gui [board.kaicad.json]";
+const USAGE: &str = "kai-cad-gui [board.kicad_pcb|board.json]";
 
 fn main() -> ExitCode {
     match run() {
@@ -71,6 +71,7 @@ fn print_help() {
     println!("  -V, --version  print the version and exit");
     println!();
     println!("With no board path, KaiCad Studio opens a built-in demo board.");
+    println!("Boards open and save as .kicad_pcb natively; .json remains supported.");
     println!("Use the Route tool in the 2D view to add and undo tracks.");
     println!("The viewport uses the deterministic software renderer; no Vulkan runtime is needed.");
 }

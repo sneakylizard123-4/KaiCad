@@ -124,15 +124,23 @@ impl StudioState {
     pub fn open_path(&mut self, path: impl AsRef<Path>) -> Result<(), DocumentError> {
         let path = path.as_ref();
         match crate::document::load_design(path) {
-            Ok(design) => {
-                self.design = design;
+            Ok(loaded) => {
+                let preserved = loaded.warnings.len();
+                self.design = loaded.design;
                 self.path = Some(path.to_path_buf());
                 self.revision = self.revision.wrapping_add(1);
                 self.report = run_drc(&self.design, &self.design.rules);
                 self.editor.reset(&self.design);
                 self.tool = StudioTool::Inspect;
                 self.dirty = false;
-                self.notice = report_notice(&self.report, &format!("Opened {}", path.display()));
+                let mut notice = report_notice(&self.report, &format!("Opened {}", path.display()));
+                if preserved > 0 {
+                    notice.text = format!(
+                        "{}; {} KiCad construct(s) preserved for export",
+                        notice.text, preserved
+                    );
+                }
+                self.notice = notice;
                 Ok(())
             }
             Err(error) => {
@@ -457,8 +465,8 @@ enum FileMode {
 impl FileMode {
     fn title(self) -> &'static str {
         match self {
-            Self::Open => "Open board",
-            Self::Save => "Save board as",
+            Self::Open => "Open KiCad board",
+            Self::Save => "Save KiCad board as",
         }
     }
 
@@ -530,7 +538,7 @@ impl StudioApp {
         }
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
-            .join("board.kaicad.json")
+            .join("board.kicad_pcb")
             .display()
             .to_string()
     }
@@ -549,10 +557,13 @@ impl StudioApp {
         let Some(dialog) = self.file_dialog.take() else {
             return;
         };
-        let path = PathBuf::from(dialog.path.trim());
+        let mut path = PathBuf::from(dialog.path.trim());
         if path.as_os_str().is_empty() {
             self.state.set_status("Enter a board path first.", NoticeKind::Error);
             return;
+        }
+        if dialog.mode == FileMode::Save && path.extension().is_none() {
+            path.set_extension("kicad_pcb");
         }
         match dialog.mode {
             FileMode::Open => self.open_board(path),
@@ -784,10 +795,14 @@ impl StudioApp {
         ui.heading("Document");
         ui.add(
             egui::TextEdit::singleline(&mut self.path_input)
-                .hint_text("path to board.kaicad.json")
+                .hint_text("path to board.kicad_pcb")
                 .desired_width(f32::INFINITY),
         );
-        ui.label(RichText::new("Open or save a PcbDesign JSON document.").weak().small());
+        ui.label(
+            RichText::new("Boards use .kicad_pcb natively; .json remains supported.")
+                .weak()
+                .small(),
+        );
         let input_path =
             (!self.path_input.trim().is_empty()).then(|| PathBuf::from(self.path_input.trim()));
 
@@ -1257,7 +1272,7 @@ impl StudioApp {
                 ui.label("Board path");
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut dialog.path)
-                        .hint_text("board.kaicad.json")
+                        .hint_text("board.kicad_pcb")
                         .desired_width(f32::INFINITY),
                 );
                 if !dialog.focused {
@@ -1266,7 +1281,7 @@ impl StudioApp {
                 }
                 ui.label(
                     RichText::new(
-                        "Use an absolute path or a path relative to the launch directory.",
+                        "Use an absolute path or a path relative to the launch directory. .kicad_pcb is native; .json is supported.",
                     )
                     .weak()
                     .small(),
@@ -1418,18 +1433,18 @@ mod tests {
     #[test]
     fn open_and_save_round_trip_updates_state() {
         let directory = temp_dir();
-        let path = directory.join("nested/board.kaicad.json");
+        let path = directory.join("nested/board.kicad_pcb");
         let original = demo_design();
         save_design(&original, &path).expect("fixture saves");
 
         let mut state = StudioState::new_demo();
         state.open_path(&path).expect("board opens");
         assert_eq!(state.path(), Some(path.as_path()));
-        assert_eq!(state.display_name(), "board.kaicad.json");
+        assert_eq!(state.display_name(), "board.kicad_pcb");
         assert_eq!(state.design().id, original.id);
         assert_eq!(state.revision(), 1);
 
-        let saved_path = directory.join("copy.json");
+        let saved_path = directory.join("copy.kicad_pcb");
         state.save_path(&saved_path).expect("board saves");
         assert_eq!(state.path(), Some(saved_path.as_path()));
         assert!(state.notice().text.starts_with("Saved"));
@@ -1453,7 +1468,7 @@ mod tests {
     #[test]
     fn resetting_to_the_demo_clears_the_path_and_invalidates_the_viewport() {
         let directory = temp_dir();
-        let path = directory.join("board.kaicad.json");
+        let path = directory.join("board.kicad_pcb");
         save_design(&demo_design(), &path).expect("fixture saves");
         let mut state = StudioState::new_demo();
         state.open_path(&path).expect("board opens");

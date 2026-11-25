@@ -69,7 +69,7 @@ pub fn parse_pcb(input: &str) -> Result<PcbImport, ParseError> {
     let outline = parse_outline(&root, edge_layer, &mut warnings)?;
 
     let mut design = PcbDesign {
-        id: Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes()),
+        id: source.uuid.unwrap_or_else(|| Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())),
         outline,
         layers,
         stackup: core::Stackup { layers: stackup },
@@ -804,6 +804,7 @@ fn pad_extent(pad: &PadPosition) -> (f64, f64) {
 
 struct Exporter {
     layers: BTreeMap<u16, String>,
+    layer_names: BTreeMap<u16, String>,
     net_codes: BTreeMap<Uuid, u32>,
     nets: Vec<(u32, Uuid, String)>,
 }
@@ -811,6 +812,7 @@ struct Exporter {
 impl Exporter {
     fn new(design: &PcbDesign) -> Result<Self, ParseError> {
         let mut layers = BTreeMap::new();
+        let mut layer_names = BTreeMap::new();
         for layer in &design.layers {
             let id = canonical_layer_id(&layer.name).ok_or_else(|| {
                 ParseError::Unsupported(format!(
@@ -823,6 +825,14 @@ impl Exporter {
                     return Err(ParseError::Unsupported(format!(
                         "layers '{}' and '{}' map to KiCad layer id {id}",
                         existing, layer.name
+                    )));
+                }
+            }
+            if let Some(existing) = layer_names.insert(layer.id, layer.name.clone()) {
+                if existing != layer.name {
+                    return Err(ParseError::Unsupported(format!(
+                        "duplicate internal layer id {} for '{}' and '{}'",
+                        layer.id, existing, layer.name
                     )));
                 }
             }
@@ -848,10 +858,33 @@ impl Exporter {
             layers.insert(0, "F.Cu".to_string());
             layers.insert(31, "B.Cu".to_string());
         }
+        // Hand-built boards use their own sequential layer ids while KiCad's
+        // layer table ids are fixed (F.Cu=0, B.Cu=31, In1.Cu=1, ...). Keep an
+        // internal-id-to-name map so track and via output uses the right copper.
+        for track in &design.tracks {
+            if let std::collections::btree_map::Entry::Vacant(entry) =
+                layer_names.entry(track.layer)
+            {
+                if let Some(name) = layers.get(&track.layer) {
+                    entry.insert(name.clone());
+                }
+            }
+        }
+        for via in &design.vias {
+            for layer in [via.layer_start, via.layer_end] {
+                if let std::collections::btree_map::Entry::Vacant(entry) = layer_names.entry(layer)
+                {
+                    if let Some(name) = layers.get(&layer) {
+                        entry.insert(name.clone());
+                    }
+                }
+            }
+        }
+
         let top_copper = design
             .copper_layer_ids()
             .first()
-            .and_then(|id| layers.get(id))
+            .and_then(|id| layer_names.get(id))
             .cloned()
             .unwrap_or_else(|| "F.Cu".to_string());
         if design.footprints.iter().any(|footprint| !footprint.pad_positions.is_empty()) {
@@ -859,7 +892,7 @@ impl Exporter {
         }
 
         for track in &design.tracks {
-            if !layers.contains_key(&track.layer) {
+            if !layer_names.contains_key(&track.layer) {
                 return Err(ParseError::Unsupported(format!(
                     "track references layer id {} which is not in the board layer table",
                     track.layer
@@ -882,7 +915,9 @@ impl Exporter {
             }
         }
         for via in &design.vias {
-            if !layers.contains_key(&via.layer_start) || !layers.contains_key(&via.layer_end) {
+            if !layer_names.contains_key(&via.layer_start)
+                || !layer_names.contains_key(&via.layer_end)
+            {
                 return Err(ParseError::Unsupported(format!(
                     "via references undeclared layer {}..{}",
                     via.layer_start, via.layer_end
@@ -995,7 +1030,7 @@ impl Exporter {
             nets.push((code, id, name));
         }
 
-        Ok(Self { layers, net_codes, nets })
+        Ok(Self { layers, layer_names, net_codes, nets })
     }
 
     fn render(&self, design: &PcbDesign) -> String {
@@ -1017,7 +1052,10 @@ impl Exporter {
         if !has_head(preserved, "paper") {
             output.push_str("  (paper \"A4\")\n");
         }
-        if let Some(uuid) = source.and_then(|source| source.uuid) {
+        let uuid = (!design.id.is_nil())
+            .then_some(design.id)
+            .or_else(|| source.and_then(|source| source.uuid));
+        if let Some(uuid) = uuid {
             if !has_head(preserved, "uuid") {
                 let _ = writeln!(output, "  (uuid {})", quote(&uuid.to_string()));
             }
@@ -1196,7 +1234,7 @@ impl Exporter {
 
     fn write_tracks(&self, output: &mut String, design: &PcbDesign) {
         for (index, track) in design.tracks.iter().enumerate() {
-            let Some(layer) = self.layers.get(&track.layer) else {
+            let Some(layer) = self.layer_names.get(&track.layer) else {
                 continue;
             };
             for (segment_index, pair) in track.path.windows(2).enumerate() {
@@ -1240,7 +1278,7 @@ impl Exporter {
     fn write_vias(&self, output: &mut String, design: &PcbDesign) {
         for (index, via) in design.vias.iter().enumerate() {
             let (Some(start), Some(end)) =
-                (self.layers.get(&via.layer_start), self.layers.get(&via.layer_end))
+                (self.layer_names.get(&via.layer_start), self.layer_names.get(&via.layer_end))
             else {
                 continue;
             };
@@ -1619,6 +1657,27 @@ mod tests {
 
         let error = write_pcb(&design).expect_err("unknown layer must fail");
         assert!(error.to_string().contains("non-standard name"));
+    }
+
+    #[test]
+    fn writer_maps_sequential_internal_layer_ids_to_kicad_names() {
+        let mut design = sample_design();
+        design.layers = vec![
+            core::PcbLayer::new(0, "F.Cu", core::LayerKind::Copper),
+            core::PcbLayer::new(1, "B.Cu", core::LayerKind::Copper),
+        ];
+        design.stackup = core::Stackup { layers: vec![0, 1] };
+        design.tracks[0].layer = 1;
+        design.vias[0].layer_end = 1;
+
+        let document = write_pcb(&design).expect("sequential layer ids write");
+        assert!(document.contains("(layer \"B.Cu\")"));
+        assert!(document.contains("(layers \"F.Cu\" \"B.Cu\")"));
+
+        let restored = parse_pcb(&document).expect("written board parses").design;
+        assert_eq!(restored.id, design.id);
+        assert_eq!(restored.tracks[0].layer, 31);
+        assert_eq!(restored.vias[0].layer_end, 31);
     }
 
     #[test]

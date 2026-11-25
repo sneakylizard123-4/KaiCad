@@ -11,6 +11,7 @@
 //! beyond the requested file.
 
 pub mod pcb;
+pub mod project;
 pub mod schematic;
 
 use std::fmt;
@@ -18,15 +19,15 @@ use std::path::Path;
 
 use core::symbol::{Pin, PinDirection, PinPosition, PinType, Symbol};
 use core::symbol_library::{SymbolLibrary, SymbolLibrarySource};
-use uuid::Uuid;
-
 pub use pcb::{
     FootprintImport, PcbImport, load_footprint, load_pcb, parse_footprint, parse_pcb,
     save_footprint, save_pcb, write_footprint, write_pcb,
 };
+pub use project::ProjectBundle;
 pub use schematic::{
     ProjectFile, SchematicImport, load_schematic, parse_schematic, save_schematic, write_schematic,
 };
+use uuid::Uuid;
 
 /// Errors raised while reading a KiCad symbol library.
 #[derive(Debug)]

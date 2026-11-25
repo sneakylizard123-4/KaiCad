@@ -1,8 +1,8 @@
 //! Compatibility corpus round trips for the file formats KaiCad supports.
 
 use kicad_parser::{
-    ProjectFile, parse_footprint, parse_pcb, parse_schematic, write_footprint, write_pcb,
-    write_schematic,
+    ProjectBundle, ProjectFile, parse_footprint, parse_pcb, parse_schematic, write_footprint,
+    write_pcb, write_schematic,
 };
 
 #[test]
@@ -82,7 +82,6 @@ fn footprint_corpus_round_trip_keeps_graphics_text_and_pad_shapes() {
     assert_eq!(restored.footprint.pad_positions.len(), 2);
     assert_eq!(restored.footprint.reference_designator, "REF**");
 }
-
 #[test]
 fn project_json_round_trip_keeps_unknown_settings() {
     let project = ProjectFile::parse(include_str!("fixtures/compat.kicad_pro"))
@@ -91,4 +90,72 @@ fn project_json_round_trip_keeps_unknown_settings() {
     let restored = ProjectFile::parse(&json).expect("project reimports");
     assert_eq!(restored.value, project.value);
     assert_eq!(restored.value["text_variables"]["KICAD8_3DMODEL_DIR"], "/usr/share/kicad/3dmodels");
+}
+
+#[test]
+fn project_bundle_loads_and_rewrites_a_child_sheet() {
+    let directory = tempfile::tempdir().expect("temp project directory");
+    let root = directory.path().join("bundle.kicad_sch");
+    let child = directory.path().join("child.kicad_sch");
+    let project = directory.path().join("bundle.kicad_pro");
+    std::fs::write(
+        &root,
+        r#"(kicad_sch (version 20231120) (generator eeschema)
+          (uuid "aaaaaaaa-0000-0000-0000-000000000001")
+          (paper "A4")
+          (lib_symbols)
+          (sheet (at 10 10) (size 20 10)
+            (property "Sheetname" "Child" (at 10 10 0))
+            (property "Sheetfile" "child.kicad_sch" (at 10 10 0))
+            (uuid "aaaaaaaa-0000-0000-0000-000000000002"))
+          (sheet_instances (path "/" (page "1")))
+        )"#,
+    )
+    .expect("write root schematic");
+    std::fs::write(
+        &child,
+        r#"(kicad_sch (version 20231120) (generator eeschema)
+          (uuid "bbbbbbbb-0000-0000-0000-000000000001")
+          (paper "A4")
+          (lib_symbols)
+          (wire (pts (xy 5 5) (xy 15 5)) (stroke (width 0) (type default))
+            (uuid "bbbbbbbb-0000-0000-0000-000000000002"))
+          (sheet_instances (path "/" (page "1")))
+        )"#,
+    )
+    .expect("write child schematic");
+    std::fs::write(&project, r#"{"meta":{"filename":"bundle.kicad_pro","version":3},"sheets":[]}"#)
+        .expect("write project file");
+
+    let bundle = ProjectBundle::load(&project).expect("bundle loads");
+    assert_eq!(bundle.sheet_file_count(), 2);
+    let child_sheet = bundle
+        .schematic
+        .sheets
+        .iter()
+        .find(|sheet| sheet.file_name == "child.kicad_sch")
+        .expect("child sheet was merged");
+    assert_eq!(child_sheet.wires.len(), 1);
+    assert!(child_sheet.source.is_some());
+
+    let output = directory.path().join("round-trip");
+    bundle.save(&output).expect("bundle saves");
+    assert!(output.join("bundle.kicad_pro").exists());
+    assert!(output.join("bundle.kicad_sch").exists());
+    assert!(output.join("child.kicad_sch").exists());
+
+    let restored =
+        ProjectBundle::load(output.join("bundle.kicad_pro")).expect("rewritten bundle reloads");
+    assert_eq!(restored.schematic.sheets.len(), 2);
+    assert_eq!(
+        restored
+            .schematic
+            .sheets
+            .iter()
+            .find(|sheet| sheet.file_name == "child.kicad_sch")
+            .expect("rewritten child sheet")
+            .wires
+            .len(),
+        1
+    );
 }

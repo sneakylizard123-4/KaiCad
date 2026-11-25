@@ -18,7 +18,7 @@ const PCB_USAGE: &str =
 const SCH_USAGE: &str =
     "kai-cad sch <import <input.kicad_sch> <output.json> | export <input.json> <output.kicad_sch>>";
 const FOOTPRINT_USAGE: &str = "kai-cad footprint <import <input.kicad_mod> <output.json> | export <input.json> <output.kicad_mod>>";
-const PROJECT_USAGE: &str = "kai-cad project <import <input.kicad_pro> <output.json> | export <input.json> <output.kicad_pro>>";
+const PROJECT_USAGE: &str = "kai-cad project <import <input.kicad_pro> <output.json> | export <input.json> <output.kicad_pro> | bundle <input.kicad_pro|input.kicad_sch> <output-dir>>";
 const DEFAULT_DB_PATH: &str = "kaicad.db";
 
 fn main() -> ExitCode {
@@ -107,6 +107,8 @@ fn print_footprint_help() {
 fn print_project_help() {
     println!("  project import <input.kicad_pro> <output.json>  preserve project JSON");
     println!("  project export <input.json> <output.kicad_pro>  write project JSON");
+    println!("  project bundle <input.kicad_pro|input.kicad_sch> <output-dir>");
+    println!("                                  recursively rewrite the schematic hierarchy");
 }
 
 fn run_sch(args: &[String]) -> ExitCode {
@@ -254,6 +256,25 @@ fn project_command(args: &[String]) -> Result<(), String> {
             print_project_help();
             Ok(())
         }
+        [command, input, output] if command == "bundle" => {
+            let bundle = kicad_parser::ProjectBundle::load(input)
+                .map_err(|error| format!("failed to load project bundle {input}: {error}"))?;
+            for warning in &bundle.warnings {
+                eprintln!("warning: {warning}");
+            }
+            bundle
+                .save(output)
+                .map_err(|error| format!("failed to write project bundle to {output}: {error}"))?;
+            println!(
+                "wrote project bundle to {} ({} schematic file(s), board={}, {} component(s), {} warning(s))",
+                output,
+                bundle.sheet_file_count(),
+                if bundle.board.is_some() { "yes" } else { "no" },
+                bundle.schematic.components.len(),
+                bundle.warnings.len()
+            );
+            Ok(())
+        }
         [command, input, output] if command == "import" => {
             let project = kicad_parser::ProjectFile::load(input)
                 .map_err(|error| format!("failed to import {input}: {error}"))?;
@@ -275,7 +296,7 @@ fn project_command(args: &[String]) -> Result<(), String> {
             println!("exported {} to {}", input, output);
             Ok(())
         }
-        [command, ..] if command == "import" || command == "export" => {
+        [command, ..] if command == "import" || command == "export" || command == "bundle" => {
             Err(format!("project {command} expects an input and an output path"))
         }
         [command, ..] => Err(format!("unknown project command: {command}")),

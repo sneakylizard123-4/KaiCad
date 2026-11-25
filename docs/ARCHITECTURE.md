@@ -17,9 +17,9 @@
 > 14 (plugin activation and capability queries), 15 (plugin CLI) and the
 > Phase 2 completion pass (rotated pads, blind/buried vias, push-and-shove,
 > interactive routing and the software renderer) are complete. A post-Phase-2
-> Studio shell adds native board viewing, inspection, DRC and click-to-route
-> track editing and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file
-> interchange. The workspace has 363 passing tests.
+> Studio shell adds native `.kicad_pcb` open/save, board viewing, inspection, DRC
+> and click-to-route track editing, plus `.kicad_sch`/`.kicad_mod`/`.kicad_pro`
+> file interchange. The workspace has 366 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
@@ -56,6 +56,7 @@ graph TD
     gui --> core
     gui --> pcb
     gui --> renderer
+    gui --> kicad_parser
 
     kicad_parser --> core
     kicad_parser --> pcb
@@ -74,9 +75,9 @@ depend on any other workspace crate. There are no cross-engine edges between
 `schematic` and `pcb`: both depend only on `core`. `renderer` depends on `pcb`
 to rasterize a `PcbDesign`; it also keeps `ash` and `serde` for the Vulkan
 configuration skeleton and uses `core` only in dev-dependencies. `gui` is a
-leaf application crate that depends on `core`, `pcb` and `renderer`, plus the
-external `eframe`/`egui` window stack. It is not part of the data model or the
-CLI binary.
+leaf application crate that depends on `core`, `pcb`, `renderer` and
+`kicad-parser`, plus the external `eframe`/`egui` window stack. It is not part
+of the data model or the CLI binary.
 
 ## Application layering
 
@@ -418,8 +419,8 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
   pads keep their source shape, but DRC/routing still use rectangles.
 - Schematic conversion retains `lib_symbols`, property effects, pin blocks,
   instance paths, buses, text, images and unknown nodes. Child sheet symbols
-  record their file name and placement; recursive project bundle loading is not
-  implemented.
+  record their file name and placement; `ProjectBundle` recursively loads and
+  rewrites the hierarchy and sibling board.
 - `ParseError::{Io, Syntax, Unsupported}` implements `Display` and
   `std::error::Error`; malformed input never panics.
 - The parser implements a minimal deterministic S-expression tokenizer/parser
@@ -459,15 +460,16 @@ plugin code is loaded or executed.
 
 ### `gui` — KaiCad Studio desktop shell
 
-Dependencies: `core`, `pcb`, `renderer`, `serde_json`, `uuid`, and the external
-`eframe`/`egui` window stack. The crate has a library (`kaicad_gui`) and the
-`kai-cad-gui` binary. Modules:
+Dependencies: `core`, `pcb`, `renderer`, `kicad-parser`, `serde_json`, `uuid`,
+and the external `eframe`/`egui` window stack. The crate has a library
+(`kaicad_gui`) and the `kai-cad-gui` binary. Modules:
 
 - `app` — `StudioState` is the headless application model. It owns the current
   `PcbDesign`, optional path, `ViewMode`, `DrcReport`, `TrackEditor`, active
   tool, dirty flag, status notice and a viewport revision. It opens and saves
-  `PcbDesign` JSON, runs DRC, changes the view and forwards 2D clicks to the
-  editor; failed operations leave the current board untouched. `StudioApp` is
+  `.kicad_pcb` natively through `kicad-parser` (JSON remains available), runs
+  DRC, changes the view and forwards 2D clicks to the editor; failed operations
+  leave the current board untouched. `StudioApp` is
   the `eframe::App` adapter. It draws a menu bar, a left document/routing/DRC
   inspector, a right layer-stack and footprint panel, a bottom status bar, and
   a central image. The image is a texture populated from `renderer::Renderer`
@@ -482,10 +484,12 @@ Dependencies: `core`, `pcb`, `renderer`, `serde_json`, `uuid`, and the external
 - `demo` — deterministic two-layer demo board with five footprints, front and
   back tracks, and two through vias. It is DRC-clean under the default rules
   and renders in both views.
-- `document` — deterministic pretty JSON (`design_to_json`) with one trailing
-  newline, `design_from_json`, `load_design` and `save_design`. Saving creates
-  parent directories; any I/O or JSON failure is returned to the UI and shown
-  in the status bar.
+- `document` — format detection by extension: `.kicad_pcb` is loaded and saved
+  through `kicad-parser`, while `.json` is an explicit interchange format.
+  `LoadedBoard` carries the design and preservation warnings; unsupported
+  extensions are rejected before I/O. Saving creates parent directories, and
+  every I/O, JSON or KiCad failure is returned to the UI and shown in the status
+  bar.
 
 Input and shortcuts: `Ctrl+O` opens the path dialog, `Ctrl+S` saves to the
 current path or opens Save As, `Ctrl+Z`/`Ctrl+Y` undo and redo track edits,
@@ -688,9 +692,9 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 - `kicad-parser` imports `.kicad_sym` symbol libraries and provides
   `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange;
   `schematic` exports a KiCad netlist. Unknown constructs are preserved, but
-  zones/arcs/graphics/DRC rules are not semantically modeled, recursive project
-  bundles and library tables are absent, and no KiCad netlist importer exists
-  yet.
+  zones/arcs/graphics/DRC rules are not semantically modeled. `ProjectBundle`
+  handles recursive project bundles, library tables are absent, and no KiCad
+  netlist importer exists yet.
 
 ## Current milestone and next steps
 
@@ -715,7 +719,7 @@ post-Phase-2 Studio shell (`gui`) for board viewing, inspection, DRC and
 undoable track routing, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 file interchange with opaque preservation and a four-file corpus, CI (including
 a Markdown link check and coverage job), and documentation. The workspace has
-**363 passing tests**.
+**366 passing tests**.
 
 **Next (Week 16):** foundation release hardening. The planned work is:
 

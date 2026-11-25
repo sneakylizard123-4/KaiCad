@@ -19,5 +19,7 @@ pub use app::{
     MAX_VIEWPORT_SIDE, Notice, NoticeKind, StudioApp, StudioState, StudioTool, viewport_size,
 };
 pub use demo::demo_design;
-pub use document::{DocumentError, design_from_json, design_to_json, load_design, save_design};
+pub use document::{
+    DocumentError, LoadedBoard, design_from_json, design_to_json, load_design, save_design,
+};
 pub use editor::{MAX_EDIT_HISTORY, PAD_SNAP_RADIUS, RouteClick, RouteEditError, TrackEditor};

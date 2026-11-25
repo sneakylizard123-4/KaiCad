@@ -80,16 +80,17 @@ history, bounded multi-step undo/redo history, and a validated plugin manifest
 registry with SQLite persistence, activation state and CLI management are in
 place. A deterministic headless software renderer produces framed 2D top views
 and depth-tested 3D board views; the Vulkan GPU backend remains deferred. A
-post-Phase-2 eframe-based KaiCad Studio shell opens and saves board documents,
-presents the software-rendered 2D/3D viewport, runs DRC, inspects the stackup
+post-Phase-2 eframe-based KaiCad Studio shell opens and saves `.kicad_pcb` board
+documents natively (JSON is optional), presents the software-rendered 2D/3D
+viewport, runs DRC, inspects the stackup
 and footprints, and adds undoable click-to-route track editing with DRC
 preflight. `kicad-parser` also provides `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
 `.kicad_pro` file interchange through `kai-cad pcb|sch|footprint|project`,
 retaining unmodelled constructs instead of silently dropping them. Zones, arcs,
-graphics and DRC setup are preserved but not semantically editable; recursive
-project/sheet loading and library tables remain. Footprint placement, schematic
+graphics and DRC setup are preserved but not semantically editable; library
+tables remain. Footprint placement, schematic
 capture and full KiCad project compatibility are deferred. PCB designs persist with their tracks, vias and DRC rules in SQLite.
-The workspace has **363 passing tests**, clean `cargo clippy --workspace
+The workspace has **366 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence,

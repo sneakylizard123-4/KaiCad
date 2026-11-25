@@ -12,7 +12,7 @@ This brief is release hardening, not the full-KiCad replacement program. The
 current Studio shell is no longer read-only (it has track routing), and the CLI
 can convert supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro`
 files, but footprint placement, schematic capture, manufacturing outputs,
-recursive project bundles and semantic KiCad compatibility remain future work. The long-range gap analysis and
+library tables and semantic KiCad compatibility remain future work. The long-range gap analysis and
 delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md). Read this
 document fully before writing code.
 
@@ -21,7 +21,7 @@ document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 363 passing, 0 failing
+- **Tests:** 366 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -56,9 +56,10 @@ document fully before writing code.
   PPM output. It requires no Vulkan loader. The Vulkan GPU backend remains
   deferred.
 - A post-Phase-2 `gui` crate adds KaiCad Studio: a native eframe window with
-  board JSON open/save, a software-rendered 2D/3D viewport, layer/footprint
-  inspection, DRC and undoable click-to-route track editing with DRC preflight.
-  Footprint placement and schematic capture are not implemented.
+  native `.kicad_pcb` open/save (JSON optional), a software-rendered 2D/3D
+  viewport, layer/footprint inspection, DRC and undoable click-to-route track
+  editing with DRC preflight. Footprint placement and schematic capture are not
+  implemented.
 - `kicad-parser` imports/exports the supported `.kicad_pcb` subset, preserving
   layers, named nets, pad numbers, Edge.Cuts outlines, footprints, pads, tracks
   and vias, and warning about skipped or approximated constructs. The CLI
@@ -116,9 +117,10 @@ Add `docs/USER_GUIDE.md` covering:
 - Current limitations: the GUI supports track routing but not footprint/pad
   editing, pan/zoom or schematic capture; no Vulkan GPU backend (a headless
   software renderer is available); `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/
-  `.kicad_pro` file interchange with unknown-node preservation, but no semantic
-  zone/DRC modeling or recursive project bundle; no manufacturing outputs; no
-  dynamic plugin loading and no network collaboration.
+  `.kicad_pro` file interchange with unknown-node preservation and recursive
+  project bundles, but no semantic zone/DRC modeling or library-table discovery;
+  no manufacturing outputs; no dynamic plugin loading and no network
+  collaboration.
 - A short troubleshooting table for invalid manifests, duplicate ids, unsafe
   entry points and corrupt registry rows.
 
@@ -186,8 +188,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 363 tests still pass.
-- [ ] Test count rises to at least 364, all passing.
+- [ ] Existing 366 tests still pass.
+- [ ] Test count rises to at least 367, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).
@@ -242,9 +244,8 @@ cargo build --workspace --release
 - Vulkan renderer implementation or new GUI editing features; only fixes to
   the existing Studio inspection/DRC/track-routing shell are in scope.
 - New schematic, PCB or routing features.
-- Semantic zone/arc/graphics/DRC modeling, recursive sheet bundles or
-  `sym-lib-table`/`fp-lib-table` handling; the existing file-level conversion
-  must not regress.
+- Semantic zone/arc/graphics/DRC modeling or `sym-lib-table`/`fp-lib-table`
+  handling; the existing file-level conversion must not regress.
 - Network collaboration, telemetry or cloud services.
 - Schema changes; migrations 0001–0006 remain immutable.
 - Rewriting or reformatting unrelated modules.

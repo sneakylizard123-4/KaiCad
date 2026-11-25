@@ -12,7 +12,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 >
 > **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
 > Studio editing increment and the KiCad file-interchange layer are complete
-> (363 tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
+> (366 tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
 > described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md); full KiCad parity is tracked
 > separately in [`KICAD_PARITY.md`](KICAD_PARITY.md).
 
@@ -122,12 +122,13 @@ Run these from the workspace root (`/path/to/KaiCad`).
 | Build API documentation | `cargo doc --workspace --no-deps` |
 | Run the application (banner + self-check) | `cargo run -p kai-cad` |
 | Run the desktop GUI with the demo board | `cargo run -p gui` |
-| Open a board in the GUI | `cargo run -p gui -- path/to/board.kaicad.json` |
+| Open a board in the GUI | `cargo run -p gui -- path/to/board.kicad_pcb` |
 | Import a supported KiCad PCB | `cargo run -p kai-cad -- pcb import board.kicad_pcb board.json` |
 | Export a board as KiCad PCB | `cargo run -p kai-cad -- pcb export board.json board.kicad_pcb` |
 | Import/export a KiCad schematic | `cargo run -p kai-cad -- sch import main.kicad_sch main.json` |
 | Import/export a KiCad footprint | `cargo run -p kai-cad -- footprint import part.kicad_mod part.json` |
 | Preserve a KiCad project file | `cargo run -p kai-cad -- project import project.kicad_pro project.json` |
+| Round-trip a schematic hierarchy | `cargo run -p kai-cad -- project bundle project.kicad_pro output-dir` |
 | Print CLI usage | `cargo run -p kai-cad -- --help` |
 | Print the version | `cargo run -p kai-cad -- --version` |
 | Build a release binary | `cargo build --workspace --release` |
@@ -141,15 +142,15 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **363 tests**, all passing:
+`cargo test --workspace` currently runs **366 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
-| `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 19 |
-| `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, corpus tests) | 31 |
+| `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 20 |
+| `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, `project.rs`, corpus tests) | 33 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 84 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
 | `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 16 |
@@ -212,8 +213,8 @@ cargo run -p kai-cad -- plugins enable com.example.alpha --db my-project.db
 # Built-in demo board
 cargo run -p gui
 
-# Open a board at startup
-cargo run -p gui -- path/to/board.kaicad.json
+# Open a KiCad board at startup
+cargo run -p gui -- path/to/board.kicad_pcb
 ```
 
 The `kai-cad-gui` binary opens **KaiCad Studio**, an eframe/egui window. The
@@ -221,8 +222,10 @@ left panel owns the document path, view selector, routing controls, board
 summary, design rules and DRC. The right panel lists the copper layer stack and
 placed footprints. The centre panel is a live texture rendered by the
 deterministic software rasterizer. Boards open from the Document path field,
-the File menu, a dropped file, or a command-line path; Save writes pretty
-`PcbDesign` JSON.
+the File menu, a dropped file, or a command-line path. `.kicad_pcb` is the
+native format: Save writes it through `kicad-parser`, preserving constructs the
+editor does not model. `.json` is accepted when interoperability or debugging
+needs an explicit KaiCad board document.
 
 In the 2D view, select **Route**, a copper layer, a net and a width, then click
 a start point and a destination. A click within 2 mm of a pad snaps to its
@@ -230,7 +233,7 @@ centre and adopts its net. The grid router adds copper immediately, runs DRC
 before applying it, and stores a board snapshot for undo. A route that adds a
 new DRC finding is rejected without changing the board. This is a first editor
 increment: there is no route preview, footprint placement, pad/via editing,
-schematic capture or KiCad project-file import/export yet.
+schematic capture or project-wide file navigation yet.
 
 | Input | Action |
 |-------|--------|
@@ -245,9 +248,8 @@ schematic capture or KiCad project-file import/export yet.
 
 Current limits: footprint, pad and via editing are not implemented; the
 2D/3D view auto-fits the board (no manual pan/zoom); open/save paths are typed
-rather than chosen from a native file picker; Studio cannot open `.kicad_pcb`
-directly (use `kai-cad pcb import` first); and schematic capture is not wired
-up. The viewport is capped at 2048 pixels on its longest side. The window uses
+rather than chosen from a native file picker; `.kicad_pcb` is the native Studio
+format, while `.json` is optional; and schematic capture is not wired up. The viewport is capped at 2048 pixels on its longest side. The window uses
 OpenGL through eframe; board pixels still come from the CPU renderer, and no
 Vulkan loader is required.
 
@@ -273,6 +275,7 @@ cargo run -p kicad-parser --example parse_library
 # Convert a supported KiCad PCB through the CLI
 cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
 cargo run -p kai-cad -- pcb export board.json board.kicad_pcb
+cargo run -p kai-cad -- project bundle project.kicad_pro output-dir
 ```
 
 List the examples of a package with:
@@ -403,7 +406,7 @@ and Windows/macOS builds self-contained.
 `kicad-parser` reads `.kicad_sym` symbol libraries, `.kicad_pcb` boards,
 `.kicad_sch` schematics, `.kicad_mod` footprints and `.kicad_pro` project JSON.
 It preserves many constructs it does not model, but it is not a full-fidelity
-converter and does not recursively load a sheet hierarchy. Convert files through:
+converter. `ProjectBundle` recursively follows child sheet files. Convert files through:
 
 ```bash
 cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
