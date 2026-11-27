@@ -21,7 +21,7 @@
 > and click-to-route track editing, plus `.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 > file interchange, semantic zones/arcs/graphics/keepouts, library tables and
 > shape-aware DRC. The P2 KiCad interoperability milestone is complete. The
-> workspace has 384 passing tests.
+> workspace has 389 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
@@ -293,6 +293,9 @@ modules: `window`, `framebuffer`, `device`, `swapchain`, `render_pass`,
 - `Color` is RGBA8. `Framebuffer` owns tightly packed RGBA rows, supports
   `pixel`/`clear` and writes binary PPM with `save_ppm`.
 - `ViewMode::{TwoD, ThreeD}` selects the projection.
+- `BoardView { center, zoom }` and `BoardTransform::for_view` add explicit 2D
+  zoom and pan; `Renderer::render_pcb_view` renders that view, while
+  `render_pcb` keeps the automatically fitted framing.
 - `Renderer::new` allocates the framebuffer and depth buffer and rejects zero
   or oversized images. `render` clears the background; `render_pcb` and
   `render_pcb_with_camera` rasterize a `PcbDesign` synchronously.
@@ -306,7 +309,9 @@ a depth buffer with flat shading. Output is deterministic for a given design,
 camera and size. The renderer itself uses no window, GPU or Vulkan loader; the
 Studio GUI presents the resulting texture in an eframe window.
 `BoardTransform::for_board` exposes the same 2D fit as a board↔pixel mapping,
-so viewport clicks and the rasterizer use identical coordinates.
+so viewport clicks and the rasterizer use identical coordinates. `BoardView`
+stores the zoom and optional board centre; `BoardTransform::for_view` applies
+them, keeping hit-testing and rasterization aligned at every zoom level.
 
 The `ash`-based `device`, `swapchain`, `render_pass` and `pipeline` modules
 remain configuration scaffolding for a future Vulkan backend; they are not
@@ -479,8 +484,10 @@ and the external `eframe`/`egui` window stack. The crate has a library
 (`kaicad_gui`) and the `kai-cad-gui` binary. Modules:
 
 - `app` — `StudioState` is the headless application model. It owns the current
-  `PcbDesign`, optional path, `ViewMode`, `DrcReport`, `TrackEditor`, active
-  tool, dirty flag, status notice and a viewport revision. It opens and saves
+  `PcbDesign`, optional path, `ViewMode`, 2D `BoardView`, `DrcReport`,
+  `TrackEditor`, active tool, dirty flag, status notice and a viewport revision.
+  Zoom is clamped, panning is stored in board space, and opening or resetting a
+  board restores the fitted view. It opens and saves
   `.kicad_pcb` natively through `kicad-parser` (JSON remains available), runs
   DRC, changes the view and forwards 2D clicks to the editor; failed operations
   leave the current board untouched. `StudioApp` is
@@ -508,9 +515,11 @@ and the external `eframe`/`egui` window stack. The crate has a library
 Input and shortcuts: `Ctrl+O` opens the path dialog, `Ctrl+S` saves to the
 current path or opens Save As, `Ctrl+Z`/`Ctrl+Y` undo and redo track edits,
 `R` toggles Inspect/Route, `F5` runs DRC, `Esc` cancels a pending route, and a
-dropped file opens as a board. The shell auto-fits the 2D/3D view, offers a
-typed path rather than a native file picker, and has no footprint/pad/via
-editing or schematic capture. The window uses eframe/glow for presentation but
+dropped file opens as a board. In 2D, the wheel zooms at the pointer,
+middle-drag pans (primary-drag also pans in Inspect), `+`/`-` zoom and `0`
+fits the board; the 3D view auto-fits. The shell offers a typed path rather
+than a native file picker and has no footprint/pad/via editing or schematic
+capture. The window uses eframe/glow for presentation but
 the board image itself is still the deterministic CPU rasterizer; no Vulkan
 code is involved.
 
@@ -734,12 +743,12 @@ bounded multi-step undo/redo history with branch clearing, validated plugin
 manifests with deterministic registry ordering, local discovery, SQLite
 persistence, activation state, capability filters and CLI management, a
 deterministic software 2D/3D renderer, the `kai-cad` self-check binary, a
-post-Phase-2 Studio shell (`gui`) for board viewing, inspection, DRC and
-undoable track routing, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
+post-Phase-2 Studio shell (`gui`) for board viewing, 2D zoom/pan, inspection,
+DRC and undoable track routing, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 file interchange with semantic zones/arcs/graphics, library tables and opaque
 preservation, a five-file corpus and a 19-project template validation pass, CI
 (including a Markdown link check and coverage job), and documentation. The
-workspace has **384 passing tests**.
+workspace has **389 passing tests**.
 
 **Next (Week 16):** foundation release hardening. The planned work is:
 

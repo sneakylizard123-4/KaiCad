@@ -82,7 +82,7 @@ place. A deterministic headless software renderer produces framed 2D top views
 and depth-tested 3D board views; the Vulkan GPU backend remains deferred. A
 post-Phase-2 eframe-based KaiCad Studio shell opens and saves `.kicad_pcb` board
 documents natively (JSON is optional), presents the software-rendered 2D/3D
-viewport, runs DRC, inspects the stackup
+viewport with 2D zoom and pan, runs DRC, inspects the stackup
 and footprints, and adds undoable click-to-route track editing with DRC
 preflight. `kicad-parser` also provides `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
 `.kicad_pro` file interchange through `kai-cad pcb|sch|footprint|project`,
@@ -93,7 +93,7 @@ standard pad shapes and project DRC rules are modeled semantically, and
 placement, schematic capture, interactive zone editing and full KiCad project
 compatibility are deferred. PCB designs persist with their tracks, vias and DRC
 rules in SQLite.
-The workspace has **384 passing tests**, clean `cargo clippy --workspace
+The workspace has **389 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence,
@@ -186,7 +186,7 @@ capability gaps and delivery sequence are in
 - [ ] Full schematic design (nets, symbols, rules) works
 - [x] Multi-layer PCB design with routing is functional
 - [x] Software renderer produces deterministic 2D/3D board visualizations
-- [x] Native GUI shell opens/saves boards, renders 2D/3D views and reports DRC
+- [x] Native GUI shell opens/saves boards, renders navigable 2D/3D views and reports DRC
 - [x] GUI supports basic interactive track routing with undo/redo and DRC preflight
 - [ ] GUI supports footprint placement and complete PCB editing
 - [ ] GUI supports schematic editing and schematic/PCB cross-probing

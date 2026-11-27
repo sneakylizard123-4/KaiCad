@@ -143,7 +143,7 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 384 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 389 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
 ### Task 1.11: Integration Test Harness — ✅ complete
@@ -235,9 +235,11 @@ interchange increment added 5 schematic tests, 1 standalone-footprint test and
 and layer-id mapping added 2 tests, and KiCad 10 name-only net references added
 1, for **367 passing tests**. The P2 interoperability increment added 17 tests
 for semantic zones/arcs/graphics/keepouts, shape-aware DRC, library tables and
-project DRC rules, for **384 passing tests**. Studio provides board viewing,
-native open/save, DRC and undoable track routing, but not yet footprint
-placement or schematic capture. The CLI imports/exports the documented
+project DRC rules, for **384 passing tests**. A GUI viewport-navigation
+increment added wheel zoom, drag panning and fit-to-board, with 3 renderer and
+2 GUI tests, for **389 passing tests**. Studio provides board viewing, 2D
+zoom/pan, native open/save, DRC and undoable track routing, but not yet
+footprint placement or schematic capture. The CLI imports/exports the documented
 `.kicad_pcb` subset with semantic board objects, shape-aware pads, project DRC
 rules and library tables; `.kicad_sch`, `.kicad_mod` and `.kicad_pro`
 file-level conversion is available. `project bundle` follows the hierarchy and

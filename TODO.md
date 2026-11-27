@@ -157,6 +157,12 @@ see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 - Studio Route tool: click a pad or free point, then a destination; start marker and undo/redo controls
 - 7 new GUI tests, 2 renderer tests and 2 PCB tests; total tests: 342
 
+### GUI viewport navigation
+- `renderer::BoardView` adds explicit 2D zoom and centre to `BoardTransform::for_view`; `Renderer::render_pcb_view` renders it
+- Studio wheel zoom follows the pointer, middle-drag pans, primary-drag pans in Inspect, and Fit restores the fitted view
+- `+`/`-`/`0` shortcuts and status-bar zoom percentage; opening a board or reloading the demo resets the view
+- 3 new renderer tests and 2 new GUI tests; total tests: 389
+
 ### KiCad PCB compatibility subset
 - `kicad-parser` now reads and writes `.kicad_pcb` boards for the subset represented by `PcbDesign`
 - Preserves layers, named nets (`PcbNet`), Edge.Cuts outlines, footprints/pads (including pad numbers and rotated placement), tracks and vias
@@ -193,7 +199,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥385 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥390 tests, clippy/fmt/doc/link/release clean
 
 ## 🚧 Full KiCad parity — post-beta program
 
@@ -232,8 +238,9 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - ✅ Native `.kicad_pcb` open/save (JSON optional), demo board, 2D/3D software viewport, DRC and stackup/footprint inspection
 - ✅ Keyboard shortcuts, drag-and-drop opening and headless state tests
 - ✅ Click-to-route track editing with DRC preflight and undo/redo
+- ✅ 2D wheel zoom, drag panning and fit-to-board (`+`/`-`/`0`)
 - ⬜ Footprint/pad placement and full transactional board editing
-- ⬜ Pan/zoom, native file picker, selection/measurement tools and continuous DRC
+- ⬜ Native file picker, selection/measurement tools and continuous DRC
 - ⬜ Schematic capture and cross-probing
 - [x] Decide GUI scope and slot it into the roadmap (editable PCB shell after Phase 2; full parity later)
 

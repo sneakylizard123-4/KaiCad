@@ -12,7 +12,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 >
 > **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
 > Studio editing increment and the P2 KiCad interoperability milestone are
-> complete (384 tests, clippy/fmt/doc/release all clean). Week 16 release
+> complete (389 tests, clippy/fmt/doc/release all clean). Week 16 release
 > hardening is described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md);
 > full KiCad parity is tracked separately in
 > [`KICAD_PARITY.md`](KICAD_PARITY.md).
@@ -143,18 +143,18 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **384 tests**, all passing:
+`cargo test --workspace` currently runs **389 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
-| `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 20 |
+| `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 22 |
 | `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, `project.rs`, `library_table.rs`, corpus tests) | 43 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs`, `board.rs` and modules) | 92 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
-| `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 16 |
+| `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 19 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 38 |
 | `kai-cad/tests/smoke.rs` (cross-crate integration) | 22 |
@@ -219,10 +219,12 @@ cargo run -p gui -- path/to/board.kicad_pcb
 ```
 
 The `kai-cad-gui` binary opens **KaiCad Studio**, an eframe/egui window. The
-left panel owns the document path, view selector, routing controls, board
-summary, design rules and DRC. The right panel lists the copper layer stack and
-placed footprints. The centre panel is a live texture rendered by the
-deterministic software rasterizer. Boards open from the Document path field,
+left panel owns the document path, view selector, 2D zoom controls, routing
+controls, board summary, design rules and DRC. The right panel lists the copper
+layer stack and placed footprints. The centre panel is a live texture rendered
+by the deterministic software rasterizer. The 2D view starts fitted; the wheel
+zooms at the pointer, middle-drag pans, primary-drag pans in Inspect, and Fit
+(or `0`) restores the fitted view. Boards open from the Document path field,
 the File menu, a dropped file, or a command-line path. `.kicad_pcb` is the
 native format: Save writes it through `kicad-parser`, preserving constructs the
 editor does not model. `.json` is accepted when interoperability or debugging
@@ -240,6 +242,10 @@ schematic capture or project-wide file navigation yet.
 |-------|--------|
 | `Ctrl+O` | open the board-path dialog |
 | `Ctrl+S` | save to the current path, or open Save As |
+| Mouse wheel | zoom the 2D view at the pointer |
+| Middle-drag, or primary-drag in Inspect | pan the 2D view |
+| `+` / `-` | zoom in / out |
+| `0` | fit the board |
 | `Ctrl+Z` | undo the last routed track edit |
 | `Ctrl+Y` | redo the last track edit |
 | `F5` | run DRC |
@@ -247,12 +253,13 @@ schematic capture or project-wide file navigation yet.
 | `Esc` | cancel a pending route or close the file dialog |
 | Drop a file on the window | open that board |
 
-Current limits: footprint, pad and via editing are not implemented; the
-2D/3D view auto-fits the board (no manual pan/zoom); open/save paths are typed
-rather than chosen from a native file picker; `.kicad_pcb` is the native Studio
-format, while `.json` is optional; and schematic capture is not wired up. The viewport is capped at 2048 pixels on its longest side. The window uses
-OpenGL through eframe; board pixels still come from the CPU renderer, and no
-Vulkan loader is required.
+Current limits: footprint, pad and via editing are not implemented; the 3D
+view auto-fits the board while the 2D view supports zoom and pan; open/save
+paths are typed rather than chosen from a native file picker; `.kicad_pcb` is
+the native Studio format, while `.json` is optional; and schematic capture is
+not wired up. The viewport is capped at 2048 pixels on its longest side. The
+window uses OpenGL through eframe; board pixels still come from the CPU
+renderer, and no Vulkan loader is required.
 
 ## Examples
 

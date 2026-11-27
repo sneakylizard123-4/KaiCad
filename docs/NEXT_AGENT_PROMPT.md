@@ -22,7 +22,7 @@ document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 384 passing, 0 failing
+- **Tests:** 389 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -58,9 +58,9 @@ document fully before writing code.
   deferred.
 - A post-Phase-2 `gui` crate adds KaiCad Studio: a native eframe window with
   native `.kicad_pcb` open/save (JSON optional), a software-rendered 2D/3D
-  viewport, layer/footprint inspection, DRC and undoable click-to-route track
-  editing with DRC preflight. Footprint placement and schematic capture are not
-  implemented.
+  viewport with 2D wheel zoom, drag panning and fit-to-board, layer/footprint
+  inspection, DRC and undoable click-to-route track editing with DRC preflight.
+  Footprint placement and schematic capture are not implemented.
 - `kicad-parser` imports/exports the documented `.kicad_pcb` subset with
   semantic zones/fills/keepouts, copper arcs, board graphics and standard pad
   shapes, plus `.kicad_sch`, `.kicad_mod` and `.kicad_pro` interchange.
@@ -131,8 +131,8 @@ Add `docs/USER_GUIDE.md` covering:
 - Discovery, registration, listing, showing, enabling and disabling plugins.
 - The default `kaicad.db` location and how `--db` changes it.
 - What "enabled" means: registry state only; no code is executed.
-- Current limitations: the GUI supports track routing but not footprint/pad
-  editing, pan/zoom or schematic capture; no Vulkan GPU backend (a headless
+- Current limitations: the GUI supports 2D zoom/pan and track routing but not
+  footprint/pad editing or schematic capture; no Vulkan GPU backend (a headless
   software renderer is available); `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/
   `.kicad_pro` file interchange with unknown-node preservation, recursive
   project bundles, semantic zones/arcs/graphics/keepouts, project DRC rules and
@@ -180,7 +180,7 @@ Add `docs/RELEASE.md` with a beta checklist that records, at minimum:
 The checklist must distinguish verified items from deferred ones; do not mark
 future work complete.
 
-### 3.5 Tests (target: 12–16 new tests, at least 385 total)
+### 3.5 Tests (target: 12–16 new tests, at least 390 total)
 
 Cover at least:
 
@@ -205,8 +205,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 384 tests still pass.
-- [ ] Test count rises to at least 385, all passing.
+- [ ] Existing 389 tests still pass.
+- [ ] Test count rises to at least 390, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).
@@ -258,8 +258,8 @@ cargo build --workspace --release
 ## 6. Out of scope for this pass
 
 - Dynamic plugin loading, execution, sandboxing, signing or installation UI.
-- Vulkan renderer implementation or new GUI editing features; only fixes to
-  the existing Studio inspection/DRC/track-routing shell are in scope.
+-   Vulkan renderer implementation or new GUI editing features; only fixes to the
+  existing Studio inspection/DRC/track-routing/navigation shell are in scope.
 - New schematic, PCB or routing features.
 - Further semantic zone/arc/graphics/DRC modeling, custom-pad primitives or
   structural file-format rewrites; the completed P2 conversion must not

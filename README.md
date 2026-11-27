@@ -15,7 +15,7 @@ documentation, examples and a Criterion benchmark. It is **not yet a complete
 EDA tool**.
 
 ## Features
-- Native Studio GUI for board viewing, DRC and undoable track routing (placement and schematic editing planned)
+- Native Studio GUI for board viewing, 2D zoom/pan, DRC and undoable track routing (placement and schematic editing planned)
 - Deterministic software 2D/3D rendering (Vulkan GPU backend planned)
 - KiCad `.kicad_sym` symbol import and `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange through `kai-cad`, including semantic board objects, library tables and recursive project bundles (integrated schematic/board project document not implemented)
 - Full schematic and PCB design capabilities target (not complete)
@@ -51,7 +51,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (384 tests across the workspace)
+# Run tests (389 tests across the workspace)
 cargo test --workspace
 
 # Run the desktop GUI with the built-in demo board
@@ -207,7 +207,7 @@ KaiCad/
 
 Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
 increment and the P2 KiCad interoperability milestone are complete and verified:
-**384 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+**389 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
 routing, interactive route previews, and a headless software 2D/3D renderer
@@ -220,16 +220,18 @@ The post-Phase-2 `gui` crate adds **KaiCad Studio**, a native eframe/egui
 shell. It opens `.kicad_pcb` boards directly, renders them in a 2D or 3D
 viewport through the deterministic CPU rasterizer, shows the layer stack and
 placed footprints, runs DRC, and saves back to `.kicad_pcb`; `.json` remains an
-explicit interchange format. The 2D view has an undoable track-routing tool:
-click a pad or free point, click a destination, and DRC-checked copper is added.
+explicit interchange format. The 2D view supports wheel zoom anchored at the
+pointer, drag panning and a Fit reset. It also has an undoable track-routing
+tool: click a pad or free point, click a destination, and DRC-checked copper is
+added.
 The CLI can also convert supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
 `.kicad_pro` files with explicit warnings for constructs retained opaquely.
 Zones, keepouts, copper arcs, graphics, standard pad shapes and project DRC
 rules now have semantic board models; `project bundle` recursively rewrites the
 hierarchy, library tables and `${KIPRJMOD}` libraries. Custom pad primitives,
 dimensions and some setup fields remain source-preserved.
-Footprint/pad placement, pan/zoom, native file pickers and schematic capture
-remain unimplemented.
+Footprint/pad placement, native file pickers and schematic capture remain
+unimplemented.
 
 The Vulkan GPU backend remains deferred. Board rendering is deterministic CPU
 rasterization; eframe presents the framebuffer in a native window. Week 16
@@ -275,11 +277,12 @@ What each crate provides today:
   not implemented.
 - 🚧 **gui (KaiCad Studio)** — native eframe shell with headless-testable
   `StudioState`, native `.kicad_pcb` open/save with optional JSON, a
-  software-rendered 2D/3D viewport (capped at 2048 px per side), layer-stack
-  and footprint inspection, DRC counts and violation details, status feedback,
-  keyboard shortcuts and drag-and-drop board opening. The 2D viewport has an undoable click-to-route track
-  editor with DRC preflight. Footprint/pad editing and schematic capture remain
-  deferred.
+  software-rendered 2D/3D viewport (capped at 2048 px per side), 2D wheel
+  zoom, drag panning and fit-to-board, layer-stack and footprint inspection,
+  DRC counts and violation details, status feedback, keyboard shortcuts and
+  drag-and-drop board opening. The 2D viewport has an undoable click-to-route
+  track editor with DRC preflight. Footprint/pad editing and schematic capture
+  remain deferred.
 - 🚧 **ai (kAI)** — configuration, deterministic suggestion validation
   (confidence range, empty changes, no-op changes, negative constraints) and
   atomic `apply_suggestion` with undoable `core::edit` transactions. Every
@@ -323,7 +326,7 @@ What each crate provides today:
 |-------|-------|-------|--------|
 | 1 | 1–4 | Foundation: workspace, CI, engineering database, symbols, basic schematic engine | ✅ Complete |
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ✅ Complete (basic software renderer; Vulkan GPU backend deferred) |
-| GUI | — | KaiCad Studio desktop editor: open/save, 2D/3D, DRC, track routing | 🚧 Viewer + track routing; footprint placement next |
+| GUI | — | KaiCad Studio desktop editor: open/save, 2D/3D, DRC, track routing | 🚧 Viewer + 2D zoom/pan + track routing; footprint placement next |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 Week 12 complete; kAI generation, real-time sync and plugin execution deferred |
 | 4 | 13–16 | Plugin persistence and management, polish, beta and foundation-level KiCad compatibility work | 🚧 Weeks 13–15 and P2 interoperability complete; Week 16 release readiness next |
 | Parity | post-beta | Full KiCad workflow and project-file compatibility | 🚧 P2 file interoperability complete; P0/P1/P3–P5 remain |

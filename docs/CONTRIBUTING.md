@@ -40,10 +40,11 @@ delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md).
 - **GUI state is headless.** `gui::StudioState` owns board, path, view and DRC
   state so it can be tested without a window; `StudioApp` is only an eframe
   adapter. Do not duplicate PCB geometry or rasterization in the UI. The
-  viewport must keep using `renderer::Renderer`. Board edits must go through
-  the PCB/routing engines, preflight DRC, and preserve an undoable headless
-  history; project edits use `core::edit` transactions. Do not mutate an
-  unvalidated private copy of the design.
+  viewport must keep using `renderer::Renderer`; 2D zoom and pan must go
+  through `renderer::BoardView`/`BoardTransform` so rendering and hit-testing
+  agree. Board edits must go through the PCB/routing engines, preflight DRC,
+  and preserve an undoable headless history; project edits use `core::edit`
+  transactions. Do not mutate an unvalidated private copy of the design.
 - **Deterministic operations.** Do not introduce unseeded randomness into
   geometry, netlisting, routing or rule checks. DRC violations are sorted by
   `(rule_id, objects)`, each unordered track pair on different nets is checked

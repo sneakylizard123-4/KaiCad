@@ -123,6 +123,25 @@ impl Camera {
     }
 }
 
+/// User-controlled 2D view of the board.
+///
+/// `zoom` multiplies the scale produced by [`BoardTransform::for_board`], and
+/// `center` is the board point shown at the centre of the image. The default
+/// (`center: None`, `zoom: 1.0`) reproduces the automatically fitted view.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoardView {
+    /// Board point at the image centre, or `None` for the outline centre.
+    pub center: Option<[f64; 2]>,
+    /// Multiplier applied to the fitted scale. Must be finite and positive.
+    pub zoom: f64,
+}
+
+impl Default for BoardView {
+    fn default() -> Self {
+        Self { center: None, zoom: 1.0 }
+    }
+}
+
 /// Mapping between board millimetres and 2D viewport pixels.
 ///
 /// The transform matches the framing used by [`ViewMode::TwoD`] exactly, so a
@@ -131,11 +150,10 @@ impl Camera {
 /// rendered image; board Y increases upward.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoardTransform {
-    min_x: f64,
-    min_y: f64,
+    center_x: f64,
+    center_y: f64,
     scale: f64,
-    x_offset: f64,
-    y_offset: f64,
+    image_width: f64,
     image_height: f64,
 }
 
@@ -145,6 +163,19 @@ impl BoardTransform {
     /// Returns [`RendererError::InvalidConfig`] when the image size or board
     /// outline cannot be transformed.
     pub fn for_board(design: &PcbDesign, width: u32, height: u32) -> Result<Self, RendererError> {
+        Self::for_view(design, width, height, BoardView::default())
+    }
+
+    /// Fit a board into an image, then apply a zoom and pan view.
+    ///
+    /// Returns [`RendererError::InvalidConfig`] when the image size, board
+    /// outline, zoom or centre cannot be transformed.
+    pub fn for_view(
+        design: &PcbDesign,
+        width: u32,
+        height: u32,
+        view: BoardView,
+    ) -> Result<Self, RendererError> {
         validate_size(width, height)?;
         let bbox = design
             .outline
@@ -159,6 +190,17 @@ impl BoardTransform {
                 "board outline has invalid bounds".to_string(),
             ));
         }
+        if !view.zoom.is_finite() || view.zoom <= 0.0 {
+            return Err(RendererError::InvalidConfig(
+                "view zoom must be finite and positive".to_string(),
+            ));
+        }
+        let center = view
+            .center
+            .unwrap_or([(bbox.min.x + bbox.max.x) / 2.0, (bbox.min.y + bbox.max.y) / 2.0]);
+        if center.iter().any(|value| !value.is_finite()) {
+            return Err(RendererError::InvalidConfig("view centre must be finite".to_string()));
+        }
 
         let width = width as f64;
         let height = height as f64;
@@ -167,16 +209,19 @@ impl BoardTransform {
         let usable_height = (height - margin * 2.0).max(1.0);
         let board_width = (bbox.max.x - bbox.min.x).max(1e-9);
         let board_height = (bbox.max.y - bbox.min.y).max(1e-9);
-        let scale = (usable_width / board_width).min(usable_height / board_height);
-        let x_offset = margin + (usable_width - board_width * scale) / 2.0;
-        let y_offset = margin + (usable_height - board_height * scale) / 2.0;
+        let fit_scale = (usable_width / board_width).min(usable_height / board_height);
+        let scale = fit_scale * view.zoom;
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(RendererError::InvalidConfig(
+                "view zoom produces an invalid scale".to_string(),
+            ));
+        }
 
         Ok(Self {
-            min_x: bbox.min.x,
-            min_y: bbox.min.y,
+            center_x: center[0],
+            center_y: center[1],
             scale,
-            x_offset,
-            y_offset,
+            image_width: width,
             image_height: height,
         })
     }
@@ -189,16 +234,16 @@ impl BoardTransform {
     /// Convert a board point in millimetres to image pixels.
     pub fn board_to_pixel(&self, x: f64, y: f64) -> [f64; 2] {
         [
-            self.x_offset + (x - self.min_x) * self.scale,
-            self.image_height - self.y_offset - (y - self.min_y) * self.scale,
+            self.image_width / 2.0 + (x - self.center_x) * self.scale,
+            self.image_height / 2.0 - (y - self.center_y) * self.scale,
         ]
     }
 
     /// Convert image pixels to a board point in millimetres.
     pub fn pixel_to_board(&self, x: f64, y: f64) -> [f64; 2] {
         [
-            self.min_x + (x - self.x_offset) / self.scale,
-            self.min_y + (self.image_height - y - self.y_offset) / self.scale,
+            self.center_x + (x - self.image_width / 2.0) / self.scale,
+            self.center_y - (y - self.image_height / 2.0) / self.scale,
         ]
     }
 }
@@ -243,6 +288,26 @@ impl Renderer {
         self.render_pcb_with_camera(design, view, &camera)
     }
 
+    /// Render the 2D board with an explicit zoom and pan.
+    ///
+    /// The [`BoardView`] applies to [`ViewMode::TwoD`]; use
+    /// [`render_pcb`](Self::render_pcb) for a fitted view or the 3D perspective.
+    pub fn render_pcb_view(
+        &mut self,
+        design: &PcbDesign,
+        board_view: BoardView,
+    ) -> Result<(), RendererError> {
+        let camera = Camera::fit(design);
+        scene::render_pcb(
+            design,
+            &mut self.framebuffer,
+            &mut self.depth,
+            ViewMode::TwoD,
+            &camera,
+            board_view,
+        )
+    }
+
     /// Render a board with an explicit camera. The camera is ignored by
     /// [`ViewMode::TwoD`].
     pub fn render_pcb_with_camera(
@@ -251,7 +316,14 @@ impl Renderer {
         view: ViewMode,
         camera: &Camera,
     ) -> Result<(), RendererError> {
-        scene::render_pcb(design, &mut self.framebuffer, &mut self.depth, view, camera)
+        scene::render_pcb(
+            design,
+            &mut self.framebuffer,
+            &mut self.depth,
+            view,
+            camera,
+            BoardView::default(),
+        )
     }
 
     /// Write the current framebuffer as a binary PPM image.
@@ -389,6 +461,67 @@ mod tests {
         assert!(BoardTransform::for_board(&PcbDesign::default(), 160, 120).is_err());
         assert!(BoardTransform::for_board(&design, 0, 120).is_err());
         assert!(BoardTransform::for_board(&design, 160, 0).is_err());
+    }
+
+    #[test]
+    fn board_view_zooms_around_its_centre_and_round_trips() {
+        let design = test_design();
+        let fitted = BoardTransform::for_board(&design, 160, 120).expect("fit");
+        let zoomed = BoardTransform::for_view(
+            &design,
+            160,
+            120,
+            BoardView { center: Some([10.0, 8.0]), zoom: 2.0 },
+        )
+        .expect("zoomed view");
+
+        assert!((zoomed.scale() - fitted.scale() * 2.0).abs() < 1e-9);
+        assert_eq!(zoomed.board_to_pixel(10.0, 8.0), [80.0, 60.0]);
+
+        for (x, y) in [(0.0, 0.0), (10.0, 8.0), (17.5, 3.25)] {
+            let [pixel_x, pixel_y] = zoomed.board_to_pixel(x, y);
+            let [round_x, round_y] = zoomed.pixel_to_board(pixel_x, pixel_y);
+            assert!((round_x - x).abs() < 1e-9, "x {x} became {round_x}");
+            assert!((round_y - y).abs() < 1e-9, "y {y} became {round_y}");
+        }
+    }
+
+    #[test]
+    fn board_view_rejects_invalid_zoom_and_centre() {
+        let design = test_design();
+
+        for zoom in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                BoardTransform::for_view(
+                    &design,
+                    160,
+                    120,
+                    BoardView { zoom, ..BoardView::default() }
+                )
+                .is_err(),
+                "zoom {zoom} should be rejected"
+            );
+        }
+        assert!(
+            BoardTransform::for_view(
+                &design,
+                160,
+                120,
+                BoardView { center: Some([f64::NAN, 0.0]), ..BoardView::default() }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn zoomed_rendering_still_draws_the_board() {
+        let design = test_design();
+        let mut renderer = renderer(160, 120);
+
+        renderer
+            .render_pcb_view(&design, BoardView { zoom: 2.0, ..BoardView::default() })
+            .expect("zoomed 2D render");
+        assert!(non_background_pixels(&renderer) > 1_000);
     }
 
     #[test]

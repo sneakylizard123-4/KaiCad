@@ -36,17 +36,26 @@ pub(crate) fn render_pcb(
     depth: &mut [f64],
     view: ViewMode,
     camera: &Camera,
+    board_view: crate::BoardView,
 ) -> Result<(), RendererError> {
     match view {
-        ViewMode::TwoD => render_2d(design, framebuffer),
+        ViewMode::TwoD => render_2d(design, framebuffer, board_view),
         ViewMode::ThreeD => render_3d(design, framebuffer, depth, camera),
     }
 }
 
-fn render_2d(design: &PcbDesign, framebuffer: &mut Framebuffer) -> Result<(), RendererError> {
+fn render_2d(
+    design: &PcbDesign,
+    framebuffer: &mut Framebuffer,
+    board_view: crate::BoardView,
+) -> Result<(), RendererError> {
     framebuffer.clear(BACKGROUND);
-    let transform =
-        crate::BoardTransform::for_board(design, framebuffer.width(), framebuffer.height())?;
+    let transform = crate::BoardTransform::for_view(
+        design,
+        framebuffer.width(),
+        framebuffer.height(),
+        board_view,
+    )?;
     let scale = transform.scale();
     let map = |point: (f64, f64)| {
         let [x, y] = transform.board_to_pixel(point.0, point.1);

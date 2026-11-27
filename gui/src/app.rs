@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use core::Point;
 use eframe::egui::{self, Color32, RichText, TextureHandle, TextureOptions};
 use pcb::{DrcReport, DrcSeverity, PcbDesign, run_drc};
-use renderer::{BoardTransform, Framebuffer, Renderer, RendererConfig, ViewMode, WindowConfig};
+use renderer::{
+    BoardTransform, BoardView, Framebuffer, Renderer, RendererConfig, ViewMode, WindowConfig,
+};
 use uuid::Uuid;
 
 use crate::demo::demo_design;
@@ -14,6 +16,9 @@ use crate::editor::{RouteClick, RouteEditError, TrackEditor};
 
 /// Largest viewport side, in pixels, sent to the software rasterizer.
 pub const MAX_VIEWPORT_SIDE: u32 = 2048;
+const MIN_ZOOM: f64 = 0.25;
+const MAX_ZOOM: f64 = 32.0;
+const ZOOM_STEP: f64 = 1.25;
 const MAX_LISTED_VIOLATIONS: usize = 100;
 const ACCENT: Color32 = Color32::from_rgb(232, 145, 51);
 const ERROR_COLOR: Color32 = Color32::from_rgb(244, 112, 112);
@@ -63,6 +68,7 @@ pub struct StudioState {
     design: PcbDesign,
     path: Option<PathBuf>,
     view: ViewMode,
+    board_view: BoardView,
     report: DrcReport,
     notice: Notice,
     revision: u64,
@@ -81,6 +87,7 @@ impl StudioState {
             design,
             path: None,
             view: ViewMode::TwoD,
+            board_view: BoardView::default(),
             report,
             notice: Notice::info("Demo board loaded. Select Route to edit copper."),
             revision: 0,
@@ -99,6 +106,7 @@ impl StudioState {
             design,
             path: None,
             view: ViewMode::TwoD,
+            board_view: BoardView::default(),
             report,
             notice,
             revision: 0,
@@ -112,6 +120,7 @@ impl StudioState {
     pub fn reset_demo(&mut self) {
         self.design = demo_design();
         self.path = None;
+        self.board_view = BoardView::default();
         self.revision = self.revision.wrapping_add(1);
         self.report = run_drc(&self.design, &self.design.rules);
         self.editor.reset(&self.design);
@@ -128,6 +137,7 @@ impl StudioState {
                 let preserved = loaded.warnings.len();
                 self.design = loaded.design;
                 self.path = Some(path.to_path_buf());
+                self.board_view = BoardView::default();
                 self.revision = self.revision.wrapping_add(1);
                 self.report = run_drc(&self.design, &self.design.rules);
                 self.editor.reset(&self.design);
@@ -321,6 +331,84 @@ impl StudioState {
         self.view
     }
 
+    /// Current 2D zoom and pan.
+    pub fn board_view(&self) -> BoardView {
+        self.board_view
+    }
+
+    /// Zoom the 2D view by `factor` around the current centre.
+    ///
+    /// The zoom is clamped to the `0.25..=32.0` range. Non-finite or
+    /// non-positive factors are rejected. Returns whether the view changed.
+    pub fn zoom_by(&mut self, factor: f64) -> bool {
+        let Some(zoom) = clamped_zoom(self.board_view.zoom, factor) else {
+            return false;
+        };
+        self.board_view.zoom = zoom;
+        true
+    }
+
+    /// Zoom the 2D view around an image pixel.
+    ///
+    /// `pixel` is in raster coordinates (top-left origin) for an image of
+    /// `image` size. The board point under that pixel stays fixed while the
+    /// zoom changes, so wheel zoom follows the pointer. Returns whether the
+    /// view changed.
+    pub fn zoom_at(&mut self, factor: f64, pixel: [f64; 2], image: [u32; 2]) -> bool {
+        let Some(zoom) = clamped_zoom(self.board_view.zoom, factor) else {
+            return false;
+        };
+        let Ok(fit) = BoardTransform::for_board(&self.design, image[0], image[1]) else {
+            return false;
+        };
+        let Ok(current) =
+            BoardTransform::for_view(&self.design, image[0], image[1], self.board_view)
+        else {
+            return false;
+        };
+        let [anchor_x, anchor_y] = current.pixel_to_board(pixel[0], pixel[1]);
+        let scale = fit.scale() * zoom;
+        let center = [
+            anchor_x - (pixel[0] - image[0] as f64 / 2.0) / scale,
+            anchor_y + (pixel[1] - image[1] as f64 / 2.0) / scale,
+        ];
+        if !scale.is_finite() || scale <= 0.0 || center.iter().any(|value| !value.is_finite()) {
+            return false;
+        }
+        self.board_view = BoardView { center: Some(center), zoom };
+        true
+    }
+
+    /// Pan the 2D view by a board-space delta in millimetres.
+    ///
+    /// A positive `dx` moves the visible board left; a positive `dy` moves it
+    /// down. Returns whether the view changed.
+    pub fn pan_by_board(&mut self, dx: f64, dy: f64) -> bool {
+        if !dx.is_finite() || !dy.is_finite() {
+            return false;
+        }
+        let center = self.board_view.center.unwrap_or_else(|| {
+            self.design
+                .outline
+                .bounding_box()
+                .map(|bounds| {
+                    [(bounds.min.x + bounds.max.x) / 2.0, (bounds.min.y + bounds.max.y) / 2.0]
+                })
+                .unwrap_or([0.0, 0.0])
+        });
+        let next = [center[0] + dx, center[1] + dy];
+        if next.iter().any(|value| !value.is_finite()) {
+            return false;
+        }
+        self.board_view.center = Some(next);
+        true
+    }
+
+    /// Restore the automatically fitted 2D view.
+    pub fn reset_board_view(&mut self) {
+        self.board_view = BoardView::default();
+    }
+
     pub fn report(&self) -> &DrcReport {
         &self.report
     }
@@ -341,6 +429,14 @@ impl StudioState {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Demo board".to_string())
     }
+}
+
+fn clamped_zoom(current: f64, factor: f64) -> Option<f64> {
+    if !factor.is_finite() || factor <= 0.0 {
+        return None;
+    }
+    let zoom = (current * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+    (zoom != current).then_some(zoom)
 }
 
 fn report_notice(report: &DrcReport, prefix: &str) -> Notice {
@@ -375,12 +471,13 @@ fn color_image(framebuffer: &Framebuffer) -> egui::ColorImage {
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct RenderKey {
     width: u32,
     height: u32,
     view: ViewMode,
     revision: u64,
+    board_view: BoardView,
 }
 
 struct Viewport {
@@ -400,16 +497,17 @@ impl Viewport {
         design: &PcbDesign,
         view: ViewMode,
         revision: u64,
+        board_view: BoardView,
         available: [f32; 2],
     ) -> Option<egui::TextureId> {
         let [width, height] = viewport_size(available, ctx.pixels_per_point());
         if width < 2 || height < 2 {
             return None;
         }
-        let key = RenderKey { width, height, view, revision };
+        let key = RenderKey { width, height, view, revision, board_view };
         if self.key != Some(key) {
             self.key = Some(key);
-            match rasterize(design, view, width, height) {
+            match rasterize(design, view, board_view, width, height) {
                 Ok(image) => {
                     self.error = None;
                     match self.texture.take() {
@@ -443,6 +541,7 @@ impl Viewport {
 fn rasterize(
     design: &PcbDesign,
     view: ViewMode,
+    board_view: BoardView,
     width: u32,
     height: u32,
 ) -> Result<egui::ColorImage, String> {
@@ -452,7 +551,11 @@ fn rasterize(
     };
     let mut renderer =
         Renderer::new(config).map_err(|error| format!("renderer setup failed: {error}"))?;
-    renderer.render_pcb(design, view).map_err(|error| format!("renderer failed: {error}"))?;
+    match view {
+        ViewMode::TwoD => renderer.render_pcb_view(design, board_view),
+        ViewMode::ThreeD => renderer.render_pcb(design, view),
+    }
+    .map_err(|error| format!("renderer failed: {error}"))?;
     Ok(color_image(renderer.framebuffer()))
 }
 
@@ -618,6 +721,25 @@ impl StudioApp {
             self.state.set_tool(tool);
         }
 
+        if !typing && self.file_dialog.is_none() && self.state.view() == ViewMode::TwoD {
+            let (zoom_in, zoom_out, fit) = ctx.input(|input| {
+                (
+                    input.key_pressed(egui::Key::Plus) || input.key_pressed(egui::Key::Equals),
+                    input.key_pressed(egui::Key::Minus),
+                    input.key_pressed(egui::Key::Num0),
+                )
+            });
+            if zoom_in {
+                self.state.zoom_by(ZOOM_STEP);
+            }
+            if zoom_out {
+                self.state.zoom_by(1.0 / ZOOM_STEP);
+            }
+            if fit {
+                self.state.reset_board_view();
+            }
+        }
+
         if ctx.input(|input| input.key_pressed(egui::Key::F5)) {
             self.state.run_drc_checks();
         }
@@ -705,6 +827,17 @@ impl StudioApp {
                     {
                         self.state.set_view(ViewMode::ThreeD);
                     }
+                    ui.separator();
+                    let two_d = self.state.view() == ViewMode::TwoD;
+                    if ui.add_enabled(two_d, egui::Button::new("Zoom in (+)")).clicked() {
+                        self.state.zoom_by(ZOOM_STEP);
+                    }
+                    if ui.add_enabled(two_d, egui::Button::new("Zoom out (-)")).clicked() {
+                        self.state.zoom_by(1.0 / ZOOM_STEP);
+                    }
+                    if ui.add_enabled(two_d, egui::Button::new("Fit board (0)")).clicked() {
+                        self.state.reset_board_view();
+                    }
                 });
                 ui.menu_button("Tools", |ui| {
                     if ui
@@ -769,6 +902,23 @@ impl StudioApp {
                             self.state.set_view(ViewMode::ThreeD);
                         }
                     });
+                    if self.state.view() == ViewMode::TwoD {
+                        ui.horizontal(|ui| {
+                            if ui.small_button("−").on_hover_text("Zoom out (-)").clicked() {
+                                self.state.zoom_by(1.0 / ZOOM_STEP);
+                            }
+                            ui.label(format!("{:.0}%", self.state.board_view().zoom * 100.0));
+                            if ui.small_button("+").on_hover_text("Zoom in (+)").clicked() {
+                                self.state.zoom_by(ZOOM_STEP);
+                            }
+                            if ui.small_button("Fit").on_hover_text("Fit board (0)").clicked() {
+                                self.state.reset_board_view();
+                            }
+                        });
+                        ui.label(
+                            RichText::new("Wheel to zoom · middle-drag to pan").weak().small(),
+                        );
+                    }
                     ui.separator();
                     self.document_section(ui);
                     ui.separator();
@@ -1152,7 +1302,12 @@ impl StudioApp {
                 };
                 ui.label(RichText::new(&notice.text).color(color));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new("software 2D/3D").weak().small());
+                    let renderer_label = if self.state.view() == ViewMode::TwoD {
+                        format!("{:.0}% · software 2D/3D", self.state.board_view().zoom * 100.0)
+                    } else {
+                        "software 3D".to_string()
+                    };
+                    ui.label(RichText::new(renderer_label).weak().small());
                     ui.separator();
                     if let Some(path) = self.state.path() {
                         ui.label(RichText::new(path.display().to_string()).weak().small());
@@ -1171,27 +1326,87 @@ impl StudioApp {
 
             let view = self.state.view();
             let revision = self.state.revision();
+            let board_view = self.state.board_view();
             let texture = self.viewport.prepare(
                 ctx,
                 self.state.design(),
                 view,
                 revision,
+                board_view,
                 [available.x, available.y],
             );
             let [pixel_width, pixel_height] =
                 viewport_size([available.x, available.y], ctx.pixels_per_point());
-            let transform = if view == ViewMode::TwoD {
-                BoardTransform::for_board(self.state.design(), pixel_width, pixel_height).ok()
+            let initial_transform = if view == ViewMode::TwoD {
+                BoardTransform::for_view(self.state.design(), pixel_width, pixel_height, board_view)
+                    .ok()
             } else {
                 None
             };
             let error = self.viewport.error().map(str::to_owned);
 
-            let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click());
+            let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
             let response = if self.state.tool() == StudioTool::Route && view == ViewMode::TwoD {
                 response.on_hover_cursor(egui::CursorIcon::Crosshair)
+            } else if view == ViewMode::TwoD {
+                response.on_hover_cursor(egui::CursorIcon::Grab)
             } else {
                 response
+            };
+
+            if view == ViewMode::TwoD {
+                let pan_drag = response.dragged_by(egui::PointerButton::Middle)
+                    || (self.state.tool() == StudioTool::Inspect
+                        && response.dragged_by(egui::PointerButton::Primary));
+                if pan_drag {
+                    let delta = ui.input(|input| input.pointer.delta());
+                    if let Some(transform) = initial_transform {
+                        let board_dx = -(delta.x as f64) * pixel_width as f64
+                            / rect.width().max(1.0) as f64
+                            / transform.scale();
+                        let board_dy = delta.y as f64 * pixel_height as f64
+                            / rect.height().max(1.0) as f64
+                            / transform.scale();
+                        if board_dx != 0.0 || board_dy != 0.0 {
+                            self.state.pan_by_board(board_dx, board_dy);
+                        }
+                    }
+                }
+
+                if response.hovered() {
+                    let (scroll, pinch) =
+                        ui.input(|input| (input.smooth_scroll_delta.y, input.zoom_delta()));
+                    let factor = if (pinch - 1.0).abs() > 1e-4 {
+                        pinch as f64
+                    } else if scroll.abs() > 0.01 {
+                        (scroll as f64 * 0.002).exp()
+                    } else {
+                        1.0
+                    };
+                    if factor != 1.0 {
+                        if let Some(pointer) = response.hover_pos() {
+                            let local = pointer - rect.min;
+                            let pixel = [
+                                local.x as f64 / rect.width().max(1.0) as f64 * pixel_width as f64,
+                                local.y as f64 / rect.height().max(1.0) as f64
+                                    * pixel_height as f64,
+                            ];
+                            self.state.zoom_at(factor, pixel, [pixel_width, pixel_height]);
+                        }
+                    }
+                }
+            }
+
+            let transform = if view == ViewMode::TwoD {
+                BoardTransform::for_view(
+                    self.state.design(),
+                    pixel_width,
+                    pixel_height,
+                    self.state.board_view(),
+                )
+                .ok()
+            } else {
+                None
             };
 
             if let Some(texture_id) = texture {
@@ -1333,8 +1548,8 @@ impl StudioApp {
                      A Vulkan GPU backend is not implemented.",
                 );
                 ui.label(
-                    "Current shell: board opening/saving, 2D/3D views, stackup and \
-                     footprint inspection, DRC, and undoable track routing in 2D.",
+                    "Current shell: board opening/saving, 2D/3D views with 2D zoom/pan, \
+                     stackup and footprint inspection, DRC, and undoable track routing in 2D.",
                 );
                 ui.label(
                     "Footprint placement, schematic capture and cross-probing are not implemented.",
@@ -1473,12 +1688,15 @@ mod tests {
         let mut state = StudioState::new_demo();
         state.open_path(&path).expect("board opens");
         let revision = state.revision();
+        assert!(state.zoom_by(2.0));
+        assert!(state.pan_by_board(4.0, -2.0));
 
         state.reset_demo();
         assert_eq!(state.path(), None);
         assert_eq!(state.display_name(), "Demo board");
         assert_eq!(state.revision(), revision + 1);
         assert!(state.report().is_valid());
+        assert_eq!(state.board_view(), BoardView::default());
 
         let _ = std::fs::remove_dir_all(directory);
     }
@@ -1526,6 +1744,45 @@ mod tests {
         assert_eq!(state.tool(), StudioTool::Inspect);
 
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn zoom_and_pan_change_the_view_and_reset_restores_fit() {
+        let mut state = StudioState::new_demo();
+        assert_eq!(state.board_view(), BoardView::default());
+
+        assert!(state.zoom_by(2.0));
+        assert_eq!(state.board_view().zoom, 2.0);
+        assert!(state.pan_by_board(5.0, -3.0));
+        assert_eq!(state.board_view().center, Some([45.0, 22.0]));
+
+        state.reset_board_view();
+        assert_eq!(state.board_view(), BoardView::default());
+        assert!(!state.zoom_by(0.0));
+        assert!(!state.pan_by_board(f64::NAN, 0.0));
+    }
+
+    #[test]
+    fn zoom_is_clamped_and_pointer_zoom_keeps_the_anchor_fixed() {
+        let mut state = StudioState::new_demo();
+        assert!(state.zoom_by(1e9));
+        assert_eq!(state.board_view().zoom, MAX_ZOOM);
+        assert!(state.zoom_by(1e-9));
+        assert_eq!(state.board_view().zoom, MIN_ZOOM);
+
+        state.reset_board_view();
+        let image = [800, 500];
+        let pixel = [160.0, 90.0];
+        let fitted = BoardTransform::for_board(state.design(), image[0], image[1]).expect("fit");
+        let [anchor_x, anchor_y] = fitted.pixel_to_board(pixel[0], pixel[1]);
+        assert!(state.zoom_at(2.0, pixel, image));
+
+        let zoomed =
+            BoardTransform::for_view(state.design(), image[0], image[1], state.board_view())
+                .expect("zoomed");
+        let [x, y] = zoomed.pixel_to_board(pixel[0], pixel[1]);
+        assert!((x - anchor_x).abs() < 1e-9);
+        assert!((y - anchor_y).abs() < 1e-9);
     }
 
     #[test]

@@ -6,9 +6,9 @@
 //! adapter that draws it. Rendering uses the deterministic CPU rasterizer in
 //! the `renderer` crate, so no Vulkan loader is required.
 //!
-//! The current shell includes board inspection and a first track-routing
-//! editor. Footprint placement, schematic capture and cross-probing are later
-//! increments.
+//! The current shell includes board inspection, 2D zoom/pan and a first
+//! track-routing editor. Footprint placement, schematic capture and
+//! cross-probing are later increments.
 
 mod app;
 mod demo;

@@ -171,8 +171,8 @@ undo/redo, permission-checked collaborative edit sessions with version history
 and sync staging, bounded multi-step edit history, and a validated local
 plugin registry with SQLite persistence, activation state and CLI management.
 A native eframe-based Studio shell now opens and saves `.kicad_pcb` boards, renders
-2D/3D views, reports DRC, stackup and footprint information, and supports
-undoable click-to-route track editing with DRC preflight. Footprint placement,
+2D/3D views with 2D zoom and pan, reports DRC, stackup and footprint information,
+and supports undoable click-to-route track editing with DRC preflight. Footprint placement,
 schematic capture, manufacturing outputs and full KiCad project-file
 compatibility have not been implemented. The CLI imports and exports supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod`
 and `.kicad_pro` files. P2 interoperability models zones, keepouts, copper
