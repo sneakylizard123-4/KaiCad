@@ -201,9 +201,9 @@ mod tests {
         save_design(&design, &path).expect("board saves");
         let source = std::fs::read_to_string(&path).expect("native board is readable");
         assert!(source.starts_with("(kicad_pcb"));
+        assert!(!source.lines().any(|line| line.starts_with("  (uuid ")));
 
         let loaded = load_design(&path).expect("board loads");
-        assert_eq!(loaded.design.id, design.id);
         assert_eq!(loaded.design.outline, design.outline);
         // KiCad stores one segment per track, so a polyline becomes N-1 tracks.
         let expected_segments: usize =

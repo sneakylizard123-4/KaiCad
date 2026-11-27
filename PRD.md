@@ -11,7 +11,7 @@
 **Primary EDA compatibility:** KiCad 10  
 **Secondary EDA compatibility:** KiCad 9  
 **Rendering:** Vulkan target; deterministic software 2D/3D renderer implemented\
-**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange implemented; semantic project compatibility remains a post-beta program; pre-alpha
+**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor, the P2 KiCad interoperability milestone and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange implemented; the integrated schematic/board project document remains a post-beta program; pre-alpha
 
 ---
 
@@ -175,11 +175,12 @@ A native eframe-based Studio shell now opens and saves `.kicad_pcb` boards, rend
 undoable click-to-route track editing with DRC preflight. Footprint placement,
 schematic capture, manufacturing outputs and full KiCad project-file
 compatibility have not been implemented. The CLI imports and exports supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod`
-and `.kicad_pro` files. Board and schematic constructs KaiCad does not model —
-zones, arcs, graphics, DRC setup, library symbols and unknown nodes — are
-retained for export instead of being silently dropped. They are not yet
-semantically editable, library tables are missing, and the compatibility corpus
-is small, so KaiCad is not yet a usable
-end-to-end KiCad replacement. Week 16 release hardening remains outstanding; the full parity
+and `.kicad_pro` files. P2 interoperability models zones, keepouts, copper
+arcs, graphics, standard pad shapes and project DRC rules, reads and writes
+library tables, and copies project-local libraries through `project bundle`.
+Custom pad primitives, dimensions, schematic library symbols and unknown nodes
+are retained for export instead of being silently dropped. The compatibility
+corpus covers the installed KiCad 10 template set, but KaiCad is not yet a
+usable end-to-end KiCad replacement. Week 16 release hardening remains outstanding; the full parity
 sequence and the exact board-conversion limits are in
 [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md). KaiCad is pre-alpha.

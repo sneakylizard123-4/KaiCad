@@ -160,20 +160,30 @@ see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 ### KiCad PCB compatibility subset
 - `kicad-parser` now reads and writes `.kicad_pcb` boards for the subset represented by `PcbDesign`
 - Preserves layers, named nets (`PcbNet`), Edge.Cuts outlines, footprints/pads (including pad numbers and rotated placement), tracks and vias
-- Retains zones, arcs, graphics, 3D models and pad shapes in the source document and re-emits them; DRC still treats pads as rectangles
+- Zones, arcs, graphics, 3D models and pad shapes round-trip; standard pad shapes and board objects now have semantic models
 - Added `kai-cad pcb import <input.kicad_pcb> <output.json>` and `kai-cad pcb export <input.json> <output.kicad_pcb>`
 - Added named-net and pad-number fields with serde defaults for older board documents
 - 9 parser tests and 2 PCB-model tests; total tests: 353
 
 ### KiCad file-interchange layer
-- `.kicad_pcb` unknown constructs (zones, arcs, graphics, text, model, setup) are retained in `PcbDesign::source` and re-emitted
+- `.kicad_pcb` constructs without semantic models (custom pad primitives, dimensions, setup, models) are retained in `PcbDesign::source` and re-emitted
 - `.kicad_sch` subset read/write for components, wires, labels, junctions, no-connects and sheet symbols; `lib_symbols` and unknown nodes retained
 - `.kicad_mod` read/write with pad shapes, graphics, text and models preserved
 - `.kicad_pro` JSON preserved through the CLI
 - `kai-cad pcb|sch|footprint|project import|export` and `project bundle` commands; CLI self-check round trips
-- Four-file compatibility corpus, recursive project-bundle test and structural round trips
-- KiCad 10.0.6 plotted the generated schematic and footprint; ERC/DRC parsed the generated schematic/board
-- 13 new tests (5 schematic, 1 standalone footprint, 5 corpus, 2 native GUI/parser); total tests: 366
+- Five-file compatibility corpus, recursive project-bundle test and structural round trips
+- KiCad 10.0.6 plotted the generated schematic, footprint and boards; ERC/DRC, Gerber and drill export accepted the boards, including a KiCad 10 upgrade and KaiCad re-export
+- 14 new tests (5 schematic, 1 standalone footprint, 5 corpus, 2 native GUI/parser, 1 KiCad 10 name-only net round trip); total tests: 367
+- Native `.kicad_pcb` output omits KaiCad's internal board id because KiCad has no board-level UUID token; re-saving an older affected board removes it
+
+### KiCad P2 interoperability — complete
+- Typed zones, fills, keepouts, copper arcs and board graphics with serde defaults for old JSON
+- Shape-aware pad copper (rect, roundrect, oval, circle, trapezoid) used by DRC
+- DRC for copper arcs, zone-fill clearance and track/via/pad/footprint keepouts; project DRC rules load into `DrcRules`
+- `sym-lib-table`/`fp-lib-table` parsing, writing and preservation
+- `ProjectBundle` copies `${KIPRJMOD}` libraries and rewrites tables with the hierarchy
+- KiCad 10 board fixture, hierarchy edit/save/reopen test and a 19-board / 19-project template corpus validated with KiCad 10.0.6
+- 17 new tests; total tests: 384
 
 ## 🚧 Next — Week 16: Foundation release readiness
 
@@ -183,7 +193,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥365 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥384 tests, clippy/fmt/doc/link/release clean
 
 ## 🚧 Full KiCad parity — post-beta program
 
@@ -194,7 +204,7 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - [ ] Schematic capture, annotation, hierarchy and geometry-based connectivity
 - [x] `.kicad_pcb` supported-subset read/write, CLI conversion and unknown-construct preservation
 - [x] `.kicad_pro` / `.kicad_sch` / `.kicad_mod` file-level read/write and unknown-node preservation
-- [ ] Semantic zones/arcs/graphics/DRC rules, library tables and a broad KiCad 9/10 corpus
+- [x] Semantic zones/arcs/graphics/DRC rules, library tables and a broad KiCad 9/10 corpus
 - [ ] Footprint placement/editing, zones, net classes, differential pairs and length matching
 - [ ] Gerber, drill, BOM and pick-and-place outputs
 - [ ] Symbol/footprint editors, scripting, collaboration transport and complete kAI

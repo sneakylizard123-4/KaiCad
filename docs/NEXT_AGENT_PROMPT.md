@@ -1,19 +1,20 @@
 # Next Agent Prompt — Week 16: Foundation Release Readiness
 
 You are continuing **KaiCad**, a pre-alpha EDA application written in Rust at
-`/home/sneak/vscode/KaiCad`. Weeks 1–15, the Phase 2 PCB/renderer scope and the
-first Studio editing increment and the supported `.kicad_pcb` import/export
-subset are finished and verified. Your job is **Week 16: harden the CLI,
-document the plugin workflow and release surface, add performance baselines,
-and complete the foundation release-readiness audit**. Do not add dynamic
-plugin execution or new engineering engines.
+`/home/sneak/vscode/KaiCad`. Weeks 1–15, the Phase 2 PCB/renderer scope, the
+first Studio editing increment and the P2 KiCad interoperability milestone are
+finished and verified. Your job is **Week 16: harden the CLI, document the
+plugin workflow and release surface, add performance baselines, and complete
+the foundation release-readiness audit**. Do not add dynamic plugin execution
+or new engineering engines.
 
 This brief is release hardening, not the full-KiCad replacement program. The
 current Studio shell is no longer read-only (it has track routing), and the CLI
 can convert supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro`
-files, but footprint placement, schematic capture, manufacturing outputs,
-library tables and semantic KiCad compatibility remain future work. The long-range gap analysis and
-delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md). Read this
+files, including semantic zones/arcs/graphics/keepouts, project DRC rules and
+library tables. Footprint placement, schematic capture, manufacturing outputs
+and interactive zone editing remain future work. The long-range gap analysis
+and delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md). Read this
 document fully before writing code.
 
 ---
@@ -21,7 +22,7 @@ document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 366 passing, 0 failing
+- **Tests:** 384 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -117,10 +118,10 @@ Add `docs/USER_GUIDE.md` covering:
 - Current limitations: the GUI supports track routing but not footprint/pad
   editing, pan/zoom or schematic capture; no Vulkan GPU backend (a headless
   software renderer is available); `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/
-  `.kicad_pro` file interchange with unknown-node preservation and recursive
-  project bundles, but no semantic zone/DRC modeling or library-table discovery;
-  no manufacturing outputs; no dynamic plugin loading and no network
-  collaboration.
+  `.kicad_pro` file interchange with unknown-node preservation, recursive
+  project bundles, semantic zones/arcs/graphics/keepouts, project DRC rules and
+  library tables; no manufacturing outputs; no interactive zone editing; no
+  dynamic plugin loading and no network collaboration.
 - A short troubleshooting table for invalid manifests, duplicate ids, unsafe
   entry points and corrupt registry rows.
 
@@ -188,8 +189,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 366 tests still pass.
-- [ ] Test count rises to at least 367, all passing.
+- [ ] Existing 384 tests still pass.
+- [ ] Test count rises to at least 385, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).
@@ -244,8 +245,9 @@ cargo build --workspace --release
 - Vulkan renderer implementation or new GUI editing features; only fixes to
   the existing Studio inspection/DRC/track-routing shell are in scope.
 - New schematic, PCB or routing features.
-- Semantic zone/arc/graphics/DRC modeling or `sym-lib-table`/`fp-lib-table`
-  handling; the existing file-level conversion must not regress.
+- Further semantic zone/arc/graphics/DRC modeling, custom-pad primitives or
+  structural file-format rewrites; the completed P2 conversion must not
+  regress.
 - Network collaboration, telemetry or cloud services.
 - Schema changes; migrations 0001–0006 remain immutable.
 - Rewriting or reformatting unrelated modules.

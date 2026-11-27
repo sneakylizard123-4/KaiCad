@@ -12,7 +12,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 >
 > **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
 > Studio editing increment and the KiCad file-interchange layer are complete
-> (366 tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
+> (384 tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
 > described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md); full KiCad parity is tracked
 > separately in [`KICAD_PARITY.md`](KICAD_PARITY.md).
 
@@ -142,7 +142,7 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **366 tests**, all passing:
+`cargo test --workspace` currently runs **384 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
@@ -150,8 +150,8 @@ benchmarks; a bare `cargo check` misses them.
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
 | `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 20 |
-| `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, `project.rs`, corpus tests) | 33 |
-| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs` and modules) | 84 |
+| `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, `project.rs`, `library_table.rs`, corpus tests) | 43 |
+| `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs`, `board.rs` and modules) | 92 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
 | `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 16 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
@@ -406,7 +406,8 @@ and Windows/macOS builds self-contained.
 `kicad-parser` reads `.kicad_sym` symbol libraries, `.kicad_pcb` boards,
 `.kicad_sch` schematics, `.kicad_mod` footprints and `.kicad_pro` project JSON.
 It preserves many constructs it does not model, but it is not a full-fidelity
-converter. `ProjectBundle` recursively follows child sheet files. Convert files through:
+converter. `ProjectBundle` recursively follows child sheet files, library tables
+and `${KIPRJMOD}` libraries. Convert files through:
 
 ```bash
 cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
@@ -415,15 +416,22 @@ cargo run -p kai-cad -- pcb export board.json board.kicad_pcb
 
 Import warnings on stderr are part of the result, not noise. Known limits:
 
-- Zones, arcs, top-level drawings/text, groups, dimensions, images, targets,
-  rule areas, footprint graphics, properties and 3D models are retained in the
-  source document and re-emitted. They are not semantically editable, and DRC
-  setup is preserved rather than applied.
-- Non-rectangular pads retain their source shape, but DRC and routing use their
-  bounding rectangles. Footprint rotation and side are preserved.
+- Zones, fills, keepouts, copper arcs, top-level line/rectangle/circle/arc/
+  polygon/text graphics, standard pad shapes and project DRC rules are modeled
+  semantically. DRC checks copper arcs, zone fills and keepouts and applies
+  project `min_clearance`, `min_track_width` and `min_via_annular_width`.
+- Custom pad primitives, dimensions, groups, images, targets, some setup fields,
+  footprint graphics, properties and 3D models are retained in the source
+  document and re-emitted. DRC uses a custom pad's bounding rectangle, and
+  routing still uses each pad's rectangle.
 - Pad numbers, net names, layer tables and track/via UUIDs are preserved where
   KiCad supplies them. Net UUIDs are derived from net names because KiCad's net
-  table has no UUID.
+  table has no UUID. KiCad 9 integer net codes and KiCad 10 name-only net
+  references such as `(net "GND")` are both accepted; exports follow the source
+  board's version.
+- KiCad board files have no board-level UUID. KaiCad's internal design id is
+  kept in its JSON format and is not written as a top-level `(uuid ...)` node,
+  which KiCad rejects as an unknown board token.
 - Symbol libraries use the file stem as the library name because KiCad files do
   not record one. Pin positions remain in KiCad symbol space; no axis
   conversion is applied.
@@ -436,9 +444,14 @@ Malformed S-expressions return `ParseError::Syntax`; unreadable files return
 
 The file layer has been validated with KiCad 10.0.6: `kicad-cli sch export svg`
 and `kicad-cli fp export svg` plotted generated files, and `sch erc` / `pcb drc`
-parsed the generated schematic and board. The four-fixture corpus is structural
-evidence only; a broad KiCad compatibility corpus and semantic zone/DRC models
-are still required before claiming file-format parity.
+parsed the generated schematic and board. For boards, `pcb export svg`,
+`pcb export gerbers` and `pcb export drill` accepted the Studio demo and a
+KiCad-upgraded `20260206` board before and after a KaiCad re-export. All 19
+installed template boards and all 19 template project hierarchies with root
+schematics were imported, exported/bundled, reopened and plotted by KiCad
+10.0.6. The five-fixture corpus plus the template pass is evidence for the
+documented subset, not a byte-for-byte or third-party-project guarantee;
+custom pad primitives and dimensions remain source-preserved.
 
 ### KiCad netlist export looks wrong
 
@@ -465,13 +478,16 @@ you, check these semantics before changing a rule:
 
 - Clearance is measured **edge to edge** on shared copper layers:
   tracks use `segment_distance - width_a / 2 - width_b / 2`, via-track pairs
-  subtract the via radius, and pads are oriented copper rectangles offset by
-  the footprint position and rotated by `PadPosition::rotation`. Tracks on
-  other layers, non-copper layers and the
-  **same net** are skipped, because same-net copper is an intentional
-  connection. Pad-to-track and pad-to-via clearance is skipped when the nets
-  match, and track-to-via clearance is skipped when `via.net_id` matches the
-  track's net. Pads in one footprint are not compared with each other.
+  subtract the via radius, pads use their shape-aware local outline offset by
+  the footprint position and rotated by `PadPosition::rotation`, and copper
+  arcs are sampled as short segments. Tracks on other layers, non-copper
+  layers and the **same net** are skipped, because same-net copper is an
+  intentional connection. Pad-to-track and pad-to-via clearance is skipped
+  when the nets match, and track-to-via clearance is skipped when
+  `via.net_id` matches the track's net. Pads in one footprint are not compared
+  with each other. Zone fills are checked against foreign tracks, arcs, vias
+  and pads; keepouts reject covered tracks, arcs, vias, pads, footprints and
+  copper fills.
 - Limits live on `PcbDesign::rules` and serialize with the design. Every limit
   must be finite and greater than zero; `DrcRules::validate` checks this and
   `run_drc` reports an invalid set as a `drc-rules` error, then checks with the
@@ -492,9 +508,11 @@ you, check these semantics before changing a rule:
   return `f64::INFINITY` for them, and clearance ignores non-finite distances
   or widths rather than calling them clear.
 - `pad-size` reports a non-finite or non-positive pad width/height, and
-  `pad-outside-board` checks all four pad corners. Through-hole pads occupy
-  every copper layer in the stackup; surface-mount and tented pads occupy the
-  top copper layer only. Pad copper defaults to 1 mm square and net `None`.
+  `pad-outside-board` checks every modeled outline point. Through-hole pads
+  occupy every copper layer in the stackup; surface-mount and tented pads
+  occupy the top copper layer only. Pad copper defaults to 1 mm square and net
+  `None`. `zone-clearance` and `zone-keepout` use polygon distances; keepout
+  footprints are reported at the footprint placement.
 
 If the report changes between identical runs, look for code that consumes
 `HashMap` iteration order or track insertion order instead of the sorted

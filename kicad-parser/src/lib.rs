@@ -10,6 +10,7 @@
 //! can represent. It never panics on malformed input and performs no I/O
 //! beyond the requested file.
 
+pub mod library_table;
 pub mod pcb;
 pub mod project;
 pub mod schematic;
@@ -19,6 +20,10 @@ use std::path::Path;
 
 use core::symbol::{Pin, PinDirection, PinPosition, PinType, Symbol};
 use core::symbol_library::{SymbolLibrary, SymbolLibrarySource};
+pub use library_table::{
+    LibraryEntry, LibraryTable, LibraryTableKind, load_library_table, parse_library_table,
+    save_library_table, write_library_table,
+};
 pub use pcb::{
     FootprintImport, PcbImport, load_footprint, load_pcb, parse_footprint, parse_pcb,
     save_footprint, save_pcb, write_footprint, write_pcb,

@@ -84,6 +84,12 @@ pub struct PadPosition {
     /// An empty value is derived from [`PadPosition::pad_type`].
     #[serde(default)]
     pub kind: String,
+    /// Corner radius ratio for `roundrect` pads, as stored by KiCad.
+    #[serde(default)]
+    pub roundrect_ratio: Option<f64>,
+    /// Corner delta for `trapezoid` pads, as stored by KiCad.
+    #[serde(default)]
+    pub trapezoid_delta: Option<core::Point>,
     /// Source constructs with no KaiCad model field, retained for export.
     #[serde(default)]
     pub preserved: Vec<core::PreservedNode>,
@@ -106,9 +112,162 @@ impl Default for PadPosition {
             net_id: None,
             shape: default_pad_shape(),
             kind: String::new(),
+            roundrect_ratio: None,
+            trapezoid_delta: None,
             preserved: Vec::new(),
         }
     }
+}
+
+/// Copper shape of a pad.
+///
+/// The source spelling is retained in [`PadPosition::shape`]; this enum gives
+/// the DRC and routing code one exhaustive set of shapes to work with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadShape {
+    /// Axis-aligned or rotated rectangle.
+    Rect,
+    /// Rectangle with rounded corners.
+    RoundRect,
+    /// Circle or ellipse.
+    Circle,
+    /// Stadium/oblong shape.
+    Oval,
+    /// Trapezoid from a rectangle delta.
+    Trapezoid,
+    /// Custom primitives; DRC uses the pad's bounding rectangle.
+    Custom,
+    /// An unrecognised source spelling, treated as a rectangle.
+    Other,
+}
+
+impl PadPosition {
+    /// Classify the source pad shape.
+    pub fn shape_kind(&self) -> PadShape {
+        match self.shape.as_str() {
+            "rect" | "rectangle" => PadShape::Rect,
+            "roundrect" => PadShape::RoundRect,
+            "circle" | "ellipse" => PadShape::Circle,
+            "oval" => PadShape::Oval,
+            "trapezoid" => PadShape::Trapezoid,
+            "custom" => PadShape::Custom,
+            _ => PadShape::Other,
+        }
+    }
+
+    /// Pad copper outline in footprint-local coordinates.
+    ///
+    /// The outline follows the source shape for rectangles, rounded
+    /// rectangles, circles, ovals and trapezoids. Custom pads use their
+    /// bounding rectangle because their primitives remain source-preserved;
+    /// the DRC reports that approximation separately.
+    pub fn local_outline(&self) -> Vec<core::Point> {
+        if !self.width.is_finite()
+            || !self.height.is_finite()
+            || self.width <= 0.0
+            || self.height <= 0.0
+        {
+            return Vec::new();
+        }
+        let half_width = self.width / 2.0;
+        let half_height = self.height / 2.0;
+        let mut points = match self.shape_kind() {
+            PadShape::Rect | PadShape::Custom | PadShape::Other => vec![
+                core::Point::new(-half_width, -half_height),
+                core::Point::new(half_width, -half_height),
+                core::Point::new(half_width, half_height),
+                core::Point::new(-half_width, half_height),
+            ],
+            PadShape::RoundRect => {
+                let radius = self.roundrect_ratio.unwrap_or(0.25).clamp(0.0, 0.5)
+                    * self.width.min(self.height);
+                rounded_rectangle_outline(half_width, half_height, radius)
+            }
+            PadShape::Circle => ellipse_outline(half_width, half_height, 24),
+            PadShape::Oval => oval_outline(half_width, half_height),
+            PadShape::Trapezoid => {
+                let delta = self.trapezoid_delta.unwrap_or_default();
+                let dx = (delta.x / 2.0).clamp(-half_width, half_width);
+                let dy = (delta.y / 2.0).clamp(-half_height, half_height);
+                vec![
+                    core::Point::new(-half_width + dx, -half_height - dy),
+                    core::Point::new(half_width - dx, -half_height + dy),
+                    core::Point::new(half_width + dx, half_height - dy),
+                    core::Point::new(-half_width - dx, half_height + dy),
+                ]
+            }
+        };
+        for point in &mut points {
+            *point = rotate_point(*point, self.rotation);
+        }
+        points
+    }
+}
+
+fn rotate_point(point: core::Point, degrees: f64) -> core::Point {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    core::Point::new(point.x * cos - point.y * sin, point.x * sin + point.y * cos)
+}
+
+fn ellipse_outline(rx: f64, ry: f64, segments: usize) -> Vec<core::Point> {
+    (0..segments)
+        .map(|index| {
+            let angle = std::f64::consts::TAU * index as f64 / segments as f64;
+            core::Point::new(rx * angle.cos(), ry * angle.sin())
+        })
+        .collect()
+}
+
+fn oval_outline(half_width: f64, half_height: f64) -> Vec<core::Point> {
+    let radius = half_width.min(half_height);
+    let (offset_x, offset_y) = if half_width >= half_height {
+        (half_width - radius, 0.0)
+    } else {
+        (0.0, half_height - radius)
+    };
+    let mut points = Vec::with_capacity(24);
+    for index in 0..12 {
+        let angle = -std::f64::consts::FRAC_PI_2 + std::f64::consts::PI * index as f64 / 11.0;
+        points.push(core::Point::new(
+            offset_x + radius * angle.cos(),
+            offset_y + radius * angle.sin(),
+        ));
+    }
+    for index in 0..12 {
+        let angle = std::f64::consts::FRAC_PI_2 + std::f64::consts::PI * index as f64 / 11.0;
+        points.push(core::Point::new(
+            -offset_x + radius * angle.cos(),
+            -offset_y + radius * angle.sin(),
+        ));
+    }
+    points
+}
+
+fn rounded_rectangle_outline(half_width: f64, half_height: f64, radius: f64) -> Vec<core::Point> {
+    let radius = radius.min(half_width).min(half_height);
+    if radius <= 0.0 {
+        return vec![
+            core::Point::new(-half_width, -half_height),
+            core::Point::new(half_width, -half_height),
+            core::Point::new(half_width, half_height),
+            core::Point::new(-half_width, half_height),
+        ];
+    }
+    let inner_x = (half_width - radius).max(0.0);
+    let inner_y = (half_height - radius).max(0.0);
+    let mut points = Vec::with_capacity(24);
+    for (cx, cy, start) in [
+        (inner_x, inner_y, 0.0),
+        (-inner_x, inner_y, std::f64::consts::FRAC_PI_2),
+        (-inner_x, -inner_y, std::f64::consts::PI),
+        (inner_x, -inner_y, 3.0 * std::f64::consts::FRAC_PI_2),
+    ] {
+        for index in 0..6 {
+            let angle = start + std::f64::consts::FRAC_PI_2 * index as f64 / 5.0;
+            points.push(core::Point::new(cx + radius * angle.cos(), cy + radius * angle.sin()));
+        }
+    }
+    points
 }
 
 /// Type of pad (e.g., through-hole, surface-mount, etc.).

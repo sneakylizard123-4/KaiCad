@@ -1,12 +1,18 @@
 //! KaiCad PCB engine — board outline, layers, stackup, routing and design rules.
 
+pub mod board;
 pub mod drc;
 pub mod footprint;
 pub mod layer;
 pub mod routing;
 
+pub use board::{
+    BoardArc, BoardGraphic, BoardGraphicKind, BoardZone, ZoneFill, ZoneKeepout, sample_arc,
+};
 pub use drc::{DrcReport, DrcRules, DrcRulesError, DrcSeverity, DrcViolation, run_drc};
-pub use footprint::{Footprint, FootprintLibrary, FootprintLibraryError, PadPosition, PadType};
+pub use footprint::{
+    Footprint, FootprintLibrary, FootprintLibraryError, PadPosition, PadShape, PadType,
+};
 pub use layer::{LayerIssue, LayerIssueKind, LayerStack};
 
 /// A complete PCB design.
@@ -19,7 +25,16 @@ pub struct PcbDesign {
     pub footprints: Vec<footprint::Footprint>,
     pub tracks: Vec<Track>,
     pub vias: Vec<Via>,
-    /// Named nets used by tracks, vias and pads.
+    /// Copper zones, rule areas and keepouts.
+    #[serde(default)]
+    pub zones: Vec<board::BoardZone>,
+    /// Copper arcs, including arcs imported from KiCad tracks.
+    #[serde(default)]
+    pub arcs: Vec<board::BoardArc>,
+    /// Standalone board graphics and text.
+    #[serde(default)]
+    pub graphics: Vec<board::BoardGraphic>,
+    /// Named nets used by tracks, vias, pads, arcs and zones.
     ///
     /// Documents from before this field existed load with an empty list. Ids
     /// are stable UUIDs; names are metadata and do not affect connectivity.
@@ -52,6 +67,9 @@ impl Default for PcbDesign {
             footprints: Vec::new(),
             tracks: Vec::new(),
             vias: Vec::new(),
+            zones: Vec::new(),
+            arcs: Vec::new(),
+            graphics: Vec::new(),
             nets: Vec::new(),
             rules: drc::DrcRules::default(),
             source: None,
@@ -148,30 +166,6 @@ pub(crate) fn rect_distance_to_segment(
     distance
 }
 
-/// Distance between two rotated rectangles.
-pub(crate) fn rect_distance_to_rect(a: &CopperRect, b: &CopperRect) -> f64 {
-    if a.corners().iter().any(|corner| b.contains(corner))
-        || b.corners().iter().any(|corner| a.contains(corner))
-    {
-        return 0.0;
-    }
-
-    let a_corners = a.corners();
-    let b_corners = b.corners();
-    let mut distance = f64::INFINITY;
-    for a_index in 0..4 {
-        for b_index in 0..4 {
-            distance = distance.min(core::geometry::segment_distance(
-                &a_corners[a_index],
-                &a_corners[(a_index + 1) % 4],
-                &b_corners[b_index],
-                &b_corners[(b_index + 1) % 4],
-            ));
-        }
-    }
-    distance
-}
-
 /// Pad copper placed in board coordinates, with the layers it occupies.
 #[derive(Debug, Clone)]
 pub(crate) struct PadCopper {
@@ -182,6 +176,8 @@ pub(crate) struct PadCopper {
     pub width: f64,
     pub height: f64,
     pub rotation: f64,
+    /// Shape-accurate copper outline in board coordinates.
+    pub outline: Vec<core::Point>,
     pub layers: Vec<u16>,
     pub net_id: Option<uuid::Uuid>,
 }
@@ -256,6 +252,18 @@ impl PcbDesign {
         }
         for via in &self.vias {
             if let Some(net_id) = via.net_id {
+                if !net_id.is_nil() {
+                    ids.push(net_id);
+                }
+            }
+        }
+        for arc in &self.arcs {
+            if !arc.net_id.is_nil() {
+                ids.push(arc.net_id);
+            }
+        }
+        for zone in &self.zones {
+            if let Some(net_id) = zone.net_id {
                 if !net_id.is_nil() {
                     ids.push(net_id);
                 }
@@ -352,6 +360,18 @@ impl PcbDesign {
             for (pad_index, pad) in footprint.pad_positions.iter().enumerate() {
                 let center = placed(pad.x, pad.y);
                 let rotation = pad.rotation + footprint.rotation + half_turn;
+                let (outline_sin, outline_cos) =
+                    (footprint.rotation + half_turn).to_radians().sin_cos();
+                let outline = pad
+                    .local_outline()
+                    .into_iter()
+                    .map(|point| {
+                        core::Point::new(
+                            center.x + point.x * outline_cos - point.y * outline_sin,
+                            center.y + point.x * outline_sin + point.y * outline_cos,
+                        )
+                    })
+                    .collect();
                 let layers = match pad.pad_type {
                     footprint::PadType::ThroughHole => copper.clone(),
                     footprint::PadType::SurfaceMount | footprint::PadType::Tented => side_layer
@@ -378,6 +398,7 @@ impl PcbDesign {
                     width: pad.width,
                     height: pad.height,
                     rotation,
+                    outline,
                     layers,
                     net_id: pad.net_id,
                 });

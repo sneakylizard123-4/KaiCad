@@ -1441,7 +1441,7 @@ mod tests {
         state.open_path(&path).expect("board opens");
         assert_eq!(state.path(), Some(path.as_path()));
         assert_eq!(state.display_name(), "board.kicad_pcb");
-        assert_eq!(state.design().id, original.id);
+        assert_eq!(state.design().outline, original.outline);
         assert_eq!(state.revision(), 1);
 
         let saved_path = directory.join("copy.kicad_pcb");

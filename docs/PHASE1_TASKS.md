@@ -142,10 +142,10 @@
   - `cargo test` runs successfully
   - At least 3 baseline unit tests written for core data structures
   - Test coverage report generated
-- **Note:** 366 tests pass across the workspace. The `Coverage` CI job runs
+- **Note:** 384 tests pass across the workspace. The `Coverage` CI job runs
   `cargo llvm-cov` and uploads `lcov.info` as a build artifact.
 
-### Task 1.11: Integration Test Harness — 🚧 partial
+### Task 1.11: Integration Test Harness — ✅ complete
 - **Owner:** QA Lead
 - **Deliverable:** Test fixtures for project load/save cycles
 - **Dependencies:** Task 1.5
@@ -157,8 +157,10 @@
   including JSON project save/load. `kicad-parser` now imports/exports the
   supported `.kicad_pcb` subset, reports skipped constructs as warnings, and
   has fixture coverage for layers, nets, pads, tracks, vias and outlines.
-- **Remaining:** library tables, semantic zones/arcs/graphics/DRC rules and a
-  broad KiCad 9/10 compatibility corpus.
+- **Done (P2):** `sym-lib-table`/`fp-lib-table`, semantic zones/arcs/graphics/
+  keepouts/DRC rules and a 19-board / 19-project KiCad 10 template corpus. Only
+  custom-pad primitives, dimensions and full-fidelity formatting remain outside
+  the documented subset.
 
 ## Phase 1 Completion Criteria
 
@@ -228,14 +230,18 @@ further interactive track-routing increment added 11, for **342 passing
 tests**. The KiCad PCB compatibility increment added 9 parser tests and 2 PCB-model
 tests, for a total of **353 passing tests**. The subsequent KiCad file-
 interchange increment added 5 schematic tests, 1 standalone-footprint test and
-5 corpus tests, for **364 passing tests**. Native Studio `.kicad_pcb` open/save,
-layer-id mapping and board-UUID round trips added 2 tests, for **366 passing
-tests**. Studio provides board viewing, native open/save, DRC and undoable track
-routing, but not yet footprint placement or schematic capture. The CLI imports/exports the documented
-`.kicad_pcb` subset and preserves unmodelled board/schematic constructs;
-`.kicad_sch`, `.kicad_mod` and `.kicad_pro` file-level conversion is available.
-Semantic zones, library tables and full-fidelity board round trips remain
-deferred; `project bundle` follows the hierarchy. The Vulkan GPU backend is
+5 corpus tests, for **364 passing tests**. Native Studio `.kicad_pcb` open/save
+and layer-id mapping added 2 tests, and KiCad 10 name-only net references added
+1, for **367 passing tests**. The P2 interoperability increment added 17 tests
+for semantic zones/arcs/graphics/keepouts, shape-aware DRC, library tables and
+project DRC rules, for **384 passing tests**. Studio provides board viewing,
+native open/save, DRC and undoable track routing, but not yet footprint
+placement or schematic capture. The CLI imports/exports the documented
+`.kicad_pcb` subset with semantic board objects, shape-aware pads, project DRC
+rules and library tables; `.kicad_sch`, `.kicad_mod` and `.kicad_pro`
+file-level conversion is available. `project bundle` follows the hierarchy and
+copies project-local libraries. Custom-pad primitives and dimensions remain
+source-preserved. The Vulkan GPU backend is
 still deferred; the renderer is CPU software rasterization. Week 16 release
 hardening is next; full KiCad parity is tracked separately in
 [`KICAD_PARITY.md`](KICAD_PARITY.md).

@@ -86,11 +86,13 @@ viewport, runs DRC, inspects the stackup
 and footprints, and adds undoable click-to-route track editing with DRC
 preflight. `kicad-parser` also provides `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
 `.kicad_pro` file interchange through `kai-cad pcb|sch|footprint|project`,
-retaining unmodelled constructs instead of silently dropping them. Zones, arcs,
-graphics and DRC setup are preserved but not semantically editable; library
-tables remain. Footprint placement, schematic
-capture and full KiCad project compatibility are deferred. PCB designs persist with their tracks, vias and DRC rules in SQLite.
-The workspace has **366 passing tests**, clean `cargo clippy --workspace
+retaining unmodelled constructs instead of silently dropping them. Zones,
+keepouts, arcs, graphics, standard pad shapes and project DRC rules are modeled
+semantically, and `ProjectBundle` handles library tables and `${KIPRJMOD}`
+libraries. Footprint placement, schematic capture, interactive zone editing and
+full KiCad project compatibility are deferred. PCB designs persist with their
+tracks, vias and DRC rules in SQLite.
+The workspace has **384 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence,
@@ -178,7 +180,8 @@ capability gaps and delivery sequence are in
 ## 7. Success Criteria
 
 - 🚧 KaiCad can import/export KiCad board, schematic, footprint and project
-  files at the file layer; semantic project compatibility is not implemented
+  files with semantic board objects, DRC rules and library tables; the single
+  integrated project document and schematic capture are not implemented
 - [ ] Full schematic design (nets, symbols, rules) works
 - [x] Multi-layer PCB design with routing is functional
 - [x] Software renderer produces deterministic 2D/3D board visualizations

@@ -11,10 +11,10 @@ use std::cmp::Ordering;
 
 use uuid::Uuid;
 
-use crate::{
-    CopperRect, PadCopper, PcbDesign, Track, Via, rect_distance_to_point, rect_distance_to_rect,
-    rect_distance_to_segment,
+use crate::board::{
+    polygon_contains, polygon_distance, polygon_distance_to_path, polygon_distance_to_point,
 };
+use crate::{BoardArc, PadCopper, PcbDesign, Track, Via, sample_arc};
 
 /// Minimum copper dimensions enforced by the built-in rules.
 ///
@@ -174,6 +174,12 @@ pub fn run_drc(design: &PcbDesign, rules: &DrcRules) -> DrcReport {
         check_track_outside(design, track, &mut violations);
     }
 
+    for arc in &design.arcs {
+        check_arc_width(arc, rules, &mut violations);
+        check_arc_layer(design, arc, &mut violations);
+        check_arc_outside(design, arc, &mut violations);
+    }
+
     for via in &design.vias {
         check_via_outside(design, via, &mut violations);
         check_via_span(design, via, &mut violations);
@@ -188,6 +194,7 @@ pub fn run_drc(design: &PcbDesign, rules: &DrcRules) -> DrcReport {
     }
 
     check_clearance(design, rules, &pads, &mut violations);
+    check_zones(design, rules, &pads, &mut violations);
 
     violations.sort_by(|left, right| {
         left.rule_id
@@ -313,6 +320,67 @@ fn check_track_outside(design: &PcbDesign, track: &Track, violations: &mut Vec<D
             DrcSeverity::Error,
             format!("track {} leaves the board outline", track.id),
             vec![track.id],
+            finite_location(point),
+        );
+    }
+}
+
+fn arc_path(arc: &BoardArc) -> Vec<core::Point> {
+    sample_arc(arc.start, arc.mid, arc.end, 32)
+}
+
+fn check_arc_width(arc: &BoardArc, rules: &DrcRules, violations: &mut Vec<DrcViolation>) {
+    let location = finite_location(&arc.start);
+
+    if !arc.width.is_finite() || arc.width <= 0.0 {
+        push(
+            violations,
+            "track-width",
+            DrcSeverity::Error,
+            format!("arc {} has non-positive width {}", arc.id, arc.width),
+            vec![arc.id],
+            location,
+        );
+    } else if arc.width < rules.min_track_width {
+        push(
+            violations,
+            "track-width",
+            DrcSeverity::Warning,
+            format!(
+                "arc {} width {} mm is below the minimum {} mm",
+                arc.id, arc.width, rules.min_track_width
+            ),
+            vec![arc.id],
+            location,
+        );
+    }
+}
+
+fn check_arc_layer(design: &PcbDesign, arc: &BoardArc, violations: &mut Vec<DrcViolation>) {
+    let location = finite_location(&arc.start);
+    let message = match design.layers.iter().find(|layer| layer.id == arc.layer) {
+        None => format!("arc {} uses layer {} which does not exist", arc.id, arc.layer),
+        Some(layer) if !layer.is_copper() => {
+            format!("arc {} uses non-copper layer {} ({:?})", arc.id, layer.id, layer.name)
+        }
+        Some(_) => return,
+    };
+
+    push(violations, "track-layer", DrcSeverity::Error, message, vec![arc.id], location);
+}
+
+fn check_arc_outside(design: &PcbDesign, arc: &BoardArc, violations: &mut Vec<DrcViolation>) {
+    if design.outline.points.len() < 3 {
+        return;
+    }
+    let path = arc_path(arc);
+    if let Some(point) = path.iter().find(|point| !design.outline.contains_point(point)) {
+        push(
+            violations,
+            "track-outside-board",
+            DrcSeverity::Error,
+            format!("arc {} leaves the board outline", arc.id),
+            vec![arc.id],
             finite_location(point),
         );
     }
@@ -478,7 +546,9 @@ fn check_pad_outside(design: &PcbDesign, pad: &PadCopper, violations: &mut Vec<D
         return;
     }
 
-    if pad.rect.corners().iter().any(|corner| !design.outline.contains_point(corner)) {
+    let corners =
+        if pad.outline.is_empty() { pad.rect.corners().to_vec() } else { pad.outline.clone() };
+    if corners.iter().any(|corner| !design.outline.contains_point(corner)) {
         push(
             violations,
             "pad-outside-board",
@@ -538,6 +608,130 @@ fn check_clearance(
         }
     }
 
+    for arc in &design.arcs {
+        if !is_copper(design, arc.layer) || !arc.width.is_finite() {
+            continue;
+        }
+        let arc_path = arc_path(arc);
+        for track in &design.tracks {
+            if track.layer != arc.layer || !track.width.is_finite() || track.net_id == arc.net_id {
+                continue;
+            }
+            let distance = path_distance(&arc_path, &track.path);
+            if !distance.is_finite() {
+                continue;
+            }
+            let gap = distance - arc.width / 2.0 - track.width / 2.0;
+            if gap >= rules.clearance {
+                continue;
+            }
+            let objects = pair_objects(arc.id, track.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "arc {} and track {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], arc.layer, gap, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+        for via in &design.vias {
+            if !design.via_covers_layer(via, arc.layer)
+                || !via.diameter.is_finite()
+                || via.net_id == Some(arc.net_id)
+            {
+                continue;
+            }
+            let distance = path_point_distance(&arc_path, &via.position);
+            if !distance.is_finite() {
+                continue;
+            }
+            let gap = distance - arc.width / 2.0 - via.diameter / 2.0;
+            if gap >= rules.clearance {
+                continue;
+            }
+            let objects = pair_objects(arc.id, via.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "arc {} and via {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], arc.layer, gap, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+        for pad in pads {
+            if !pad.layers.contains(&arc.layer)
+                || !pad.has_valid_size()
+                || pad.net_id == Some(arc.net_id)
+            {
+                continue;
+            }
+            let distance = polygon_distance_to_path(&pad.outline, &arc_path);
+            if !distance.is_finite() {
+                continue;
+            }
+            let gap = distance - arc.width / 2.0;
+            if gap >= rules.clearance {
+                continue;
+            }
+            let objects = pair_objects(pad.id, arc.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "pad {} and arc {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], arc.layer, gap, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+    }
+
+    for left in 0..design.arcs.len() {
+        for right in left + 1..design.arcs.len() {
+            let first = &design.arcs[left];
+            let second = &design.arcs[right];
+            if first.layer != second.layer
+                || first.net_id == second.net_id
+                || !first.width.is_finite()
+                || !second.width.is_finite()
+            {
+                continue;
+            }
+            let first_path = arc_path(first);
+            let second_path = arc_path(second);
+            let distance = path_distance(&first_path, &second_path);
+            if !distance.is_finite() {
+                continue;
+            }
+            let gap = distance - first.width / 2.0 - second.width / 2.0;
+            if gap >= rules.clearance {
+                continue;
+            }
+            let objects = pair_objects(first.id, second.id);
+            push(
+                violations,
+                "clearance",
+                DrcSeverity::Error,
+                format!(
+                    "arcs {} and {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                    objects[0], objects[1], first.layer, gap, rules.clearance
+                ),
+                objects,
+                None,
+            );
+        }
+    }
+
     for track in &design.tracks {
         if !is_copper(design, track.layer) || !track.width.is_finite() {
             continue;
@@ -589,7 +783,7 @@ fn check_clearance(
                 continue;
             }
 
-            let distance = rect_distance_to_track(&pad.rect, &track.path);
+            let distance = polygon_distance_to_path(&pad.outline, &track.path);
             if !distance.is_finite() {
                 continue;
             }
@@ -624,7 +818,7 @@ fn check_clearance(
                 continue;
             };
 
-            let distance = rect_distance_to_point(&pad.rect, &via.position);
+            let distance = polygon_distance_to_point(&pad.outline, &via.position);
             if !distance.is_finite() {
                 continue;
             }
@@ -670,7 +864,7 @@ fn check_clearance(
                 continue;
             };
 
-            let distance = rect_distance_to_rect(&first.rect, &second.rect);
+            let distance = polygon_distance(&first.outline, &second.outline);
             if !distance.is_finite() || distance >= rules.clearance {
                 continue;
             }
@@ -691,6 +885,262 @@ fn check_clearance(
     }
 }
 
+/// Check copper-zone clearances and rule-area keepouts.
+fn check_zones(
+    design: &PcbDesign,
+    rules: &DrcRules,
+    pads: &[PadCopper],
+    violations: &mut Vec<DrcViolation>,
+) {
+    for zone in &design.zones {
+        if zone.polygons.is_empty() && zone.fills.is_empty() {
+            continue;
+        }
+        if let Some(keepout) = &zone.keepout {
+            if !zone.polygons.is_empty() {
+                check_keepout(design, zone, keepout, pads, violations);
+            }
+            continue;
+        }
+        let Some(zone_net) = zone.net_id else {
+            continue;
+        };
+
+        for layer in &zone.layers {
+            for polygon in zone.filled_polygons(*layer) {
+                for track in &design.tracks {
+                    if track.layer != *layer || track.net_id == zone_net || !track.width.is_finite()
+                    {
+                        continue;
+                    }
+                    let distance = polygon_distance_to_path(polygon, &track.path);
+                    let gap = distance - track.width / 2.0;
+                    if !gap.is_finite() || gap >= rules.clearance {
+                        continue;
+                    }
+                    let objects = pair_objects(zone.id, track.id);
+                    push(
+                        violations,
+                        "zone-clearance",
+                        DrcSeverity::Error,
+                        format!(
+                            "zone {} and track {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                            objects[0], objects[1], layer, gap, rules.clearance
+                        ),
+                        objects,
+                        None,
+                    );
+                }
+                for arc in &design.arcs {
+                    if arc.layer != *layer || arc.net_id == zone_net || !arc.width.is_finite() {
+                        continue;
+                    }
+                    let path = arc_path(arc);
+                    let distance = polygon_distance_to_path(polygon, &path);
+                    let gap = distance - arc.width / 2.0;
+                    if !gap.is_finite() || gap >= rules.clearance {
+                        continue;
+                    }
+                    let objects = pair_objects(zone.id, arc.id);
+                    push(
+                        violations,
+                        "zone-clearance",
+                        DrcSeverity::Error,
+                        format!(
+                            "zone {} and arc {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                            objects[0], objects[1], layer, gap, rules.clearance
+                        ),
+                        objects,
+                        None,
+                    );
+                }
+                for via in &design.vias {
+                    if !design.via_covers_layer(via, *layer)
+                        || via.net_id == Some(zone_net)
+                        || !via.diameter.is_finite()
+                    {
+                        continue;
+                    }
+                    let distance = polygon_distance_to_point(polygon, &via.position);
+                    let gap = distance - via.diameter / 2.0;
+                    if !gap.is_finite() || gap >= rules.clearance {
+                        continue;
+                    }
+                    let objects = pair_objects(zone.id, via.id);
+                    push(
+                        violations,
+                        "zone-clearance",
+                        DrcSeverity::Error,
+                        format!(
+                            "zone {} and via {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                            objects[0], objects[1], layer, gap, rules.clearance
+                        ),
+                        objects,
+                        None,
+                    );
+                }
+                for pad in pads {
+                    if !pad.layers.contains(layer)
+                        || pad.net_id == Some(zone_net)
+                        || pad.outline.is_empty()
+                    {
+                        continue;
+                    }
+                    let gap = polygon_distance(polygon, &pad.outline);
+                    if !gap.is_finite() || gap >= rules.clearance {
+                        continue;
+                    }
+                    let objects = pair_objects(zone.id, pad.id);
+                    push(
+                        violations,
+                        "zone-clearance",
+                        DrcSeverity::Error,
+                        format!(
+                            "zone {} and pad {} on layer {} are {:.3} mm apart, below the {} mm clearance",
+                            objects[0], objects[1], layer, gap, rules.clearance
+                        ),
+                        objects,
+                        None,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn check_keepout(
+    design: &PcbDesign,
+    zone: &crate::BoardZone,
+    keepout: &crate::ZoneKeepout,
+    pads: &[PadCopper],
+    violations: &mut Vec<DrcViolation>,
+) {
+    for polygon in &zone.polygons {
+        if keepout.tracks {
+            for track in &design.tracks {
+                if !zone.layers.contains(&track.layer)
+                    || !track.width.is_finite()
+                    || polygon_distance_to_path(polygon, &track.path) > track.width / 2.0 + 1e-9
+                {
+                    continue;
+                }
+                let objects = pair_objects(zone.id, track.id);
+                push(
+                    violations,
+                    "zone-keepout",
+                    DrcSeverity::Error,
+                    format!("track {} enters keepout zone {}", objects[1], objects[0]),
+                    objects,
+                    track.path.first().and_then(finite_location),
+                );
+            }
+            for arc in &design.arcs {
+                if !zone.layers.contains(&arc.layer) || !arc.width.is_finite() {
+                    continue;
+                }
+                let path = arc_path(arc);
+                if polygon_distance_to_path(polygon, &path) > arc.width / 2.0 + 1e-9 {
+                    continue;
+                }
+                let objects = pair_objects(zone.id, arc.id);
+                push(
+                    violations,
+                    "zone-keepout",
+                    DrcSeverity::Error,
+                    format!("arc {} enters keepout zone {}", objects[1], objects[0]),
+                    objects,
+                    finite_location(&arc.start),
+                );
+            }
+        }
+        if keepout.vias {
+            for via in &design.vias {
+                if !zone.layers.iter().any(|layer| design.via_covers_layer(via, *layer))
+                    || !via.diameter.is_finite()
+                    || polygon_distance_to_point(polygon, &via.position) > via.diameter / 2.0 + 1e-9
+                {
+                    continue;
+                }
+                let objects = pair_objects(zone.id, via.id);
+                push(
+                    violations,
+                    "zone-keepout",
+                    DrcSeverity::Error,
+                    format!("via {} enters keepout zone {}", objects[1], objects[0]),
+                    objects,
+                    finite_location(&via.position),
+                );
+            }
+        }
+        if keepout.pads {
+            for pad in pads {
+                if !pad.layers.iter().any(|layer| zone.layers.contains(layer))
+                    || pad.outline.is_empty()
+                    || polygon_distance(polygon, &pad.outline) > 1e-9
+                {
+                    continue;
+                }
+                let objects = pair_objects(zone.id, pad.id);
+                push(
+                    violations,
+                    "zone-keepout",
+                    DrcSeverity::Error,
+                    format!("pad {} enters keepout zone {}", objects[1], objects[0]),
+                    objects,
+                    finite_location(&pad.center),
+                );
+            }
+        }
+        if keepout.footprints {
+            for footprint in &design.footprints {
+                if !polygon_contains(polygon, &footprint.position) {
+                    continue;
+                }
+                let id = Uuid::new_v5(
+                    &Uuid::NAMESPACE_OID,
+                    format!("footprint|{}", footprint.reference_designator).as_bytes(),
+                );
+                let objects = pair_objects(zone.id, id);
+                push(
+                    violations,
+                    "zone-keepout",
+                    DrcSeverity::Error,
+                    format!(
+                        "footprint {} enters keepout zone {}",
+                        footprint.reference_designator, objects[0]
+                    ),
+                    objects,
+                    finite_location(&footprint.position),
+                );
+            }
+        }
+        if keepout.copper_pour {
+            for other in &design.zones {
+                if other.id == zone.id || other.keepout.is_some() {
+                    continue;
+                }
+                let overlap = zone.layers.iter().any(|layer| {
+                    other
+                        .filled_polygons(*layer)
+                        .any(|fill| polygon_distance(polygon, fill) <= 1e-9)
+                });
+                if !overlap {
+                    continue;
+                }
+                let objects = pair_objects(zone.id, other.id);
+                push(
+                    violations,
+                    "zone-keepout",
+                    DrcSeverity::Error,
+                    format!("zone {} enters keepout zone {}", objects[1], objects[0]),
+                    objects,
+                    None,
+                );
+            }
+        }
+    }
+}
+
 /// Smallest distance between a path and a point.
 fn path_point_distance(path: &[core::Point], point: &core::Point) -> f64 {
     if path.is_empty() {
@@ -702,20 +1152,6 @@ fn path_point_distance(path: &[core::Point], point: &core::Point) -> f64 {
 
     path.windows(2)
         .map(|window| point.distance_to_segment(&window[0], &window[1]))
-        .fold(f64::INFINITY, f64::min)
-}
-
-/// Smallest distance between a rectangle and a path.
-fn rect_distance_to_track(rect: &CopperRect, path: &[core::Point]) -> f64 {
-    if path.is_empty() {
-        return f64::INFINITY;
-    }
-    if path.len() == 1 {
-        return rect_distance_to_point(rect, &path[0]);
-    }
-
-    path.windows(2)
-        .map(|window| rect_distance_to_segment(rect, &window[0], &window[1]))
         .fold(f64::INFINITY, f64::min)
 }
 
@@ -762,7 +1198,7 @@ fn edge(path: &[core::Point], index: usize) -> (&core::Point, &core::Point) {
 mod tests {
     use super::{DrcReport, DrcRules, DrcSeverity, DrcViolation, run_drc};
     use crate::footprint::{Footprint, PadPosition, PadType};
-    use crate::{PcbDesign, Track, Via};
+    use crate::{BoardArc, BoardZone, PcbDesign, Track, Via, ZoneFill, ZoneKeepout};
     use core::{LayerKind, PcbLayer, PcbOutline, Point, Stackup};
     use uuid::Uuid;
 
@@ -787,6 +1223,29 @@ mod tests {
 
     fn via(start: u16, end: u16, position: Point) -> Via {
         Via { id: Uuid::new_v4(), position, layer_start: start, layer_end: end, ..Via::default() }
+    }
+
+    fn arc(layer: u16, width: f64, start: Point, mid: Point, end: Point) -> BoardArc {
+        BoardArc {
+            id: Uuid::new_v4(),
+            net_id: Uuid::new_v4(),
+            layer,
+            width,
+            start,
+            mid,
+            end,
+            ..BoardArc::default()
+        }
+    }
+
+    fn fill_zone(net_id: Option<Uuid>, points: Vec<Point>) -> BoardZone {
+        BoardZone {
+            id: Uuid::new_v4(),
+            net_id,
+            layers: vec![0],
+            fills: vec![ZoneFill { points, ..ZoneFill::default() }],
+            ..BoardZone::default()
+        }
     }
 
     fn count_rule(report: &DrcReport, rule_id: &str) -> usize {
@@ -991,6 +1450,122 @@ mod tests {
         };
         let report = run_drc(&design, &DrcRules::default());
         assert_eq!(count_rule(&report, "pad-rotation"), 1);
+    }
+
+    #[test]
+    fn arcs_are_checked_as_track_like_copper() {
+        let mut design = board(Vec::new(), Vec::new());
+        design.arcs = vec![arc(
+            0,
+            0.25,
+            Point::new(40.0, 40.0),
+            Point::new(45.0, 45.0),
+            Point::new(50.0, 40.0),
+        )];
+        assert_eq!(run_drc(&design, &DrcRules::default()).violations.len(), 0);
+
+        design.tracks = vec![track(0, 0.25, vec![Point::new(40.0, 44.9), Point::new(50.0, 44.9)])];
+        let report = run_drc(&design, &DrcRules::default());
+        assert_eq!(count_rule(&report, "clearance"), 1);
+        assert!(with_rule(&report, "clearance")[0].message.contains("arc"));
+
+        design.tracks.clear();
+        design.arcs[0].mid = Point::new(120.0, 90.0);
+        let report = run_drc(&design, &DrcRules::default());
+        assert_eq!(count_rule(&report, "track-outside-board"), 1);
+
+        design.arcs[0].width = 0.0;
+        let report = run_drc(&design, &DrcRules::default());
+        assert_eq!(count_rule(&report, "track-width"), 1);
+    }
+
+    #[test]
+    fn zone_fill_clearance_ignores_same_net_and_flags_foreign_copper() {
+        let net = Uuid::new_v4();
+        let polygon = vec![
+            Point::new(20.0, 20.0),
+            Point::new(30.0, 20.0),
+            Point::new(30.0, 30.0),
+            Point::new(20.0, 30.0),
+        ];
+        let mut design = PcbDesign {
+            zones: vec![fill_zone(Some(net), polygon.clone())],
+            ..board(Vec::new(), Vec::new())
+        };
+        design.tracks =
+            vec![track(0, 0.25, vec![Point::new(15.0, 19.95), Point::new(35.0, 19.95)])];
+        assert_eq!(count_rule(&run_drc(&design, &DrcRules::default()), "zone-clearance"), 1);
+
+        design.tracks[0].net_id = net;
+        assert_eq!(count_rule(&run_drc(&design, &DrcRules::default()), "zone-clearance"), 0);
+    }
+
+    #[test]
+    fn keepouts_flag_tracks_vias_pads_footprints_and_fills_that_enter_them() {
+        let polygon = vec![
+            Point::new(10.0, 10.0),
+            Point::new(20.0, 10.0),
+            Point::new(20.0, 20.0),
+            Point::new(10.0, 20.0),
+        ];
+        let keepout = ZoneKeepout {
+            tracks: true,
+            vias: true,
+            pads: true,
+            copper_pour: true,
+            footprints: true,
+        };
+        let copper_fill = vec![
+            Point::new(11.0, 11.0),
+            Point::new(19.0, 11.0),
+            Point::new(19.0, 19.0),
+            Point::new(11.0, 19.0),
+        ];
+        let mut design = PcbDesign {
+            zones: vec![
+                BoardZone {
+                    id: Uuid::new_v4(),
+                    layers: vec![0, 1],
+                    polygons: vec![polygon],
+                    keepout: Some(keepout),
+                    ..BoardZone::default()
+                },
+                fill_zone(None, copper_fill),
+            ],
+            tracks: vec![track(0, 0.25, vec![Point::new(5.0, 15.0), Point::new(25.0, 15.0)])],
+            vias: vec![via(0, 1, Point::new(15.0, 15.0))],
+            footprints: vec![footprint(Point::new(15.0, 15.0), vec![pad(0.0, 0.0, None)])],
+            ..board(Vec::new(), Vec::new())
+        };
+        let report = run_drc(&design, &DrcRules::default());
+        assert_eq!(count_rule(&report, "zone-keepout"), 5);
+
+        design.zones[0].keepout = Some(ZoneKeepout::default());
+        let report = run_drc(&design, &DrcRules::default());
+        assert_eq!(count_rule(&report, "zone-keepout"), 0);
+    }
+
+    #[test]
+    fn pad_shape_outline_is_used_for_clearance() {
+        let mut circle = pad(0.0, 0.0, None);
+        circle.width = 2.0;
+        circle.height = 2.0;
+        circle.shape = "circle".to_string();
+        let track = track(0, 0.05, vec![Point::new(50.9, 40.9), Point::new(51.2, 40.9)]);
+        let circle_design = PcbDesign {
+            footprints: vec![footprint(Point::new(50.0, 40.0), vec![circle.clone()])],
+            tracks: vec![track.clone()],
+            ..board(Vec::new(), Vec::new())
+        };
+        assert_eq!(count_rule(&run_drc(&circle_design, &DrcRules::default()), "clearance"), 0);
+
+        circle.shape = "rect".to_string();
+        let rect_design = PcbDesign {
+            footprints: vec![footprint(Point::new(50.0, 40.0), vec![circle])],
+            tracks: vec![track],
+            ..board(Vec::new(), Vec::new())
+        };
+        assert_eq!(count_rule(&run_drc(&rect_design, &DrcRules::default()), "clearance"), 1);
     }
 
     #[test]

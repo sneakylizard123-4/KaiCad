@@ -19,7 +19,8 @@
 > interactive routing and the software renderer) are complete. A post-Phase-2
 > Studio shell adds native `.kicad_pcb` open/save, board viewing, inspection, DRC
 > and click-to-route track editing, plus `.kicad_sch`/`.kicad_mod`/`.kicad_pro`
-> file interchange. The workspace has 366 passing tests.
+> file interchange, semantic zones/arcs/graphics/keepouts, library tables and
+> shape-aware DRC. The workspace has 384 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
@@ -255,11 +256,12 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   `preview_result` helpers. Same-net tracks and vias are traversable, so a
   route can start or T off existing copper; other nets remain obstacles.
 - `lib.rs` — `PcbDesign` (`outline`, `layers`, `stackup`, `footprints`,
-  `tracks`, `vias`, `rules`) built on `core::PcbOutline`/`core::PcbLayer`/
-  `core::Stackup`/`core::Point`, plus `Track` (copper `width`, default
-  `0.25` mm) and `Via` (optional `net_id`, `diameter`/`drill`, defaults
-  `0.6`/`0.3` mm). Missing fields load with those defaults, so older documents
-  still open.
+  `tracks`, `vias`, `zones`, `arcs`, `graphics`, `rules`) built on
+  `core::PcbOutline`/`core::PcbLayer`/`core::Stackup`/`core::Point`, plus
+  `Track` (copper `width`, default `0.25` mm), `Via` (optional `net_id`,
+  `diameter`/`drill`, defaults `0.6`/`0.3` mm) and the semantic zone/arc/
+  graphic types in `pcb::board`. Missing fields load with their defaults, so
+  older documents still open.
 
 `PcbDesign::copper_layer_count` is implemented and honours the stackup.
 `copper_layer_ids` exposes stackup order and `net_ids` returns sorted, unique
@@ -268,9 +270,10 @@ assigned nets from tracks, vias and pads. Outline geometry lives on
 `perimeter`, `contains_point` (even-odd ray casting with boundary-inclusive
 edges) and `bounding_box`. Design-rule checking lives in `pcb::drc`; single-
 layer and multi-layer grid routing, push-and-shove and interactive sessions
-live in `pcb::routing`. Rotated pads use an oriented copper rectangle
-consistently in DRC and routing, and `PcbDesign::via_kind` classifies through,
-blind and buried spans without depending on start/end order.
+live in `pcb::routing`. DRC uses each pad's rect/roundrect/oval/circle/
+trapezoid outline; routing still treats pads as oriented rectangles.
+`PcbDesign::via_kind` classifies through, blind and buried spans without
+depending on start/end order.
 
 ### `renderer` — deterministic software renderer
 
@@ -413,10 +416,12 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
   import/export.
 - Board conversion preserves the layer table and copper stackup, named nets,
   Edge.Cuts outlines, footprints/references/pad numbers, footprint rotation and
-  side, pad shape/kind/copper geometry, tracks and vias. Zones, arcs, graphics,
-  text, groups, models, setup/title data and unknown nodes are retained in
-  `PcbDesign::source` or `Footprint::preserved` and re-emitted. Non-rectangular
-  pads keep their source shape, but DRC/routing still use rectangles.
+  side, standard pad shapes/copper outlines, tracks, vias, copper arcs, zones,
+  keepouts and line/rectangle/circle/arc/polygon/text graphics. Custom pad
+  primitives, dimensions, groups, models, setup/title data and unknown nodes
+  are retained in `PcbDesign::source` or `Footprint::preserved` and re-emitted.
+  DRC uses standard pad outlines and the modeled zone/arc geometry; routing
+  still uses pad rectangles.
 - Schematic conversion retains `lib_symbols`, property effects, pin blocks,
   instance paths, buses, text, images and unknown nodes. Child sheet symbols
   record their file name and placement; `ProjectBundle` recursively loads and
@@ -604,10 +609,12 @@ iteration.
 
 | Rule id | Severity | Trigger |
 |---------|----------|---------|
-| `track-width` | Error for a non-finite or `<= 0` width, Warning below `min_track_width` | Track copper width |
-| `track-layer` | Error | Track layer missing or not copper |
-| `clearance` | Error | Tracks, vias and pads on a shared copper layer with different nets are closer than `clearance`, edge to edge |
-| `track-outside-board` | Error | A track path point lies outside the outline |
+| `track-width` | Error for a non-finite or `<= 0` width, Warning below `min_track_width` | Track or copper-arc width |
+| `track-layer` | Error | Track/arc layer missing or not copper |
+| `clearance` | Error | Tracks, arcs, vias and pads on a shared copper layer with different nets are closer than `clearance`, edge to edge |
+| `zone-clearance` | Error | A zone fill is closer than `clearance` to foreign copper |
+| `zone-keepout` | Error | A track, arc, via, pad, footprint or copper fill enters a keepout area |
+| `track-outside-board` | Error | A track or arc path point lies outside the outline |
 | `via-outside-board` | Error | A via centre lies outside the outline |
 | `pad-outside-board` | Error | A pad corner lies outside the outline |
 | `pad-size` | Error | A pad width or height is non-finite or `<= 0` |
@@ -619,11 +626,13 @@ iteration.
 
 An outline with fewer than three points disables the board-containment rules.
 An empty stackup means layer order is unknown, so `via-span` only requires two
-distinct, existing copper layers. Pad copper is an oriented rectangle centred
+distinct, existing copper layers. Pad copper is a shape-aware outline centred
 on `Footprint::position + PadPosition::{x, y}` and rotated counter-clockwise by
 `PadPosition::rotation`; through-hole pads occupy every copper layer,
 surface-mount and tented pads the top copper layer, and pads in the same
-footprint are not compared with each other.
+footprint are not compared with each other. Copper arcs are sampled as short
+segments for width, layer, containment and clearance checks; zone fills and
+keepout polygons use the same polygon-distance helpers.
 Pad-to-track and track-to-via clearance is skipped when the shared net matches;
 generated vias carry `Some(net_id)`, while older documents load `None` and are
 compared as different nets. Limits live on
@@ -691,10 +700,11 @@ These come from `PRD.md` and `PLAN.md` and constrain every future change.
 - **Secondary:** KiCad 9 project files.
 - `kicad-parser` imports `.kicad_sym` symbol libraries and provides
   `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange;
-  `schematic` exports a KiCad netlist. Unknown constructs are preserved, but
-  zones/arcs/graphics/DRC rules are not semantically modeled. `ProjectBundle`
-  handles recursive project bundles, library tables are absent, and no KiCad
-  netlist importer exists yet.
+  `schematic` exports a KiCad netlist. Zones, keepouts, arcs, graphics, standard
+  pad shapes and project DRC rules are semantically modeled; custom pad
+  primitives, dimensions and some setup fields are preserved. `ProjectBundle`
+  handles recursive project bundles, `sym-lib-table`/`fp-lib-table` and
+  `${KIPRJMOD}` libraries. No KiCad netlist importer exists yet.
 
 ## Current milestone and next steps
 
@@ -717,9 +727,10 @@ persistence, activation state, capability filters and CLI management, a
 deterministic software 2D/3D renderer, the `kai-cad` self-check binary, a
 post-Phase-2 Studio shell (`gui`) for board viewing, inspection, DRC and
 undoable track routing, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
-file interchange with opaque preservation and a four-file corpus, CI (including
-a Markdown link check and coverage job), and documentation. The workspace has
-**366 passing tests**.
+file interchange with semantic zones/arcs/graphics, library tables and opaque
+preservation, a five-file corpus and a 19-project template validation pass, CI
+(including a Markdown link check and coverage job), and documentation. The
+workspace has **384 passing tests**.
 
 **Next (Week 16):** foundation release hardening. The planned work is:
 

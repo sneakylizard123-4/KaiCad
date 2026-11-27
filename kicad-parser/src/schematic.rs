@@ -243,6 +243,34 @@ impl ProjectFile {
         Ok(json)
     }
 
+    /// Map KiCad's project-level board rules onto [`pcb::DrcRules`].
+    ///
+    /// KiCad uses `0.0` for an unconstrained rule; non-positive values keep
+    /// KaiCad's default instead of becoming an invalid DRC limit. Unknown
+    /// project settings remain untouched in [`ProjectFile::value`].
+    pub fn drc_rules(&self) -> pcb::DrcRules {
+        let mut rules = pcb::DrcRules::default();
+        let Some(value) = self.value.pointer("/board/design_settings/rules") else {
+            return rules;
+        };
+        let number = |key: &str| {
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_f64)
+                .filter(|value| value.is_finite() && *value > 0.0)
+        };
+        if let Some(value) = number("min_clearance") {
+            rules.clearance = value;
+        }
+        if let Some(value) = number("min_track_width") {
+            rules.min_track_width = value;
+        }
+        if let Some(value) = number("min_via_annular_width") {
+            rules.min_annular_ring = value;
+        }
+        rules
+    }
+
     /// Save the project, creating parent directories as needed.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), ParseError> {
         let path = path.as_ref();

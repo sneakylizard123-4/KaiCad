@@ -1,21 +1,26 @@
 //! Import and export for the supported subset of KiCad `.kicad_pcb` files.
 //!
 //! The importer maps board layers, named nets, Edge.Cuts outlines, footprints,
-//! pads, tracks and vias into [`pcb::PcbDesign`]. It reports constructs it had
-//! to skip instead of pretending the conversion was lossless.
+//! pad shapes, tracks, vias, copper arcs, zones, keepouts and board graphics into
+//! [`pcb::PcbDesign`]. Constructs without a semantic model, including some setup
+//! blocks, dimensions and footprint metadata, remain source-preserved. The
+//! importer reports approximations instead of pretending the conversion is
+//! lossless.
 //!
-//! The writer emits the same subset in a form KiCad can open. It deliberately
-//! does not claim full `.kicad_pcb` fidelity: copper zones, rule areas, arcs,
-//! pad shapes other than rectangular copper, footprint graphics, text, 3D
-//! models, dimensions and DRC constraints are not represented by KaiCad's
-//! current board model.
+//! The writer emits the modeled data plus preserved source nodes in a form KiCad
+//! can open. Custom pad primitives still use their bounding rectangle for DRC,
+//! and Edge.Cuts arcs remain source-preserved because KaiCad's outline model is
+//! polygonal.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use core::{Point, PreservedNode, SourceDocument};
 use pcb::footprint::{Outline, OutlineShape, PadPosition, PadType};
-use pcb::{Footprint, PcbDesign, PcbNet, Track, Via};
+use pcb::{
+    BoardArc, BoardGraphic, BoardGraphicKind, BoardZone, Footprint, PcbDesign, PcbNet, Track, Via,
+    ZoneFill, ZoneKeepout,
+};
 use uuid::Uuid;
 
 use super::{ParseError, SExpr, parse_document, write_quoted};
@@ -83,8 +88,14 @@ pub fn parse_pcb(input: &str) -> Result<PcbImport, ParseError> {
             Some("segment") => {
                 design.tracks.push(parse_segment(item, &layer_ids, &mut nets, &mut warnings)?);
             }
+            Some("arc") => {
+                design.arcs.push(parse_board_arc(item, &layer_ids, &mut nets, &mut warnings)?);
+            }
             Some("via") => {
                 design.vias.push(parse_via(item, &layer_ids, &mut nets, &mut warnings)?);
+            }
+            Some("zone") => {
+                design.zones.push(parse_zone(item, &layer_ids, &mut nets, &mut warnings)?);
             }
             Some("footprint") | Some("module") => {
                 design.footprints.push(parse_footprint_node(
@@ -97,6 +108,16 @@ pub fn parse_pcb(input: &str) -> Result<PcbImport, ParseError> {
             }
             Some("net" | "layers" | "version" | "generator" | "uuid") => {}
             Some("gr_line" | "gr_rect" | "gr_poly") if is_edge_cuts(item) => {}
+            Some("gr_arc") if is_edge_cuts(item) => {
+                // Edge.Cuts arcs remain source-preserved until the outline
+                // model gains native arc segments; parse_outline warns once.
+                if let Some(node) = preserved_node(item) {
+                    source.preserved.push(node);
+                }
+            }
+            Some("gr_line" | "gr_rect" | "gr_circle" | "gr_arc" | "gr_poly" | "gr_text") => {
+                design.graphics.push(parse_graphic(item, &layer_ids, &mut warnings)?);
+            }
             Some(head) => {
                 if let Some(node) = preserved_node(item) {
                     warnings.preserved(head);
@@ -258,8 +279,17 @@ pub fn write_footprint(footprint: &Footprint) -> Result<String, ParseError> {
             number(pad.width),
             number(pad.height)
         );
-        if shape == "roundrect" && !has_head(&pad.preserved, "roundrect_rratio") {
-            output.push_str(" (roundrect_rratio 0.25)");
+        if shape == "roundrect" {
+            let _ = write!(
+                output,
+                " (roundrect_rratio {})",
+                number(pad.roundrect_ratio.unwrap_or(0.25))
+            );
+        }
+        if shape == "trapezoid" {
+            if let Some(delta) = pad.trapezoid_delta {
+                let _ = write!(output, " (rect_delta {} {})", number(delta.x), number(delta.y));
+            }
         }
         for node in &pad.preserved {
             write_node_inline(&mut output, &node.source);
@@ -481,15 +511,26 @@ fn parse_polygon(node: &SExpr) -> Result<Vec<Point>, ParseError> {
     Ok(result)
 }
 
+/// First KiCad file version that identifies nets by name instead of code.
+const NAME_ONLY_NET_VERSION: u32 = 20260206;
+
+fn uses_name_only_nets(version: Option<&str>) -> bool {
+    version
+        .and_then(|version| version.parse::<u32>().ok())
+        .is_some_and(|version| version >= NAME_ONLY_NET_VERSION)
+}
+
 #[derive(Default)]
 struct NetTable {
     by_code: BTreeMap<u32, Uuid>,
     by_id: BTreeMap<Uuid, String>,
+    name_only: bool,
 }
 
 impl NetTable {
     fn parse(root: &SExpr, warnings: &mut Warnings) -> Result<Self, ParseError> {
-        let mut table = Self { by_code: BTreeMap::new(), by_id: BTreeMap::new() };
+        let name_only = uses_name_only_nets(child_atom(root, "version").as_deref());
+        let mut table = Self { name_only, ..Self::default() };
         for item in root.items().unwrap_or_default() {
             if item.head() != Some("net") {
                 continue;
@@ -526,27 +567,36 @@ impl NetTable {
         let Some(net) = node.child("net") else {
             return Ok(None);
         };
-        let code = net
-            .get(1)
-            .and_then(SExpr::atom)
-            .ok_or_else(|| ParseError::Syntax("net reference is missing its code".to_string()))?
-            .parse::<u32>()
-            .map_err(|_| ParseError::Syntax("net reference code must be an integer".to_string()))?;
-        if code == 0 {
+        let reference = net.get(1).and_then(SExpr::atom).ok_or_else(|| {
+            ParseError::Syntax("net reference is missing its code or name".to_string())
+        })?;
+
+        if !self.name_only {
+            if let Ok(code) = reference.parse::<u32>() {
+                if code == 0 {
+                    return Ok(None);
+                }
+                if let Some(id) = self.by_code.get(&code) {
+                    return Ok(Some(*id));
+                }
+                let name = net.get(2).and_then(SExpr::atom).unwrap_or_default();
+                if name.is_empty() {
+                    warnings.note(format!("skipped undefined net code {code}"));
+                    return Ok(None);
+                }
+                let id = net_id(name);
+                self.by_code.insert(code, id);
+                self.by_id.entry(id).or_insert_with(|| name.to_string());
+                warnings.note(format!("recovered undeclared net {code} '{name}' from a reference"));
+                return Ok(Some(id));
+            }
+        }
+
+        if reference.is_empty() {
             return Ok(None);
         }
-        if let Some(id) = self.by_code.get(&code) {
-            return Ok(Some(*id));
-        }
-        let name = net.get(2).and_then(SExpr::atom).unwrap_or_default();
-        if name.is_empty() {
-            warnings.note(format!("skipped undefined net code {code}"));
-            return Ok(None);
-        }
-        let id = net_id(name);
-        self.by_code.insert(code, id);
-        self.by_id.entry(id).or_insert_with(|| name.to_string());
-        warnings.note(format!("recovered undeclared net {code} '{name}' from a reference"));
+        let id = net_id(reference);
+        self.by_id.entry(id).or_insert_with(|| reference.to_string());
         Ok(Some(id))
     }
 
@@ -635,6 +685,262 @@ fn parse_via(
     Ok(Via { id, net_id, position, layer_start, layer_end, diameter, drill })
 }
 
+fn parse_board_arc(
+    node: &SExpr,
+    layers: &BTreeMap<String, u16>,
+    nets: &mut NetTable,
+    warnings: &mut Warnings,
+) -> Result<BoardArc, ParseError> {
+    let layer = resolve_layer(node, layers)?;
+    let start = parse_point(node, "start")?;
+    let mid = parse_point(node, "mid")?;
+    let end = parse_point(node, "end")?;
+    let width = child_number(node, "width")
+        .or_else(|| node.child("stroke").and_then(|stroke| nested_number(stroke, "width")))
+        .unwrap_or(0.25);
+    let net_id = nets.resolve(node, warnings)?.unwrap_or_default();
+    let id = parse_uuid(node).unwrap_or_else(|| {
+        Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            format!(
+                "kicad-board-arc|{}|{}|{}|{}|{}|{}|{}|{}",
+                start.x, start.y, mid.x, mid.y, end.x, end.y, layer, width
+            )
+            .as_bytes(),
+        )
+    });
+    let preserved = preserved_children(
+        node,
+        &["start", "mid", "end", "width", "stroke", "layer", "net", "uuid"],
+    );
+    Ok(BoardArc { id, net_id, layer, width, start, mid, end, preserved })
+}
+
+fn parse_zone(
+    node: &SExpr,
+    layers: &BTreeMap<String, u16>,
+    nets: &mut NetTable,
+    warnings: &mut Warnings,
+) -> Result<BoardZone, ParseError> {
+    let net_id = nets.resolve(node, warnings)?;
+    let zone_layers = parse_zone_layers(node, layers, warnings)?;
+    let mut polygons = Vec::new();
+    for polygon in
+        node.items().unwrap_or_default().iter().filter(|item| item.head() == Some("polygon"))
+    {
+        let points = parse_polygon(polygon)?;
+        if points.len() >= 3 {
+            polygons.push(points);
+        } else {
+            warnings.note("skipped a zone polygon with fewer than three points");
+        }
+    }
+
+    let mut fills = Vec::new();
+    for fill in
+        node.items().unwrap_or_default().iter().filter(|item| item.head() == Some("filled_polygon"))
+    {
+        let fill_layer = fill
+            .child("layer")
+            .and_then(|layer| layer.get(1))
+            .and_then(SExpr::atom)
+            .and_then(|name| layers.get(name).copied());
+        let points = parse_polygon(fill)?;
+        if points.len() >= 3 {
+            fills.push(ZoneFill {
+                layer: fill_layer,
+                points,
+                island: fill.child("island").is_some(),
+            });
+        }
+    }
+
+    let keepout = node.child("keepout").map(parse_zone_keepout);
+    let name = child_atom(node, "name").unwrap_or_default();
+    let priority = child_atom(node, "priority")
+        .and_then(|value| value.parse::<i32>().ok())
+        .unwrap_or_default();
+    let id = parse_uuid(node).unwrap_or_else(|| {
+        let mut seed = String::from("kicad-zone");
+        for layer in &zone_layers {
+            let _ = write!(seed, "|{layer}");
+        }
+        for polygon in &polygons {
+            for point in polygon {
+                let _ = write!(seed, "|{}|{}", point.x, point.y);
+            }
+        }
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes())
+    });
+    let preserved = preserved_children(
+        node,
+        &[
+            "net",
+            "net_name",
+            "layer",
+            "layers",
+            "uuid",
+            "polygon",
+            "filled_polygon",
+            "keepout",
+            "name",
+            "priority",
+        ],
+    );
+    Ok(BoardZone {
+        id,
+        net_id,
+        layers: zone_layers,
+        polygons,
+        fills,
+        keepout,
+        name,
+        priority,
+        preserved,
+    })
+}
+
+fn parse_zone_layers(
+    node: &SExpr,
+    layers: &BTreeMap<String, u16>,
+    warnings: &mut Warnings,
+) -> Result<Vec<u16>, ParseError> {
+    let mut ids = Vec::new();
+    let mut names = Vec::new();
+    if let Some(layer) = node.child("layer") {
+        if let Some(name) = layer.get(1).and_then(SExpr::atom) {
+            names.push(name);
+        }
+    }
+    if let Some(layer_list) = node.child("layers") {
+        for value in layer_list.iter().skip(1) {
+            if let Some(name) = value.atom() {
+                names.push(name);
+            }
+        }
+    }
+    for name in names {
+        if let Some(id) = layers.get(name) {
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        } else {
+            warnings.note(format!("zone references undeclared layer '{name}'"));
+        }
+    }
+    if ids.is_empty() {
+        return Err(ParseError::Syntax("zone is missing a layer".to_string()));
+    }
+    Ok(ids)
+}
+
+fn parse_zone_keepout(items: &[SExpr]) -> ZoneKeepout {
+    let mut keepout = ZoneKeepout::default();
+    for item in items.iter().skip(1) {
+        let disallowed = item
+            .items()
+            .unwrap_or_default()
+            .get(1)
+            .and_then(SExpr::atom)
+            .is_some_and(|value| value == "not_allowed");
+        match item.head() {
+            Some("tracks") => keepout.tracks = disallowed,
+            Some("vias") => keepout.vias = disallowed,
+            Some("pads") => keepout.pads = disallowed,
+            Some("copperpour") => keepout.copper_pour = disallowed,
+            Some("footprints") => keepout.footprints = disallowed,
+            _ => {}
+        }
+    }
+    keepout
+}
+
+fn parse_graphic(
+    node: &SExpr,
+    layers: &BTreeMap<String, u16>,
+    _warnings: &mut Warnings,
+) -> Result<BoardGraphic, ParseError> {
+    let head = node.head().unwrap_or_default();
+    let layer = resolve_layer(node, layers)?;
+    let width = child_number(node, "width")
+        .or_else(|| node.child("stroke").and_then(|stroke| nested_number(stroke, "width")))
+        .unwrap_or_default();
+    let fill = fill_mode(node).unwrap_or_default();
+    let kind = match head {
+        "gr_line" => BoardGraphicKind::Line {
+            start: parse_point(node, "start")?,
+            end: parse_point(node, "end")?,
+        },
+        "gr_rect" => BoardGraphicKind::Rectangle {
+            start: parse_point(node, "start")?,
+            end: parse_point(node, "end")?,
+        },
+        "gr_circle" => BoardGraphicKind::Circle {
+            center: parse_point(node, "center")?,
+            end: parse_point(node, "end")?,
+        },
+        "gr_arc" => BoardGraphicKind::Arc {
+            start: parse_point(node, "start")?,
+            mid: parse_point(node, "mid")?,
+            end: parse_point(node, "end")?,
+        },
+        "gr_poly" => BoardGraphicKind::Polygon { points: parse_polygon(node)? },
+        "gr_text" => {
+            let text = node
+                .items()
+                .and_then(|items| items.get(1))
+                .and_then(SExpr::atom)
+                .unwrap_or_default()
+                .to_string();
+            let (position, rotation) = parse_at(node)?;
+            BoardGraphicKind::Text { text, position, rotation }
+        }
+        other => {
+            return Err(ParseError::Unsupported(format!("unsupported board graphic '{other}'")));
+        }
+    };
+    let id = parse_uuid(node).unwrap_or_else(|| {
+        Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            format!("kicad-board-graphic|{head}|{layer}|{}|{}", width, fill).as_bytes(),
+        )
+    });
+    let preserved = preserved_children(
+        node,
+        &["start", "end", "mid", "center", "pts", "at", "layer", "uuid", "stroke", "width", "fill"],
+    );
+    Ok(BoardGraphic { id, kind, layer, width, fill, preserved })
+}
+
+fn child_number(node: &SExpr, child: &str) -> Option<f64> {
+    node.child(child)?.get(1)?.atom()?.parse::<f64>().ok()
+}
+
+fn fill_mode(node: &SExpr) -> Option<String> {
+    let fill = node.child("fill")?;
+    if let Some(mode) = fill.get(1).and_then(SExpr::atom) {
+        return Some(mode.to_string());
+    }
+    nested_value(fill, "type").map(str::to_string)
+}
+
+fn nested_number(items: &[SExpr], head: &str) -> Option<f64> {
+    nested_value(items, head)?.parse::<f64>().ok()
+}
+
+fn nested_value<'a>(items: &'a [SExpr], head: &str) -> Option<&'a str> {
+    items.iter().find(|item| item.head() == Some(head))?.items()?.get(1)?.atom()
+}
+
+fn preserved_children(node: &SExpr, excluded: &[&str]) -> Vec<PreservedNode> {
+    node.items()
+        .unwrap_or_default()
+        .iter()
+        .filter(|child| child.head().is_none_or(|head| !excluded.contains(&head)))
+        .filter_map(preserved_node)
+        .collect()
+}
+
 fn parse_footprint_node(
     node: &SExpr,
     nets: &mut NetTable,
@@ -696,9 +1002,11 @@ fn parse_pad(
     let number = items.get(1).and_then(SExpr::atom).unwrap_or_default();
     let kind = items.get(2).and_then(SExpr::atom).unwrap_or("smd");
     let shape = items.get(3).and_then(SExpr::atom).unwrap_or("rect");
-    if shape != "rect" {
+    if matches!(shape, "custom")
+        || !matches!(shape, "rect" | "roundrect" | "oval" | "circle" | "trapezoid")
+    {
         warnings.note(format!(
-            "kept {shape} pad '{number}' on '{footprint_name}' but KaiCad checks it as rectangular copper"
+            "kept {shape} pad '{number}' on '{footprint_name}' but DRC uses its bounding rectangle"
         ));
     }
     let pad_type = match kind {
@@ -719,9 +1027,21 @@ fn parse_pad(
     let width = number_at(size, 1, "pad width")?;
     let height = number_at(size, 2, "pad height")?;
     let net_id = nets.resolve(node, warnings)?;
+    let roundrect_ratio = node
+        .child("roundrect_rratio")
+        .and_then(|ratio| ratio.get(1))
+        .and_then(SExpr::atom)
+        .and_then(|ratio| ratio.parse::<f64>().ok());
+    let trapezoid_delta = node.child("rect_delta").map(|delta| {
+        Ok::<Point, ParseError>(Point::new(
+            number_at(delta, 1, "pad delta x")?,
+            number_at(delta, 2, "pad delta y")?,
+        ))
+    });
+    let trapezoid_delta = trapezoid_delta.transpose()?;
     let mut preserved = Vec::new();
     for child in node.items().unwrap_or_default() {
-        if matches!(child.head(), Some("at" | "size" | "net")) {
+        if matches!(child.head(), Some("at" | "size" | "net" | "roundrect_rratio" | "rect_delta")) {
             continue;
         }
         if let Some(node) = preserved_node(child) {
@@ -739,6 +1059,8 @@ fn parse_pad(
         net_id,
         shape: shape.to_string(),
         kind: kind.to_string(),
+        roundrect_ratio,
+        trapezoid_delta,
         preserved,
     })
 }
@@ -807,6 +1129,7 @@ struct Exporter {
     layer_names: BTreeMap<u16, String>,
     net_codes: BTreeMap<Uuid, u32>,
     nets: Vec<(u32, Uuid, String)>,
+    name_only_nets: bool,
 }
 
 impl Exporter {
@@ -880,6 +1203,33 @@ impl Exporter {
                 }
             }
         }
+        for arc in &design.arcs {
+            if let std::collections::btree_map::Entry::Vacant(entry) = layer_names.entry(arc.layer)
+            {
+                if let Some(name) = layers.get(&arc.layer) {
+                    entry.insert(name.clone());
+                }
+            }
+        }
+        for zone in &design.zones {
+            for layer in &zone.layers {
+                if let std::collections::btree_map::Entry::Vacant(entry) = layer_names.entry(*layer)
+                {
+                    if let Some(name) = layers.get(layer) {
+                        entry.insert(name.clone());
+                    }
+                }
+            }
+        }
+        for graphic in &design.graphics {
+            if let std::collections::btree_map::Entry::Vacant(entry) =
+                layer_names.entry(graphic.layer)
+            {
+                if let Some(name) = layers.get(&graphic.layer) {
+                    entry.insert(name.clone());
+                }
+            }
+        }
 
         let top_copper = design
             .copper_layer_ids()
@@ -932,6 +1282,59 @@ impl Exporter {
             {
                 return Err(ParseError::Unsupported(
                     "via position, size and drill must be finite and positive".to_string(),
+                ));
+            }
+        }
+        for arc in &design.arcs {
+            if !layer_names.contains_key(&arc.layer) {
+                return Err(ParseError::Unsupported(format!(
+                    "copper arc references undeclared layer {}",
+                    arc.layer
+                )));
+            }
+            if !arc.width.is_finite()
+                || arc.width <= 0.0
+                || [arc.start, arc.mid, arc.end]
+                    .iter()
+                    .any(|point| !point.x.is_finite() || !point.y.is_finite())
+            {
+                return Err(ParseError::Unsupported(
+                    "copper arc geometry must be finite and its width positive".to_string(),
+                ));
+            }
+        }
+        for zone in &design.zones {
+            if zone.layers.is_empty()
+                || zone.layers.iter().any(|layer| !layer_names.contains_key(layer))
+            {
+                return Err(ParseError::Unsupported(format!(
+                    "zone {} references a layer outside the board",
+                    zone.id
+                )));
+            }
+            let invalid = zone
+                .polygons
+                .iter()
+                .chain(zone.fills.iter().map(|fill| &fill.points))
+                .flatten()
+                .any(|point| !point.x.is_finite() || !point.y.is_finite());
+            if invalid {
+                return Err(ParseError::Unsupported(format!(
+                    "zone {} contains a non-finite coordinate",
+                    zone.id
+                )));
+            }
+        }
+        for graphic in &design.graphics {
+            if !layer_names.contains_key(&graphic.layer) {
+                return Err(ParseError::Unsupported(format!(
+                    "board graphic references undeclared layer {}",
+                    graphic.layer
+                )));
+            }
+            if !graphic.width.is_finite() {
+                return Err(ParseError::Unsupported(
+                    "board graphic width must be finite".to_string(),
                 ));
             }
         }
@@ -1003,6 +1406,18 @@ impl Exporter {
                 }
             }
         }
+        for arc in &design.arcs {
+            if !arc.net_id.is_nil() {
+                used.insert(arc.net_id);
+            }
+        }
+        for zone in &design.zones {
+            if let Some(id) = zone.net_id {
+                if !id.is_nil() {
+                    used.insert(id);
+                }
+            }
+        }
         for footprint in &design.footprints {
             for pad in &footprint.pad_positions {
                 if let Some(id) = pad.net_id {
@@ -1030,7 +1445,31 @@ impl Exporter {
             nets.push((code, id, name));
         }
 
-        Ok(Self { layers, layer_names, net_codes, nets })
+        Ok(Self {
+            layers,
+            layer_names,
+            net_codes,
+            nets,
+            name_only_nets: uses_name_only_nets(
+                design.source.as_ref().and_then(|source| source.version.as_deref()),
+            ),
+        })
+    }
+
+    fn net_name(&self, id: Uuid) -> Option<&str> {
+        self.nets.iter().find(|(_, net_id, _)| *net_id == id).map(|(_, _, name)| name.as_str())
+    }
+
+    fn net_reference(&self, id: Uuid) -> Option<String> {
+        if id.is_nil() {
+            return None;
+        }
+        let name = self.net_name(id)?;
+        if self.name_only_nets {
+            return Some(quote(name));
+        }
+        let code = *self.net_codes.get(&id)?;
+        (code != 0).then(|| format!("{code} {}", quote(name)))
     }
 
     fn render(&self, design: &PcbDesign) -> String {
@@ -1052,14 +1491,8 @@ impl Exporter {
         if !has_head(preserved, "paper") {
             output.push_str("  (paper \"A4\")\n");
         }
-        let uuid = (!design.id.is_nil())
-            .then_some(design.id)
-            .or_else(|| source.and_then(|source| source.uuid));
-        if let Some(uuid) = uuid {
-            if !has_head(preserved, "uuid") {
-                let _ = writeln!(output, "  (uuid {})", quote(&uuid.to_string()));
-            }
-        }
+        // KiCad has no board-level uuid token. Emitting one makes the file fail
+        // to open with "Unknown token 'uuid'" in KiCad's board parser.
         output.push_str("  (layers\n");
         for (id, name) in &self.layers {
             let _ = writeln!(output, "    ({id} {} {})", quote(name), layer_type(name));
@@ -1068,14 +1501,19 @@ impl Exporter {
         for head in ["setup", "property"] {
             write_preserved(&mut output, preserved, head, 2);
         }
-        for (code, _, name) in &self.nets {
-            let _ = writeln!(output, "  (net {code} {})", quote(name));
+        if !self.name_only_nets {
+            for (code, _, name) in &self.nets {
+                let _ = writeln!(output, "  (net {code} {})", quote(name));
+            }
         }
 
         self.write_outline(&mut output, design);
         self.write_footprints(&mut output, design);
         self.write_tracks(&mut output, design);
+        self.write_arcs(&mut output, design);
         self.write_vias(&mut output, design);
+        self.write_zones(&mut output, design);
+        self.write_graphics(&mut output, design);
         for node in preserved {
             if !matches!(
                 node.head.as_str(),
@@ -1201,14 +1639,8 @@ impl Exporter {
                 };
                 let net = pad
                     .net_id
-                    .and_then(|id| self.net_codes.get(&id).copied())
-                    .filter(|code| *code != 0)
-                    .and_then(|code| {
-                        self.nets
-                            .iter()
-                            .find(|(candidate, _, _)| *candidate == code)
-                            .map(|(_, _, name)| format!(" (net {code} {})", quote(name)))
-                    })
+                    .and_then(|id| self.net_reference(id))
+                    .map(|reference| format!(" (net {reference})"))
                     .unwrap_or_default();
                 let _ = write!(
                     output,
@@ -1220,8 +1652,18 @@ impl Exporter {
                     number(pad.width),
                     number(pad.height)
                 );
-                if shape == "roundrect" && !has_head(&pad.preserved, "roundrect_rratio") {
-                    output.push_str(" (roundrect_rratio 0.25)");
+                if shape == "roundrect" {
+                    let _ = write!(
+                        output,
+                        " (roundrect_rratio {})",
+                        number(pad.roundrect_ratio.unwrap_or(0.25))
+                    );
+                }
+                if shape == "trapezoid" {
+                    if let Some(delta) = pad.trapezoid_delta {
+                        let _ =
+                            write!(output, " (rect_delta {} {})", number(delta.x), number(delta.y));
+                    }
                 }
                 for node in &pad.preserved {
                     write_node_inline(output, &node.source);
@@ -1259,10 +1701,16 @@ impl Exporter {
                         format!("kicad-export-segment|{}|{segment_index}", track.id).as_bytes(),
                     )
                 };
-                let net = self.net_codes.get(&track.net_id).copied().unwrap_or(0);
+                let net = if self.name_only_nets {
+                    self.net_reference(track.net_id)
+                        .map(|reference| format!(" (net {reference})"))
+                        .unwrap_or_default()
+                } else {
+                    format!(" (net {})", self.net_codes.get(&track.net_id).copied().unwrap_or(0))
+                };
                 let _ = writeln!(
                     output,
-                    "  (segment (start {} {}) (end {} {}) (width {}) (layer {}) (net {net}) (uuid {}))",
+                    "  (segment (start {} {}) (end {} {}) (width {}) (layer {}){net} (uuid {}))",
                     number(pair[0].x),
                     number(pair[0].y),
                     number(pair[1].x),
@@ -1272,6 +1720,211 @@ impl Exporter {
                     quote(&uuid.to_string())
                 );
             }
+        }
+    }
+
+    fn write_arcs(&self, output: &mut String, design: &PcbDesign) {
+        for arc in &design.arcs {
+            let Some(layer) = self.layer_names.get(&arc.layer) else {
+                continue;
+            };
+            let net = if self.name_only_nets {
+                self.net_reference(arc.net_id)
+                    .map(|reference| format!(" (net {reference})"))
+                    .unwrap_or_default()
+            } else {
+                format!(" (net {})", self.net_codes.get(&arc.net_id).copied().unwrap_or(0))
+            };
+            let _ = writeln!(
+                output,
+                "  (arc (start {} {}) (mid {} {}) (end {} {}) (width {}) (layer {}){net} (uuid {})",
+                number(arc.start.x),
+                number(arc.start.y),
+                number(arc.mid.x),
+                number(arc.mid.y),
+                number(arc.end.x),
+                number(arc.end.y),
+                number(arc.width),
+                quote(layer),
+                quote(&arc.id.to_string())
+            );
+            for node in &arc.preserved {
+                write_node(output, &node.source, 2);
+            }
+            output.push_str("  )\n");
+        }
+    }
+
+    fn write_zones(&self, output: &mut String, design: &PcbDesign) {
+        for zone in &design.zones {
+            let layer_names: Vec<&str> = zone
+                .layers
+                .iter()
+                .filter_map(|layer| self.layer_names.get(layer).map(String::as_str))
+                .collect();
+            if layer_names.is_empty() {
+                continue;
+            }
+            let _ = write!(output, "  (zone");
+            if let Some(net_id) = zone.net_id {
+                if self.name_only_nets {
+                    if let Some(name) = self.net_name(net_id) {
+                        let _ = write!(output, " (net {})", quote(name));
+                    }
+                } else if let Some(code) = self.net_codes.get(&net_id) {
+                    let _ = write!(output, " (net {code})");
+                    if let Some(name) = self.net_name(net_id) {
+                        let _ = write!(output, " (net_name {})", quote(name));
+                    }
+                }
+            }
+            if layer_names.len() == 1 {
+                let _ = write!(output, " (layer {})", quote(layer_names[0]));
+            } else {
+                output.push_str(" (layers");
+                for name in &layer_names {
+                    let _ = write!(output, " {}", quote(name));
+                }
+                output.push(')');
+            }
+            let _ = writeln!(output, " (uuid {})", quote(&zone.id.to_string()));
+            if !zone.name.is_empty() {
+                let _ = writeln!(output, "    (name {})", quote(&zone.name));
+            }
+            if zone.priority != 0 {
+                let _ = writeln!(output, "    (priority {})", zone.priority);
+            }
+            if let Some(keepout) = &zone.keepout {
+                output.push_str("    (keepout");
+                for (name, disallowed) in [
+                    ("tracks", keepout.tracks),
+                    ("vias", keepout.vias),
+                    ("pads", keepout.pads),
+                    ("copperpour", keepout.copper_pour),
+                    ("footprints", keepout.footprints),
+                ] {
+                    if disallowed {
+                        let _ = write!(output, " ({name} not_allowed)");
+                    }
+                }
+                output.push_str(")\n");
+            }
+            for node in &zone.preserved {
+                write_node(output, &node.source, 4);
+            }
+            for polygon in &zone.polygons {
+                output.push_str("    (polygon (pts");
+                for point in polygon {
+                    let _ = write!(output, " (xy {} {})", number(point.x), number(point.y));
+                }
+                output.push_str("))\n");
+            }
+            for fill in &zone.fills {
+                output.push_str("    (filled_polygon");
+                if let Some(layer) = fill.layer.and_then(|layer| self.layer_names.get(&layer)) {
+                    let _ = write!(output, " (layer {})", quote(layer));
+                }
+                if fill.island {
+                    output.push_str(" (island)");
+                }
+                output.push_str(" (pts");
+                for point in &fill.points {
+                    let _ = write!(output, " (xy {} {})", number(point.x), number(point.y));
+                }
+                output.push_str("))\n");
+            }
+            output.push_str("  )\n");
+        }
+    }
+
+    fn write_graphics(&self, output: &mut String, design: &PcbDesign) {
+        for graphic in &design.graphics {
+            let Some(layer) = self.layer_names.get(&graphic.layer) else {
+                continue;
+            };
+            if let BoardGraphicKind::Text { text, position, rotation } = &graphic.kind {
+                let _ = writeln!(
+                    output,
+                    "  (gr_text {} (at {} {} {}) (layer {}) (uuid {})",
+                    quote(text),
+                    number(position.x),
+                    number(position.y),
+                    number(*rotation),
+                    quote(layer),
+                    quote(&graphic.id.to_string())
+                );
+                for node in &graphic.preserved {
+                    write_node(output, &node.source, 4);
+                }
+                output.push_str("  )\n");
+                continue;
+            }
+            let head = match &graphic.kind {
+                BoardGraphicKind::Line { .. } => "gr_line",
+                BoardGraphicKind::Rectangle { .. } => "gr_rect",
+                BoardGraphicKind::Circle { .. } => "gr_circle",
+                BoardGraphicKind::Arc { .. } => "gr_arc",
+                BoardGraphicKind::Polygon { .. } => "gr_poly",
+                BoardGraphicKind::Text { .. } => unreachable!(),
+            };
+            let _ = write!(output, "  ({head}");
+            match &graphic.kind {
+                BoardGraphicKind::Line { start, end }
+                | BoardGraphicKind::Rectangle { start, end } => {
+                    let _ = write!(
+                        output,
+                        " (start {} {}) (end {} {})",
+                        number(start.x),
+                        number(start.y),
+                        number(end.x),
+                        number(end.y)
+                    );
+                }
+                BoardGraphicKind::Circle { center, end } => {
+                    let _ = write!(
+                        output,
+                        " (center {} {}) (end {} {})",
+                        number(center.x),
+                        number(center.y),
+                        number(end.x),
+                        number(end.y)
+                    );
+                }
+                BoardGraphicKind::Arc { start, mid, end } => {
+                    let _ = write!(
+                        output,
+                        " (start {} {}) (mid {} {}) (end {} {})",
+                        number(start.x),
+                        number(start.y),
+                        number(mid.x),
+                        number(mid.y),
+                        number(end.x),
+                        number(end.y)
+                    );
+                }
+                BoardGraphicKind::Polygon { points } => {
+                    output.push_str(" (pts");
+                    for point in points {
+                        let _ = write!(output, " (xy {} {})", number(point.x), number(point.y));
+                    }
+                    output.push(')');
+                }
+                BoardGraphicKind::Text { .. } => unreachable!(),
+            }
+            let _ = write!(output, " (stroke (width {}) (type default))", number(graphic.width));
+            if !graphic.fill.is_empty() {
+                let _ = write!(output, " (fill {})", graphic.fill);
+            }
+            let _ = writeln!(
+                output,
+                " (layer {}) (uuid {})",
+                quote(layer),
+                quote(&graphic.id.to_string())
+            );
+            for node in &graphic.preserved {
+                write_node(output, &node.source, 4);
+            }
+            output.push_str("  )\n");
         }
     }
 
@@ -1291,10 +1944,20 @@ impl Exporter {
             } else {
                 via.id
             };
-            let net = via.net_id.and_then(|id| self.net_codes.get(&id).copied()).unwrap_or(0);
+            let net = if self.name_only_nets {
+                via.net_id
+                    .and_then(|id| self.net_reference(id))
+                    .map(|reference| format!(" (net {reference})"))
+                    .unwrap_or_default()
+            } else {
+                format!(
+                    " (net {})",
+                    via.net_id.and_then(|id| self.net_codes.get(&id).copied()).unwrap_or(0)
+                )
+            };
             let _ = writeln!(
                 output,
-                "  (via (at {} {}) (size {}) (drill {}) (layers {} {}) (net {net}) (uuid {}))",
+                "  (via (at {} {}) (size {}) (drill {}) (layers {} {}){net} (uuid {}))",
                 number(via.position.x),
                 number(via.position.y),
                 number(via.diameter),
@@ -1407,6 +2070,16 @@ fn canonical_layer_id(name: &str) -> Option<u16> {
             }
         }
     }
+    if let Some(inner) = name.strip_prefix("User.") {
+        if let Ok(number) = inner.parse::<u16>() {
+            if (1..=9).contains(&number) {
+                // KiCad accepts arbitrary unique ids for user layers. Keeping
+                // these above the fixed layer range avoids collisions with
+                // legacy standard-layer ids in older board files.
+                return Some(1000 + number);
+            }
+        }
+    }
     Some(match name {
         "F.Cu" => 0,
         "B.Cu" => 31,
@@ -1476,8 +2149,10 @@ mod tests {
     use pcb::{PcbDesign, PcbNet, Track};
     use uuid::Uuid;
 
+    const LEGACY_ROOT_UUID: &str = "33333333-3333-3333-3333-333333333333";
     const FIXTURE: &str = r#"
 (kicad_pcb (version 20240108) (generator pcbnew)
+  (uuid "33333333-3333-3333-3333-333333333333")
   (layers
     (0 "F.Cu" signal)
     (31 "B.Cu" signal)
@@ -1573,10 +2248,10 @@ mod tests {
         assert_eq!(imported.design.vias.len(), 1);
         assert_eq!(imported.design.footprints.len(), 1);
         assert_eq!(imported.design.nets.len(), 2);
-        assert_eq!(imported.warnings.len(), 3, "unexpected warnings: {:?}", imported.warnings);
-        assert!(imported.warnings.iter().any(|warning| warning.contains("roundrect")));
-        assert!(imported.warnings.iter().any(|warning| warning.contains("circle")));
+        assert_eq!(imported.design.id.to_string(), LEGACY_ROOT_UUID);
+        assert_eq!(imported.warnings.len(), 1, "unexpected warnings: {:?}", imported.warnings);
         assert!(imported.warnings.iter().any(|warning| warning.contains("'property'")));
+        assert!(!imported.warnings.iter().any(|warning| warning.contains("bounding rectangle")));
 
         let footprint = &imported.design.footprints[0];
         assert_eq!(footprint.reference_designator, "U1");
@@ -1596,7 +2271,7 @@ mod tests {
     fn importer_rotates_footprint_pads_and_reports_unsupported_data() {
         let document = FIXTURE.replace(
             "  (footprint",
-            "  (zone (net 1) (net_name \"GND\") (layer \"F.Cu\") (filled_polygon (pts (xy 0 0))))\n  (footprint",
+            "  (zone (net 1) (net_name \"GND\") (layer \"F.Cu\") (filled_polygon (pts (xy 0 0) (xy 1 0) (xy 1 1))))\n  (footprint",
         );
         let imported = parse_pcb(&document).expect("fixture imports");
 
@@ -1605,16 +2280,23 @@ mod tests {
         assert!((footprint.pad_positions[0].y - 0.0).abs() < 1e-9);
         assert_eq!(footprint.rotation, 90.0);
         assert_eq!(footprint.pad_positions[0].rotation, 0.0);
-        assert!(imported.warnings.iter().any(|warning| warning.contains("zone")));
-        assert!(imported.design.source.as_ref().expect("source metadata").contains("zone"));
+        assert_eq!(imported.design.zones.len(), 1);
+        assert!(imported.design.zones[0].filled_polygons(0).next().is_some());
+        assert!(!imported.warnings.iter().any(|warning| warning.contains("zone")));
     }
 
     #[test]
     fn write_then_parse_round_trips_supported_board() {
+        let legacy = parse_pcb(FIXTURE).expect("legacy board imports");
+        let repaired = write_pcb(&legacy.design).expect("legacy board rewrites");
+        assert!(!repaired.lines().any(|line| line.starts_with("  (uuid ")));
+
         let design = sample_design();
         let document = write_pcb(&design).expect("design writes");
 
         assert!(document.starts_with("(kicad_pcb"));
+        assert!(!document.lines().any(|line| line.starts_with("  (uuid ")));
+        assert!(document.contains("(footprint \"R_0603\" (layer \"F.Cu\") (uuid \""));
         assert!(document.contains("(net 1 \"GND\")"));
         assert!(document.contains("(net 2 \"3V3\")"));
         assert!(document.contains("(pad \"1\" smd rect"));
@@ -1660,6 +2342,27 @@ mod tests {
     }
 
     #[test]
+    fn graphic_fill_syntax_and_user_layers_round_trip() {
+        let document = FIXTURE
+            .replace(
+                "    (37 \"F.SilkS\" user)\n",
+                "    (37 \"F.SilkS\" user)\n    (51 \"User.7\" user)\n",
+            )
+            .replace(
+                "  (gr_line (start 0 0)",
+                "  (gr_rect (start 2 2) (end 4 4) (stroke (width 0.1) (type solid)) (fill no) (layer \"User.7\") (uuid \"77777777-7777-7777-7777-777777777777\"))\n  (gr_line (start 0 0)",
+            );
+        let imported = parse_pcb(&document).expect("fixture with user layer imports");
+        assert_eq!(imported.design.graphics.len(), 1);
+
+        let exported = write_pcb(&imported.design).expect("user layer exports");
+        assert!(exported.contains("(1007 \"User.7\" user)"));
+        assert!(exported.contains("(fill no)"));
+        let restored = parse_pcb(&exported).expect("exported user layer reimports");
+        assert_eq!(restored.design.graphics.len(), 1);
+    }
+
+    #[test]
     fn writer_maps_sequential_internal_layer_ids_to_kicad_names() {
         let mut design = sample_design();
         design.layers = vec![
@@ -1675,7 +2378,7 @@ mod tests {
         assert!(document.contains("(layers \"F.Cu\" \"B.Cu\")"));
 
         let restored = parse_pcb(&document).expect("written board parses").design;
-        assert_eq!(restored.id, design.id);
+        assert!(!restored.id.is_nil());
         assert_eq!(restored.tracks[0].layer, 31);
         assert_eq!(restored.vias[0].layer_end, 31);
     }
@@ -1720,6 +2423,50 @@ mod tests {
         assert_eq!(loaded.design.nets.len(), 2);
 
         std::fs::remove_dir_all(directory).expect("clean temp directory");
+    }
+
+    #[test]
+    fn imports_and_writes_kicad10_name_only_nets() {
+        const KICAD10: &str = r#"(kicad_pcb (version 20260206) (generator "pcbnew")
+  (layers
+    (0 "F.Cu" signal)
+    (31 "B.Cu" signal)
+    (37 "F.SilkS" user)
+  )
+  (footprint "Test:Part" (layer "F.Cu") (at 5 5)
+    (property "Reference" "U1" (at 0 -2 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 1)
+      (layers "F.Cu" "F.Paste" "F.Mask") (net "GND")))
+  (segment (start 5 5) (end 10 5) (width 0.25) (layer "F.Cu") (net "GND")
+    (uuid "33333333-3333-3333-3333-333333333333"))
+  (via (at 10 5) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "GND")
+    (uuid "44444444-4444-4444-4444-444444444444"))
+)"#;
+
+        let imported = parse_pcb(KICAD10).expect("KiCad 10 board imports");
+        let gnd = super::net_id("GND");
+        assert_eq!(imported.design.nets.len(), 1);
+        assert_eq!(imported.design.net_name(gnd), Some("GND"));
+        assert_eq!(imported.design.footprints[0].pad_positions[0].net_id, Some(gnd));
+        assert_eq!(imported.design.tracks[0].net_id, gnd);
+        assert_eq!(imported.design.vias[0].net_id, Some(gnd));
+
+        let document = write_pcb(&imported.design).expect("KiCad 10 board writes");
+        assert!(document.contains("(version 20260206)"));
+        assert!(!document.contains("(net 0 \"\")"));
+        assert!(!document.contains("(net 1 \"GND\")"));
+        assert!(document.contains("(pad \"1\" smd rect"));
+        assert_eq!(document.matches("(net \"GND\")").count(), 3);
+
+        let restored = parse_pcb(&document).expect("written KiCad 10 board parses").design;
+        assert_eq!(restored.nets.len(), 1);
+        assert_eq!(restored.net_name(restored.tracks[0].net_id), Some("GND"));
+        assert_eq!(restored.footprints[0].pad_positions[0].net_id, Some(gnd));
+        assert_eq!(restored.vias[0].net_id, Some(gnd));
+
+        let numeric_name = parse_pcb(&KICAD10.replace("\"GND\"", "\"1\""))
+            .expect("numeric net name is not a code");
+        assert_eq!(numeric_name.design.nets[0].name, "1");
     }
 
     #[test]

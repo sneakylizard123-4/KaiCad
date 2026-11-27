@@ -13,6 +13,7 @@ use core::project::SchematicData;
 use core::sheet::Sheet;
 use pcb::PcbDesign;
 
+use super::library_table::{LibraryTable, LibraryTableKind};
 use super::schematic::{SchematicImport, load_schematic, write_schematic};
 use super::{ParseError, ProjectFile, load_pcb, write_pcb};
 
@@ -29,6 +30,14 @@ pub struct ProjectBundle {
     pub board: Option<PcbDesign>,
     /// Board path, when present.
     pub board_path: Option<PathBuf>,
+    /// Project symbol library table, when present.
+    pub symbol_library_table: Option<LibraryTable>,
+    /// Path of the symbol library table, when present.
+    pub symbol_library_table_path: Option<PathBuf>,
+    /// Project footprint library table, when present.
+    pub footprint_library_table: Option<LibraryTable>,
+    /// Path of the footprint library table, when present.
+    pub footprint_library_table_path: Option<PathBuf>,
     /// Merged schematic data. Child sheet contents live on their `Sheet`.
     pub schematic: SchematicData,
     /// Import warnings from every loaded file.
@@ -50,7 +59,18 @@ impl ProjectBundle {
         visited.insert(canonical(&root_path));
         merge_children(&mut root.data, &base, &mut visited, &mut warnings)?;
 
-        let (board, board_path) = match board_path {
+        let (symbol_library_table, symbol_library_table_path) =
+            load_optional_table(&base, LibraryTableKind::Symbol)?;
+        let (footprint_library_table, footprint_library_table_path) =
+            load_optional_table(&base, LibraryTableKind::Footprint)?;
+        if let Some(table) = &symbol_library_table {
+            note_missing_local_libraries(table, &base, &mut warnings);
+        }
+        if let Some(table) = &footprint_library_table {
+            note_missing_local_libraries(table, &base, &mut warnings);
+        }
+
+        let (mut board, board_path) = match board_path {
             Some(path) if path.exists() => {
                 let imported = load_pcb(&path)?;
                 warnings.extend(imported.warnings);
@@ -58,6 +78,9 @@ impl ProjectBundle {
             }
             _ => (None, None),
         };
+        if let (Some(project), Some(board)) = (&project, &mut board) {
+            board.rules = project.drc_rules();
+        }
 
         Ok(Self {
             project,
@@ -65,6 +88,10 @@ impl ProjectBundle {
             root_path,
             board,
             board_path,
+            symbol_library_table,
+            symbol_library_table_path,
+            footprint_library_table,
+            footprint_library_table_path,
             schematic: root.data,
             warnings,
         })
@@ -125,6 +152,26 @@ impl ProjectBundle {
             });
             std::fs::write(output_dir.join(name), write_pcb(board)?)?;
         }
+
+        for (table, path, kind) in [
+            (&self.symbol_library_table, &self.symbol_library_table_path, LibraryTableKind::Symbol),
+            (
+                &self.footprint_library_table,
+                &self.footprint_library_table_path,
+                LibraryTableKind::Footprint,
+            ),
+        ] {
+            let Some(table) = table else {
+                continue;
+            };
+            let name = path
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(kind.file_name()));
+            table.save(output_dir.join(name))?;
+            copy_project_local_libraries(table, &self.root_base(), output_dir)?;
+        }
         Ok(())
     }
 
@@ -171,6 +218,93 @@ impl ProjectBundle {
     pub fn sheet_file_count(&self) -> usize {
         1 + self.schematic.sheets.iter().filter(|sheet| sheet.parent.is_some()).count()
     }
+
+    fn root_base(&self) -> PathBuf {
+        self.root_path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf()
+    }
+}
+
+fn load_optional_table(
+    base: &Path,
+    kind: LibraryTableKind,
+) -> Result<(Option<LibraryTable>, Option<PathBuf>), ParseError> {
+    let path = base.join(kind.file_name());
+    if !path.exists() {
+        return Ok((None, None));
+    }
+    Ok((Some(LibraryTable::load(&path)?), Some(path)))
+}
+
+fn note_missing_local_libraries(table: &LibraryTable, base: &Path, warnings: &mut Vec<String>) {
+    for entry in &table.libraries {
+        let Some(relative) = kiprjmod_path(&entry.uri) else {
+            continue;
+        };
+        let path = base.join(relative);
+        if !path.exists() {
+            warnings.push(format!(
+                "library table entry '{}' points at missing project library: {}",
+                entry.name,
+                path.display()
+            ));
+        }
+    }
+}
+
+fn copy_project_local_libraries(
+    table: &LibraryTable,
+    base: &Path,
+    output_dir: &Path,
+) -> Result<(), ParseError> {
+    for entry in &table.libraries {
+        let Some(relative) = kiprjmod_path(&entry.uri) else {
+            continue;
+        };
+        let source = base.join(&relative);
+        if !source.exists() {
+            continue;
+        }
+        let destination = output_dir.join(relative);
+        if canonical(&source) == canonical(&destination) {
+            continue;
+        }
+        if source.is_dir() {
+            copy_directory(&source, &destination)?;
+        } else {
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(&source, &destination)?;
+        }
+    }
+    Ok(())
+}
+
+fn kiprjmod_path(uri: &str) -> Option<PathBuf> {
+    let relative = uri.strip_prefix("${KIPRJMOD}")?.trim_start_matches(['/', '\\']);
+    let path = Path::new(relative);
+    let mut safe = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => safe.push(value),
+            _ => return None,
+        }
+    }
+    (!safe.as_os_str().is_empty()).then_some(safe)
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), ParseError> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 fn resolve_inputs(

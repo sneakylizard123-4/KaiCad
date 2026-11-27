@@ -17,7 +17,7 @@ tool yet.
 ## Features
 - Native Studio GUI for board viewing, DRC and undoable track routing (placement and schematic editing planned)
 - Deterministic software 2D/3D rendering (Vulkan GPU backend planned)
-- KiCad `.kicad_sym` symbol import and `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange through `kai-cad` (semantic project compatibility not implemented)
+- KiCad `.kicad_sym` symbol import and `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange through `kai-cad` (integrated schematic/board project document not implemented)
 - Full schematic and PCB design capabilities target (not complete)
 - Integrated design-rule and electrical-rule checking
 - Advanced PCB routing and engineering analysis
@@ -51,7 +51,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (366 tests across the workspace)
+# Run tests (384 tests across the workspace)
 cargo test --workspace
 
 # Run the desktop GUI with the built-in demo board
@@ -194,7 +194,7 @@ KaiCad/
 
 Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
 increment and a KiCad file-interchange layer are complete and verified:
-**366 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+**384 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
 routing, interactive route previews, and a headless software 2D/3D renderer
@@ -211,9 +211,10 @@ explicit interchange format. The 2D view has an undoable track-routing tool:
 click a pad or free point, click a destination, and DRC-checked copper is added.
 The CLI can also convert supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
 `.kicad_pro` files with explicit warnings for constructs retained opaquely.
-Zones, arcs, graphics and DRC setup round-trip but are not semantically
-editable; recursive sheet loading works through `project bundle`, while library
-tables remain.
+Zones, keepouts, copper arcs, graphics, standard pad shapes and project DRC
+rules now have semantic board models; `project bundle` recursively rewrites the
+hierarchy, library tables and `${KIPRJMOD}` libraries. Custom pad primitives,
+dimensions and some setup fields remain source-preserved.
 Footprint/pad placement, pan/zoom, native file pickers and schematic capture
 remain unimplemented.
 
@@ -242,8 +243,10 @@ What each crate provides today:
   `duplicate-net-name`, `duplicate-symbol-name` and `self-connection` (errors).
 - ✅ **pcb (Phase 2 scope)** — `PcbDesign` built on `core` types, board-outline
   geometry, `LayerStack` with validation, `FootprintLibrary` JSON persistence,
-  track and via dimensions, placed footprints with rotated pad copper, and a
-  deterministic DRC (`run_drc`) covering tracks, vias and pads. Routing includes
+  track and via dimensions, placed footprints with shape-aware rotated pad
+  copper, copper arcs, zones/keepouts and board graphics, and a deterministic
+  DRC (`run_drc`) covering tracks, arcs, vias, pads, zone fills and keepouts.
+  Routing includes
   deterministic single-layer and multi-layer A* (`route`, `route_multilayer`),
   optional blind/buried vias, bounded push-and-shove rip-up/reroute, and an
   `InteractiveRouter` preview/commit/cancel session. Through vias remain the
@@ -285,9 +288,10 @@ What each crate provides today:
 - ✅ **kicad-parser** — deterministic S-expression reader, `.kicad_sym`
   loader mapping symbols and pins into `core::SymbolLibrary` with UUIDv5 ids,
   plus `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file
-  interchange. `ProjectBundle` follows child sheet files recursively. Unknown
-  board/schematic nodes are retained for export; zones, arcs, graphics, DRC
-  setup and 3D models round-trip without becoming semantically editable.
+  interchange. `ProjectBundle` follows child sheet files recursively and
+  carries `sym-lib-table`, `fp-lib-table` and project-local libraries. Unknown
+  board/schematic nodes are retained for export; zones, keepouts, arcs,
+  graphics, standard pad shapes and project DRC rules are semantically modeled.
 - ✅ **kai-cad** — binary with a banner, `--help`/`--version`, and a
   deterministic self-check that calls every subsystem, exports a KiCad netlist,
   round trips a footprint library, routes a track and verifies it is DRC-clean,
