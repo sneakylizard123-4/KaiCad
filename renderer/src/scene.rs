@@ -255,8 +255,14 @@ fn pad_shapes(design: &PcbDesign) -> Vec<PadShape> {
             {
                 continue;
             }
-            let center = (footprint.position.x + pad.x, footprint.position.y + pad.y);
-            let (sin, cos) = pad.rotation.to_radians().sin_cos();
+            let half_turn = if footprint.layer.starts_with('B') { 180.0 } else { 0.0 };
+            let (footprint_sin, footprint_cos) =
+                (footprint.rotation + half_turn).to_radians().sin_cos();
+            let center = (
+                footprint.position.x + pad.x * footprint_cos - pad.y * footprint_sin,
+                footprint.position.y + pad.x * footprint_sin + pad.y * footprint_cos,
+            );
+            let (sin, cos) = (pad.rotation + footprint.rotation + half_turn).to_radians().sin_cos();
             let (half_width, half_height) = (pad.width / 2.0, pad.height / 2.0);
             let local = [
                 (-half_width, -half_height),

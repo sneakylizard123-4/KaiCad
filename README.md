@@ -52,7 +52,7 @@ cd KaiCad
 # Build the workspace
 cargo build --workspace
 
-# Run tests (401 tests across the workspace)
+# Run tests (410 tests across the workspace)
 cargo test --workspace
 
 # Run the desktop GUI with the built-in demo board
@@ -209,7 +209,7 @@ KaiCad/
 
 Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
 increment and the P2 KiCad interoperability milestone are complete and verified:
-**401 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
+**410 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
 routing, interactive route previews, and a headless software 2D/3D renderer
@@ -225,7 +225,10 @@ placed footprints, runs DRC, and saves back to `.kicad_pcb`; `.json` remains an
 explicit interchange format. The 2D view supports wheel zoom anchored at the
 pointer, drag panning and a Fit reset. It also has an undoable track-routing
 tool: click a pad or free point, click a destination, and DRC-checked copper is
-added. A separate schematic workspace opens and saves `.kicad_sch`, draws
+added. Board objects can be selected by clicking; footprints, tracks and vias
+nudge by 0.5 mm, footprints rotate and flip between board sides, and any
+selected object can be deleted, all through the shared undo/redo history.
+A separate schematic workspace opens and saves `.kicad_sch`, draws
 wires, junctions, labels, no-connects, sheet symbols and labeled component
 bodies on a pan/zoom canvas, and captures two-point wires with undo/redo.
 The CLI can also convert supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
@@ -235,7 +238,8 @@ rules now have semantic board models; `project bundle` recursively rewrites the
 hierarchy, library tables and `${KIPRJMOD}` libraries. Custom pad primitives,
 dimensions and some setup fields remain source-preserved.
 Schematic symbol graphics, symbol/label placement, cross-probing,
-footprint/pad placement and native file pickers remain unimplemented.
+footprint placement from a library, pad editing and native file pickers remain
+unimplemented.
 
 The Vulkan GPU backend remains deferred. Board rendering is deterministic CPU
 rasterization; eframe presents the framebuffer in a native window. Week 16

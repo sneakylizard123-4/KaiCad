@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 use crate::demo::demo_design;
 use crate::document::{DocumentError, save_design};
-use crate::editor::{RouteClick, RouteEditError, TrackEditor};
+use crate::editor::{
+    BoardSelection, MOVE_GRID, RouteClick, RouteEditError, TrackEditor, footprint_board_bounds,
+};
 use crate::schematic::{
     SCHEMATIC_ZOOM_STEP, SchematicDocument, SchematicTransform, WIRE_GRID, WireClick,
 };
@@ -207,7 +209,9 @@ impl StudioState {
     pub fn set_tool(&mut self, tool: StudioTool) {
         self.tool = tool;
         self.notice = match tool {
-            StudioTool::Inspect => Notice::info("Inspect tool active."),
+            StudioTool::Inspect => Notice::info(
+                "Select tool: click a footprint, track or via. Arrow keys move by 0.5 mm.",
+            ),
             StudioTool::Route => {
                 Notice::info("Route tool: click a start point, then a destination.")
             }
@@ -313,11 +317,11 @@ impl StudioState {
         self.revision = self.revision.wrapping_add(1);
         self.report = run_drc(&self.design, &self.design.rules);
         self.dirty = true;
-        self.notice = Notice::info("Undid the last track edit.");
+        self.notice = Notice::info("Undid the last board edit.");
         true
     }
 
-    /// Redo the most recently undone route.
+    /// Redo the most recently undone board edit.
     pub fn redo_edit(&mut self) -> bool {
         if !self.editor.redo(&mut self.design) {
             self.notice = Notice::info("Nothing to redo.");
@@ -326,8 +330,129 @@ impl StudioState {
         self.revision = self.revision.wrapping_add(1);
         self.report = run_drc(&self.design, &self.design.rules);
         self.dirty = true;
-        self.notice = Notice::info("Redid the last track edit.");
+        self.notice = Notice::info("Redid the last board edit.");
         true
+    }
+
+    /// Currently selected board object.
+    pub fn selection(&self) -> Option<BoardSelection> {
+        self.editor.selection()
+    }
+
+    /// Select the object nearest `point`, or clear the selection.
+    pub fn select_at(&mut self, point: Point, tolerance: f64) -> Option<BoardSelection> {
+        let selection = self.editor.select_at(&self.design, point, tolerance);
+        self.notice = match selection {
+            Some(selection) => {
+                Notice::info(format!("Selected {}.", selection_summary(&self.design, selection).0))
+            }
+            None => Notice::info("Selection cleared."),
+        };
+        selection
+    }
+
+    /// Select a footprint by its index in the design.
+    pub fn select_footprint(&mut self, index: usize) {
+        let Some(footprint) = self.design.footprints.get(index) else {
+            self.notice = Notice::error("That footprint is no longer on the board.");
+            return;
+        };
+        let label = format!("Footprint {}", footprint.reference_designator);
+        self.editor.select_footprint(index);
+        self.notice = Notice::info(format!("Selected {label}."));
+    }
+
+    /// Clear the current board selection.
+    pub fn clear_selection(&mut self) {
+        self.editor.clear_selection();
+        self.notice = Notice::info("Selection cleared.");
+    }
+
+    /// Move the selection by a board-space delta.
+    pub fn nudge_selection(&mut self, dx: f64, dy: f64) -> bool {
+        let Some(selection) = self.selection() else {
+            self.notice = Notice::error("Select a footprint, track or via first.");
+            return false;
+        };
+        let label = selection_summary(&self.design, selection).0;
+        match self.editor.move_selected(&mut self.design, dx, dy) {
+            Ok(_) => {
+                self.after_selection_edit(format!("Moved {label}."));
+                true
+            }
+            Err(error) => {
+                self.notice = Notice::error(error.to_string());
+                false
+            }
+        }
+    }
+
+    /// Rotate the selected footprint in 90-degree steps.
+    pub fn rotate_selection(&mut self, quarter_turns: i32) -> bool {
+        let Some(selection) = self.selection() else {
+            self.notice = Notice::error("Select a footprint first.");
+            return false;
+        };
+        let label = selection_summary(&self.design, selection).0;
+        match self.editor.rotate_selected(&mut self.design, quarter_turns) {
+            Ok(rotation) => {
+                self.after_selection_edit(format!("Rotated {label} to {rotation:.0}°."));
+                true
+            }
+            Err(error) => {
+                self.notice = Notice::error(error.to_string());
+                false
+            }
+        }
+    }
+
+    /// Flip the selected footprint to the other board side.
+    pub fn flip_selection(&mut self) -> bool {
+        let Some(selection) = self.selection() else {
+            self.notice = Notice::error("Select a footprint first.");
+            return false;
+        };
+        let label = selection_summary(&self.design, selection).0;
+        match self.editor.flip_selected(&mut self.design) {
+            Ok(layer) => {
+                self.after_selection_edit(format!("Flipped {label} to {layer}."));
+                true
+            }
+            Err(error) => {
+                self.notice = Notice::error(error.to_string());
+                false
+            }
+        }
+    }
+
+    /// Delete the selected object.
+    pub fn delete_selection(&mut self) -> bool {
+        let Some(selection) = self.selection() else {
+            self.notice = Notice::error("Select a footprint, track or via first.");
+            return false;
+        };
+        let label = selection_summary(&self.design, selection).0;
+        match self.editor.delete_selected(&mut self.design) {
+            Ok(_) => {
+                self.after_selection_edit(format!("Deleted {label}."));
+                true
+            }
+            Err(error) => {
+                self.notice = Notice::error(error.to_string());
+                false
+            }
+        }
+    }
+
+    fn after_selection_edit(&mut self, text: String) {
+        self.revision = self.revision.wrapping_add(1);
+        self.report = run_drc(&self.design, &self.design.rules);
+        self.dirty = true;
+        let errors = self.report.count(DrcSeverity::Error);
+        self.notice = Notice {
+            text: format!("{text} {errors} DRC error(s)."),
+            kind: if errors == 0 { NoticeKind::Info } else { NoticeKind::Error },
+        };
     }
 
     pub fn design(&self) -> &PcbDesign {
@@ -439,6 +564,116 @@ impl StudioState {
             .and_then(Path::file_name)
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Demo board".to_string())
+    }
+}
+
+fn selection_summary(design: &PcbDesign, selection: BoardSelection) -> (String, String) {
+    match selection {
+        BoardSelection::Footprint(index) => match design.footprints.get(index) {
+            Some(footprint) => (
+                format!("Footprint {}", footprint.reference_designator),
+                format!(
+                    "{} · {} · {:.2}, {:.2} mm · {:.0}° · {} pad(s)",
+                    footprint.name,
+                    footprint.layer,
+                    footprint.position.x,
+                    footprint.position.y,
+                    footprint.rotation,
+                    footprint.pad_positions.len()
+                ),
+            ),
+            None => {
+                ("Footprint".to_string(), "this footprint is no longer on the board".to_string())
+            }
+        },
+        BoardSelection::Track(id) => match design.tracks.iter().find(|track| track.id == id) {
+            Some(track) => (
+                format!("Track {}", short_id(track.id)),
+                format!(
+                    "{} · {} · {:.2} mm · {} point(s)",
+                    design.net_name(track.net_id).unwrap_or("no net"),
+                    layer_label(design, track.layer),
+                    track.width,
+                    track.path.len()
+                ),
+            ),
+            None => ("Track".to_string(), "this track is no longer on the board".to_string()),
+        },
+        BoardSelection::Via(id) => match design.vias.iter().find(|via| via.id == id) {
+            Some(via) => (
+                format!("Via {}", short_id(via.id)),
+                format!(
+                    "{} · {:.2}, {:.2} mm · {:.2} mm copper / {:.2} mm drill",
+                    design.net_name(via.net_id.unwrap_or_default()).unwrap_or("no net"),
+                    via.position.x,
+                    via.position.y,
+                    via.diameter,
+                    via.drill
+                ),
+            ),
+            None => ("Via".to_string(), "this via is no longer on the board".to_string()),
+        },
+    }
+}
+
+fn short_id(id: Uuid) -> String {
+    id.to_string().chars().take(8).collect()
+}
+
+fn draw_selection_overlay(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    transform: BoardTransform,
+    image: [u32; 2],
+    design: &PcbDesign,
+    selection: BoardSelection,
+) {
+    let scale_x = rect.width() as f64 / image[0].max(1) as f64;
+    let scale_y = rect.height() as f64 / image[1].max(1) as f64;
+    let to_screen = |point: Point| {
+        let [x, y] = transform.board_to_pixel(point.x, point.y);
+        rect.min + egui::vec2((x * scale_x) as f32, (y * scale_y) as f32)
+    };
+    let painter = ui.painter();
+    let stroke = egui::Stroke::new(1.5_f32, ACCENT);
+
+    match selection {
+        BoardSelection::Footprint(index) => {
+            let Some(footprint) = design.footprints.get(index) else {
+                return;
+            };
+            let bounds = footprint_board_bounds(footprint);
+            let corners = [
+                to_screen(Point::new(bounds[0], bounds[1])),
+                to_screen(Point::new(bounds[2], bounds[1])),
+                to_screen(Point::new(bounds[2], bounds[3])),
+                to_screen(Point::new(bounds[0], bounds[3])),
+            ];
+            for index in 0..4 {
+                painter.line_segment([corners[index], corners[(index + 1) % 4]], stroke);
+            }
+        }
+        BoardSelection::Track(id) => {
+            let Some(track) = design.tracks.iter().find(|track| track.id == id) else {
+                return;
+            };
+            let stroke = egui::Stroke::new(2.5_f32, ACCENT);
+            for segment in track.path.windows(2) {
+                painter.line_segment([to_screen(segment[0]), to_screen(segment[1])], stroke);
+            }
+            for point in &track.path {
+                painter.circle_filled(to_screen(*point), 2.5, ACCENT);
+            }
+        }
+        BoardSelection::Via(id) => {
+            let Some(via) = design.vias.iter().find(|via| via.id == id) else {
+                return;
+            };
+            let center = to_screen(via.position);
+            let radius = (via.diameter.max(0.0) / 2.0 * transform.scale() * scale_x) as f32;
+            painter.circle_stroke(center, radius.max(4.0), stroke);
+            painter.circle_filled(center, 2.0, ACCENT);
+        }
     }
 }
 
@@ -863,7 +1098,7 @@ impl StudioApp {
         if self.mode == StudioMode::Board
             && !typing
             && self.file_dialog.is_none()
-            && ctx.input(|input| input.key_pressed(egui::Key::R))
+            && ctx.input(|input| input.key_pressed(egui::Key::R) && !input.modifiers.command)
         {
             let tool = if self.state.tool() == StudioTool::Route {
                 StudioTool::Inspect
@@ -874,6 +1109,55 @@ impl StudioApp {
                 self.state.tool()
             };
             self.state.set_tool(tool);
+        }
+
+        if self.mode == StudioMode::Board
+            && !typing
+            && self.file_dialog.is_none()
+            && self.state.tool() == StudioTool::Inspect
+        {
+            let (delete, rotate, flip) = ctx.input(|input| {
+                (
+                    input.key_pressed(egui::Key::Delete),
+                    input.key_pressed(egui::Key::R) && input.modifiers.command,
+                    input.key_pressed(egui::Key::F),
+                )
+            });
+            if delete {
+                self.state.delete_selection();
+            }
+            if rotate {
+                self.state.rotate_selection(1);
+            }
+            if flip {
+                self.state.flip_selection();
+            }
+
+            let (left, right, up, down) = ctx.input(|input| {
+                (
+                    input.key_pressed(egui::Key::ArrowLeft),
+                    input.key_pressed(egui::Key::ArrowRight),
+                    input.key_pressed(egui::Key::ArrowUp),
+                    input.key_pressed(egui::Key::ArrowDown),
+                )
+            });
+            let mut dx = 0.0;
+            let mut dy = 0.0;
+            if left {
+                dx -= MOVE_GRID;
+            }
+            if right {
+                dx += MOVE_GRID;
+            }
+            if up {
+                dy += MOVE_GRID;
+            }
+            if down {
+                dy -= MOVE_GRID;
+            }
+            if dx != 0.0 || dy != 0.0 {
+                self.state.nudge_selection(dx, dy);
+            }
         }
 
         if !typing && self.file_dialog.is_none() {
@@ -916,6 +1200,8 @@ impl StudioApp {
                 && self.state.editor().pending_start().is_some()
             {
                 self.state.cancel_route();
+            } else if self.mode == StudioMode::Board && self.state.selection().is_some() {
+                self.state.clear_selection();
             }
         }
 
@@ -1060,7 +1346,7 @@ impl StudioApp {
                         if ui
                             .add_enabled(
                                 self.state.editor().can_undo(),
-                                egui::Button::new("Undo track edit (Ctrl+Z)"),
+                                egui::Button::new("Undo board edit (Ctrl+Z)"),
                             )
                             .clicked()
                         {
@@ -1069,7 +1355,7 @@ impl StudioApp {
                         if ui
                             .add_enabled(
                                 self.state.editor().can_redo(),
-                                egui::Button::new("Redo track edit (Ctrl+Y)"),
+                                egui::Button::new("Redo board edit (Ctrl+Y)"),
                             )
                             .clicked()
                         {
@@ -1083,6 +1369,26 @@ impl StudioApp {
                             .clicked()
                         {
                             self.state.cancel_route();
+                        }
+                        ui.separator();
+                        let has_selection = self.state.selection().is_some();
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Rotate 90° (Ctrl+R)"))
+                            .clicked()
+                        {
+                            self.state.rotate_selection(1);
+                        }
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Flip footprint (F)"))
+                            .clicked()
+                        {
+                            self.state.flip_selection();
+                        }
+                        if ui
+                            .add_enabled(has_selection, egui::Button::new("Delete selection (Del)"))
+                            .clicked()
+                        {
+                            self.state.delete_selection();
                         }
                     }
                 });
@@ -1148,7 +1454,7 @@ impl StudioApp {
                         }
                     } else {
                         if ui
-                            .selectable_label(self.state.tool() == StudioTool::Inspect, "Inspect")
+                            .selectable_label(self.state.tool() == StudioTool::Inspect, "Select")
                             .clicked()
                         {
                             self.state.set_tool(StudioTool::Inspect);
@@ -1236,6 +1542,8 @@ impl StudioApp {
                         self.document_section(ui);
                         ui.separator();
                         self.routing_section(ui);
+                        ui.separator();
+                        self.selection_section(ui);
                         ui.separator();
                         self.board_summary(ui);
                         ui.separator();
@@ -1464,7 +1772,7 @@ impl StudioApp {
 
         ui.heading("Route copper");
         ui.horizontal(|ui| {
-            if ui.selectable_label(self.state.tool() == StudioTool::Inspect, "Inspect").clicked() {
+            if ui.selectable_label(self.state.tool() == StudioTool::Inspect, "Select").clicked() {
                 self.state.set_tool(StudioTool::Inspect);
             }
             if ui.selectable_label(self.state.tool() == StudioTool::Route, "Route").clicked() {
@@ -1568,6 +1876,35 @@ impl StudioApp {
                 ui.label(RichText::new("modified").color(WARNING_COLOR).small());
             }
         });
+    }
+
+    fn selection_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Selection");
+        let Some(selection) = self.state.selection() else {
+            ui.label(RichText::new("Click a footprint, track or via to select it.").weak().small());
+            ui.label(RichText::new("Arrow keys move the selection by 0.5 mm.").weak().small());
+            return;
+        };
+        let (title, detail) = selection_summary(self.state.design(), selection);
+        ui.label(RichText::new(title).strong());
+        ui.label(RichText::new(detail).weak().small());
+        ui.horizontal(|ui| {
+            if ui.button("Rotate 90° (Ctrl+R)").clicked() {
+                self.state.rotate_selection(1);
+            }
+            if ui.button("Flip side (F)").clicked() {
+                self.state.flip_selection();
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.button("Delete (Del)").clicked() {
+                self.state.delete_selection();
+            }
+            if ui.button("Clear").clicked() {
+                self.state.clear_selection();
+            }
+        });
+        ui.label(RichText::new("Arrow keys move the selection by 0.5 mm.").weak().small());
     }
 
     fn board_summary(&self, ui: &mut egui::Ui) {
@@ -1982,22 +2319,51 @@ impl StudioApp {
                 );
             }
 
-            if response.clicked() && self.state.tool() == StudioTool::Route {
-                if view != ViewMode::TwoD {
-                    self.state
-                        .set_status("Switch to the 2D view to route tracks.", NoticeKind::Error);
-                } else if let (Some(transform), Some(pointer)) =
-                    (transform, response.interact_pointer_pos())
-                {
-                    let local = pointer - rect.min;
-                    let x = local.x as f64 / rect.width().max(1.0) as f64 * pixel_width as f64;
-                    let y = local.y as f64 / rect.height().max(1.0) as f64 * pixel_height as f64;
-                    let [board_x, board_y] = transform.pixel_to_board(x, y);
-                    let _ = self.state.route_at(Point::new(board_x, board_y));
+            if response.clicked() {
+                if self.state.tool() == StudioTool::Route {
+                    if view != ViewMode::TwoD {
+                        self.state.set_status(
+                            "Switch to the 2D view to route tracks.",
+                            NoticeKind::Error,
+                        );
+                    } else if let (Some(transform), Some(pointer)) =
+                        (transform, response.interact_pointer_pos())
+                    {
+                        let local = pointer - rect.min;
+                        let x = local.x as f64 / rect.width().max(1.0) as f64 * pixel_width as f64;
+                        let y =
+                            local.y as f64 / rect.height().max(1.0) as f64 * pixel_height as f64;
+                        let [board_x, board_y] = transform.pixel_to_board(x, y);
+                        let _ = self.state.route_at(Point::new(board_x, board_y));
+                    }
+                } else if view == ViewMode::TwoD {
+                    if let (Some(transform), Some(pointer)) =
+                        (transform, response.interact_pointer_pos())
+                    {
+                        let local = pointer - rect.min;
+                        let x = local.x as f64 / rect.width().max(1.0) as f64 * pixel_width as f64;
+                        let y =
+                            local.y as f64 / rect.height().max(1.0) as f64 * pixel_height as f64;
+                        let [board_x, board_y] = transform.pixel_to_board(x, y);
+                        let tolerance = (6.0 / transform.scale()).clamp(0.05, 2.0);
+                        self.state.select_at(Point::new(board_x, board_y), tolerance);
+                    }
                 }
             }
 
             if view == ViewMode::TwoD {
+                if let Some(selection) = self.state.selection() {
+                    if let Some(transform) = transform {
+                        draw_selection_overlay(
+                            ui,
+                            rect,
+                            transform,
+                            [pixel_width, pixel_height],
+                            self.state.design(),
+                            selection,
+                        );
+                    }
+                }
                 if let (Some(start), Some(transform)) =
                     (self.state.editor().pending_start(), transform)
                 {
@@ -2252,11 +2618,13 @@ impl StudioApp {
                 );
                 ui.label(
                     "Current shell: board opening/saving, 2D/3D views with 2D zoom/pan, \
-                     stackup and footprint inspection, DRC, undoable track routing in 2D, \
-                     and a schematic workspace with pan/zoom and wire capture.",
+                     stackup and footprint inspection, DRC, undoable track routing, \
+                     board-object selection with nudge/rotate/flip/delete, and a \
+                     schematic workspace with pan/zoom and wire capture.",
                 );
                 ui.label(
-                    "Footprint placement, schematic symbol placement and cross-probing are not implemented.",
+                    "Footprint placement from a library, pad editing, schematic symbol placement \
+                     and cross-probing are not implemented.",
                 );
             });
         self.show_about = open;
@@ -2566,6 +2934,39 @@ mod tests {
         assert_eq!(state.design().tracks.len(), original_tracks);
         assert!(state.editor().can_redo());
         assert!(state.dirty());
+    }
+
+    #[test]
+    fn selecting_and_editing_a_footprint_updates_state_and_history() {
+        let mut state = StudioState::new_demo();
+        let revision = state.revision();
+        let original = state.design().footprints[1].position;
+
+        let selection = state.select_at(Point::new(28.0, 15.0), 0.5).expect("footprint selected");
+        assert!(matches!(selection, BoardSelection::Footprint(1)));
+        assert_eq!(state.revision(), revision);
+        assert!(!state.dirty());
+
+        assert!(state.nudge_selection(0.5, 0.0));
+        assert_eq!(state.design().footprints[1].position, Point::new(original.x + 0.5, original.y));
+        assert_eq!(state.revision(), revision + 1);
+        assert!(state.dirty());
+
+        assert!(state.rotate_selection(1));
+        assert_eq!(state.design().footprints[1].rotation, 90.0);
+        assert!(state.flip_selection());
+        assert_eq!(state.design().footprints[1].layer, "B.Cu");
+
+        assert!(state.undo_edit());
+        assert_eq!(state.design().footprints[1].layer, "F.Cu");
+        assert_eq!(state.design().footprints[1].rotation, 90.0);
+        assert!(state.delete_selection());
+        assert_eq!(state.design().footprints.len(), 4);
+        assert_eq!(state.selection(), None);
+
+        state.set_tool(StudioTool::Route);
+        assert!(!state.delete_selection());
+        assert_eq!(state.notice().kind, NoticeKind::Error);
     }
 
     #[test]

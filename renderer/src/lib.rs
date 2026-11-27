@@ -525,6 +525,24 @@ mod tests {
     }
 
     #[test]
+    fn footprint_rotation_changes_the_two_dimensional_pad_layout() {
+        let mut design = test_design();
+        design.footprints[0].pad_positions[0].x = 3.0;
+        design.footprints[0].pad_positions[0].width = 1.6;
+        design.footprints[0].pad_positions[0].height = 1.6;
+
+        let mut flat = renderer(160, 120);
+        flat.render_pcb(&design, ViewMode::TwoD).expect("flat render");
+        let flat_pixels = flat.framebuffer().pixels().to_vec();
+
+        design.footprints[0].rotation = 90.0;
+        let mut turned = renderer(160, 120);
+        turned.render_pcb(&design, ViewMode::TwoD).expect("rotated render");
+
+        assert_ne!(flat_pixels, turned.framebuffer().pixels());
+    }
+
+    #[test]
     fn default_config_uses_1080p_window_and_vsync() {
         let config = RendererConfig::default();
         assert_eq!(config.window.width, 1920);

@@ -169,6 +169,13 @@ see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 - Wire capture snaps to a 1.27 mm grid, uses deterministic UUIDv5 ids, and supports bounded undo/redo plus save/reload
 - 12 new GUI tests; total tests: 401
 
+### Board selection and object editing
+- Click selection for footprints, tracks and vias, with on-canvas highlighting and an inspector section
+- Arrow-key nudging by 0.5 mm, 90-degree footprint rotation, footprint side flipping and object deletion
+- All selection edits share the bounded undo/redo history with track routing and run DRC after each change
+- The 2D renderer now applies footprint rotation and back-side orientation to pad copper
+- 8 new GUI tests and 1 renderer test; total tests: 410
+
 ### KiCad PCB compatibility subset
 - `kicad-parser` now reads and writes `.kicad_pcb` boards for the subset represented by `PcbDesign`
 - Preserves layers, named nets (`PcbNet`), Edge.Cuts outlines, footprints/pads (including pad numbers and rotated placement), tracks and vias
@@ -205,7 +212,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥402 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥410 tests, clippy/fmt/doc/link/release clean
 
 ## 🚧 Full KiCad parity — post-beta program
 
@@ -246,7 +253,8 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - ✅ Click-to-route track editing with DRC preflight and undo/redo
 - ✅ 2D wheel zoom, drag panning and fit-to-board (`+`/`-`/`0`)
 - ✅ Schematic workspace with `.kicad_sch` open/save, pan/zoom and wire capture
-- ⬜ Footprint/pad placement and full transactional board editing
+- ✅ Board-object selection, nudging, footprint rotation/flipping and deletion
+- ⬜ Footprint placement from a library, pad/via editing and full transactional board editing
 - ⬜ Native file picker, selection/measurement tools and continuous DRC
 - ⬜ Schematic symbol graphics, symbol/label placement, annotation and cross-probing
 - [x] Decide GUI scope and slot it into the roadmap (editable PCB shell after Phase 2; full parity later)

@@ -12,7 +12,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 >
 > **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
 > Studio editing increment and the P2 KiCad interoperability milestone are
-> complete (401 tests, clippy/fmt/doc/release all clean). Week 16 release
+> complete (410 tests, clippy/fmt/doc/release all clean). Week 16 release
 > hardening is described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md);
 > full KiCad parity is tracked separately in
 > [`KICAD_PARITY.md`](KICAD_PARITY.md).
@@ -143,18 +143,18 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **401 tests**, all passing:
+`cargo test --workspace` currently runs **410 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
-| `gui` (`src/app.rs`, `editor.rs`, `schematic.rs`, `demo.rs`, `document.rs`) | 34 |
+| `gui` (`src/app.rs`, `editor.rs`, `schematic.rs`, `demo.rs`, `document.rs`) | 42 |
 | `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, `project.rs`, `library_table.rs`, corpus tests) | 43 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs`, `board.rs` and modules) | 92 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
-| `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 19 |
+| `renderer` (`src/lib.rs`, `framebuffer.rs` and modules) | 20 |
 | `schematic` (`src/lib.rs` and modules) | 33 |
 | `store` (`src/tests.rs`) | 38 |
 | `kai-cad/tests/smoke.rs` (cross-crate integration) | 22 |
@@ -219,12 +219,12 @@ cargo run -p gui -- path/to/board.kicad_pcb
 ```
 
 The `kai-cad-gui` binary opens **KaiCad Studio**, an eframe/egui window. The
-left panel owns the document path, view selector, 2D zoom controls, routing
-controls, board summary, design rules and DRC. The right panel lists the copper
-layer stack and placed footprints. The centre panel is a live texture rendered
-by the deterministic software rasterizer. The 2D view starts fitted; the wheel
-zooms at the pointer, middle-drag pans, primary-drag pans in Inspect, and Fit
-(or `0`) restores the fitted view. Boards open from the Document path field,
+left panel owns the document path, view selector, 2D zoom controls, routing and
+selection controls, board summary, design rules and DRC. The right panel lists
+the copper layer stack and placed footprints. The centre panel is a live
+texture rendered by the deterministic software rasterizer. The 2D view starts
+fitted; the wheel zooms at the pointer, middle-drag pans, primary-drag pans in
+Select, and Fit (or `0`) restores the fitted view. Boards open from the Document path field,
 the File menu, a dropped file, or a command-line path. `.kicad_pcb` is the
 native format: Save writes it through `kicad-parser`, preserving constructs the
 editor does not model. `.json` is accepted when interoperability or debugging
@@ -244,25 +244,37 @@ In the 2D board view, select **Route**, a copper layer, a net and a width, then
 click a start point and a destination. A click within 2 mm of a pad snaps to its
 centre and adopts its net. The grid router adds copper immediately, runs DRC
 before applying it, and stores a board snapshot for undo. A route that adds a
-new DRC finding is rejected without changing the board. This is a first editor
-increment: there is no route preview, footprint placement, pad/via editing,
-symbol placement inside schematics or project-wide file navigation yet.
+new DRC finding is rejected without changing the board.
+
+In **Select** mode, a click selects a footprint, track or via and highlights it
+on the canvas. Arrow keys nudge the selection by 0.5 mm, `Ctrl+R` rotates a
+footprint by 90 degrees, `F` flips it between `F.Cu` and `B.Cu`, and `Del`
+deletes it. Every move, rotation, flip and deletion is one undoable board edit
+and re-runs DRC. The inspector shows the selected object and exposes the same
+commands as buttons. This remains a first editor increment: there is no route
+preview, footprint placement from a library, pad/via editing, symbol placement
+inside schematics or project-wide file navigation yet.
 
 | Input | Action |
 |-------|--------|
 | `Ctrl+O` | open the active document's path dialog |
 | `Ctrl+S` | save the active document, or open Save As |
 | Mouse wheel | zoom the 2D board view or schematic at the pointer |
-| Middle-drag, or primary-drag in Inspect | pan the 2D view |
+| Middle-drag, or primary-drag in Select | pan the 2D view |
 | `+` / `-` | zoom in / out |
 | `0` | fit the board or schematic |
 | Click in the schematic | set a wire start / finish a wire |
 | Drag in the schematic | pan the schematic canvas |
-| `Ctrl+Z` | undo the last routed track edit |
-| `Ctrl+Y` | redo the last track edit |
+| Click in Select | select a footprint, track or via |
+| Arrow keys | nudge the selection by 0.5 mm |
+| `Ctrl+R` | rotate the selected footprint by 90 degrees |
+| `F` | flip the selected footprint between board sides |
+| `Del` | delete the selected object |
+| `Ctrl+Z` | undo the last board edit |
+| `Ctrl+Y` | redo the last board edit |
 | `F5` | run DRC |
-| `R` | toggle Inspect / Route |
-| `Esc` | cancel a pending route or close the file dialog |
+| `R` | toggle Select / Route |
+| `Esc` | cancel a pending route, clear the selection or close the file dialog |
 | Drop a file on the window | open that board |
 
 Current limits: footprint, pad and via editing are not implemented; the 3D

@@ -22,7 +22,7 @@ document fully before writing code.
 ## 1. Current repository state
 
 - **Branch:** `main`
-- **Tests:** 401 passing, 0 failing
+- **Tests:** 410 passing, 0 failing
 - **Schema:** version 6 (`plugins` includes persisted activation state)
 - **Toolchain:** `stable`; edition 2024; `rust-version` **1.85**
 - **License:** GPL-3.0-or-later
@@ -60,10 +60,13 @@ document fully before writing code.
   native `.kicad_pcb` open/save (JSON optional), a software-rendered 2D/3D
   viewport with 2D wheel zoom, drag panning and fit-to-board, layer/footprint
   inspection, DRC and undoable click-to-route track editing with DRC preflight.
-  A second workspace opens/saves `.kicad_sch`, draws the supported schematic
-  model on a pan/zoom canvas, and captures two-point wires with undo/redo.
-  Footprint placement, schematic symbol graphics/placement and cross-probing are
-  not implemented.
+  A Select tool highlights footprints, tracks and vias; arrow keys nudge by
+  0.5 mm, `Ctrl+R` rotates a footprint, `F` flips it between board sides and
+  `Del` deletes it, all through the shared undo history. A second workspace
+  opens/saves `.kicad_sch`, draws the supported schematic model on a pan/zoom
+  canvas, and captures two-point wires with undo/redo. Footprint placement from
+  a library, schematic symbol graphics/placement and cross-probing are not
+  implemented.
 - `kicad-parser` imports/exports the documented `.kicad_pcb` subset with
   semantic zones/fills/keepouts, copper arcs, board graphics and standard pad
   shapes, plus `.kicad_sch`, `.kicad_mod` and `.kicad_pro` interchange.
@@ -134,9 +137,10 @@ Add `docs/USER_GUIDE.md` covering:
 - Discovery, registration, listing, showing, enabling and disabling plugins.
 - The default `kaicad.db` location and how `--db` changes it.
 - What "enabled" means: registry state only; no code is executed.
-- Current limitations: the GUI supports 2D zoom/pan, track routing and schematic
-  wire capture but not footprint/pad editing, schematic symbol graphics or
-  symbol/label placement; no Vulkan GPU backend (a headless
+- Current limitations: the GUI supports 2D zoom/pan, track routing, schematic
+  wire capture and selection/nudge/rotate/flip/delete of existing board objects
+  but not footprint placement from a library, pad/via editing, schematic symbol
+  graphics or symbol/label placement; no Vulkan GPU backend (a headless
   software renderer is available); `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/
   `.kicad_pro` file interchange with unknown-node preservation, recursive
   project bundles, semantic zones/arcs/graphics/keepouts, project DRC rules and
@@ -184,7 +188,7 @@ Add `docs/RELEASE.md` with a beta checklist that records, at minimum:
 The checklist must distinguish verified items from deferred ones; do not mark
 future work complete.
 
-### 3.5 Tests (target: 12–16 new tests, at least 402 total)
+### 3.5 Tests (target: 12–16 new tests, at least 422 total)
 
 Cover at least:
 
@@ -209,8 +213,8 @@ Cover at least:
 - [ ] `--self-check` and `--db=<path>` work.
 - [ ] `docs/USER_GUIDE.md` and `docs/RELEASE.md` exist and are linked.
 - [ ] Benchmarks compile and are documented.
-- [ ] Existing 401 tests still pass.
-- [ ] Test count rises to at least 402, all passing.
+- [ ] Existing 410 tests still pass.
+- [ ] Test count rises to at least 422, all passing.
 - [ ] No plugin code is loaded or executed.
 - [ ] Clippy, fmt, strict rustdoc, links, examples and release build pass.
 - [ ] Documentation updated (§5).

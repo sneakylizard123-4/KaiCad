@@ -17,11 +17,12 @@
 > 14 (plugin activation and capability queries), 15 (plugin CLI) and the
 > Phase 2 completion pass (rotated pads, blind/buried vias, push-and-shove,
 > interactive routing and the software renderer) are complete. A post-Phase-2
-> Studio shell adds native `.kicad_pcb` open/save, board viewing, inspection, DRC
-> and click-to-route track editing, plus `.kicad_sch`/`.kicad_mod`/`.kicad_pro`
+> Studio shell adds native `.kicad_pcb` open/save, board viewing, inspection, DRC,
+> click-to-route track editing and board-object selection/move/rotate/flip/delete,
+> plus `.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 > file interchange, semantic zones/arcs/graphics/keepouts, library tables and
 > shape-aware DRC, and a schematic workspace with wire capture. The P2 KiCad
-> interoperability milestone is complete. The workspace has 401 passing tests.
+> interoperability milestone is complete. The workspace has 410 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
@@ -753,12 +754,13 @@ manifests with deterministic registry ordering, local discovery, SQLite
 persistence, activation state, capability filters and CLI management, a
 deterministic software 2D/3D renderer, the `kai-cad` self-check binary, a
 post-Phase-2 Studio shell (`gui`) for board viewing, 2D zoom/pan, inspection,
-DRC, undoable track routing, and a schematic workspace for `.kicad_sch` with
+DRC, undoable track routing and selection/nudge/rotate/flip/delete of board
+objects, and a schematic workspace for `.kicad_sch` with
 pan/zoom and wire capture, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 file interchange with semantic zones/arcs/graphics, library tables and opaque
 preservation, a five-file corpus and a 19-project template validation pass, CI
 (including a Markdown link check and coverage job), and documentation. The
-workspace has **401 passing tests**.
+workspace has **410 passing tests**.
 
 **Next (Week 16):** foundation release hardening. The planned work is:
 

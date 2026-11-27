@@ -84,7 +84,9 @@ post-Phase-2 eframe-based KaiCad Studio shell opens and saves `.kicad_pcb` board
 documents natively (JSON is optional), presents the software-rendered 2D/3D
 viewport with 2D zoom and pan, runs DRC, inspects the stackup
 and footprints, and adds undoable click-to-route track editing with DRC
-preflight. A second Studio workspace opens and saves `.kicad_sch` schematics,
+preflight. Board objects can be selected and nudged, footprints rotated and
+flipped, and footprints, tracks and vias deleted through the same undo history.
+A second Studio workspace opens and saves `.kicad_sch` schematics,
 draws the supported sheet model on a pan/zoom canvas, and captures two-point
 wires with undo/redo. `kicad-parser` also provides `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
 `.kicad_pro` file interchange through `kai-cad pcb|sch|footprint|project`,
@@ -95,7 +97,7 @@ standard pad shapes and project DRC rules are modeled semantically, and
 placement, full schematic capture, interactive zone editing and full KiCad
 project compatibility are deferred. PCB designs persist with their tracks, vias and DRC
 rules in SQLite.
-The workspace has **401 passing tests**, clean `cargo clippy --workspace
+The workspace has **410 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See
 [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for Week 1 evidence,
@@ -190,8 +192,9 @@ capability gaps and delivery sequence are in
 - [x] Software renderer produces deterministic 2D/3D board visualizations
 - [x] Native GUI shell opens/saves boards, renders navigable 2D/3D views and reports DRC
 - [x] GUI supports basic interactive track routing with undo/redo and DRC preflight
+- [x] GUI supports board-object selection, nudging, footprint rotation/flipping and deletion
 - [x] Studio schematic workspace opens/saves `.kicad_sch` and captures wires with undo/redo
-- [ ] GUI supports footprint placement and complete PCB editing
+- [ ] GUI supports footprint placement from a library and complete PCB editing
 - [ ] GUI supports symbol placement, full schematic editing and schematic/PCB cross-probing
 - [ ] Vulkan GPU renderer produces accelerated 2D/3D visualizations
 - [ ] kAI provides meaningful circuit optimization suggestions
