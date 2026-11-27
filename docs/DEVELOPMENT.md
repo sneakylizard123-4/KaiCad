@@ -11,10 +11,11 @@ Practical instructions for building, testing and hacking on KaiCad.
 > details.
 >
 > **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
-> Studio editing increment and the KiCad file-interchange layer are complete
-> (384 tests, clippy/fmt/doc/release all clean). Week 16 release hardening is
-> described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md); full KiCad parity is tracked
-> separately in [`KICAD_PARITY.md`](KICAD_PARITY.md).
+> Studio editing increment and the P2 KiCad interoperability milestone are
+> complete (384 tests, clippy/fmt/doc/release all clean). Week 16 release
+> hardening is described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md);
+> full KiCad parity is tracked separately in
+> [`KICAD_PARITY.md`](KICAD_PARITY.md).
 
 ## Prerequisites
 
@@ -336,8 +337,9 @@ fix.
 
 ## Working on the next milestone
 
-Weeks 1–15, the Phase 2 PCB/renderer scope and the first Studio editing
-increment are finished; Week 16 hardens the CLI, adds user documentation and
+Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
+increment and the P2 KiCad interoperability milestone are finished; Week 16
+hardens the CLI, adds user documentation and
 performance baselines, and completes the release checklist. Before starting,
 read [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md), which contains the API
 requirements, acceptance criteria and verification commands. The existing JSON
@@ -407,7 +409,9 @@ and Windows/macOS builds self-contained.
 `.kicad_sch` schematics, `.kicad_mod` footprints and `.kicad_pro` project JSON.
 It preserves many constructs it does not model, but it is not a full-fidelity
 converter. `ProjectBundle` recursively follows child sheet files, library tables
-and `${KIPRJMOD}` libraries. Convert files through:
+and `${KIPRJMOD}` libraries. `sym-lib-table` and `fp-lib-table` entries are
+parsed, rewritten and preserved with unknown nodes; global/user tables outside
+the project directory are not merged. Convert files through:
 
 ```bash
 cargo run -p kai-cad -- pcb import board.kicad_pcb board.json
@@ -636,7 +640,8 @@ Check these semantics before changing the router:
 
 ### Footprint libraries behave unexpectedly
 
-Footprint libraries are KaiCad's own JSON, not KiCad `.kicad_mod` files.
+Footprint libraries are KaiCad's own JSON, not KiCad `.kicad_mod` files;
+standalone `.kicad_mod` import/export is a separate `kicad-parser` path.
 Known limits:
 
 - `FootprintLibrary::from_json` rejects duplicate footprint names with

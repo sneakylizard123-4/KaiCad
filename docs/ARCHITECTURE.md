@@ -20,7 +20,8 @@
 > Studio shell adds native `.kicad_pcb` open/save, board viewing, inspection, DRC
 > and click-to-route track editing, plus `.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 > file interchange, semantic zones/arcs/graphics/keepouts, library tables and
-> shape-aware DRC. The workspace has 384 passing tests.
+> shape-aware DRC. The P2 KiCad interoperability milestone is complete. The
+> workspace has 384 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
@@ -218,15 +219,19 @@ Dependencies: `core`, `serde`, `uuid`. Modules:
 
 Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
 
+- `board` — `BoardZone`, `ZoneFill`, `ZoneKeepout`, `BoardArc`,
+  `BoardGraphic`/`BoardGraphicKind`, arc sampling and polygon-distance helpers
+  used by DRC and the KiCad parser.
 - `footprint` — `Footprint` (with a board `position`), `PadPosition` (with
   copper `width`/`height`, counter-clockwise `rotation` in degrees and optional
-  `net_id`), `PadType`, `Outline`,
+  `net_id`), `PadType`, `PadShape` (rect, roundrect, oval, circle, trapezoid),
+  `PadPosition::local_outline`, `Outline`,
   `OutlineShape::{Rectangle, RoundedRectangle}`, plus `FootprintLibrary`
   (`sorted`, `find`, `to_json`, `from_json`, `save`, `load`) and
   `FootprintLibraryError`. Missing placement and pad-size fields default, so
   older libraries still load. Libraries are KaiCad's own JSON with two-space
   indentation and one trailing newline; duplicate names are rejected on load.
-  A KiCad `.kicad_mod` parser does not exist.
+  KiCad `.kicad_mod` read/write is a separate `kicad-parser` interchange path.
 - `layer` — `LayerStack` (`new`, `push`, `len`, `is_empty`, `copper_layers`,
   `find`) over `core::PcbLayer`, plus `validate(&Stackup)` and
   `copper_layers_in_stackup(&Stackup)`. Validation reports `LayerIssue`s of
@@ -234,9 +239,10 @@ Dependencies: `core`, `serde`, `serde_json`, `uuid`. Modules:
   `NonCopperInStackup`, sorted by `(layer_id, kind)`.
 - `drc` — `DrcRules` (validated, serde-friendly, stored on the design),
   `DrcRulesError`, `DrcSeverity`, `DrcViolation`, `DrcReport` and `run_drc`, a
-  pure function implementing clearance, track, via, pad and pad-rotation rules
-  plus rule-set validation. Via spans may be through, blind or buried as long
-  as both endpoints are copper; same-layer and non-copper spans are errors.
+  pure function implementing clearance, track, via, pad, pad-rotation,
+  zone-fill and keepout rules plus rule-set validation. Via spans may be
+  through, blind or buried as long as both endpoints are copper; same-layer
+  and non-copper spans are errors.
 - `routing` — `Router`, `RoutingAlgorithm::{PushAndShove, LengthMatching,
   Hybrid}`, `RoutingOptimization`, `RouterConfig` (grid, bend cost, expansion
   limit, `allow_vias`, via cost/limit/dimensions, `allow_blind_buried` and
@@ -410,7 +416,11 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
   no-connects and sheet symbols into `core::project::SchematicData`.
 - `parse_footprint`/`load_footprint` map standalone `.kicad_mod` files into
   `pcb::Footprint`. `ProjectFile::{load, parse, save}` preserves `.kicad_pro`
-  JSON.
+  JSON and exposes parsed board DRC rules.
+- `library_table::{parse, write}` handles `sym-lib-table` and `fp-lib-table`
+  with entry order and unknown-node preservation. `ProjectBundle` recursively
+  loads and rewrites the root and child schematics, the sibling board, both
+  library tables and `${KIPRJMOD}` libraries, and applies project DRC rules.
 - `write_pcb`, `write_schematic` and `write_footprint` (with file helpers) emit
   KiCad-openable documents. The CLI exposes `pcb|sch|footprint|project`
   import/export.
@@ -424,8 +434,7 @@ a `.kicad_sym` file and maps each top-level `(symbol ...)` to
   still uses pad rectangles.
 - Schematic conversion retains `lib_symbols`, property effects, pin blocks,
   instance paths, buses, text, images and unknown nodes. Child sheet symbols
-  record their file name and placement; `ProjectBundle` recursively loads and
-  rewrites the hierarchy and sibling board.
+  record their file name and placement.
 - `ParseError::{Io, Syntax, Unsupported}` implements `Display` and
   `std::error::Error`; malformed input never panics.
 - The parser implements a minimal deterministic S-expression tokenizer/parser

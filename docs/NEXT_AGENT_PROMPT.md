@@ -61,10 +61,26 @@ document fully before writing code.
   viewport, layer/footprint inspection, DRC and undoable click-to-route track
   editing with DRC preflight. Footprint placement and schematic capture are not
   implemented.
-- `kicad-parser` imports/exports the supported `.kicad_pcb` subset, preserving
-  layers, named nets, pad numbers, Edge.Cuts outlines, footprints, pads, tracks
-  and vias, and warning about skipped or approximated constructs. The CLI
-  exposes `pcb import|export`; this is not full KiCad project compatibility.
+- `kicad-parser` imports/exports the documented `.kicad_pcb` subset with
+  semantic zones/fills/keepouts, copper arcs, board graphics and standard pad
+  shapes, plus `.kicad_sch`, `.kicad_mod` and `.kicad_pro` interchange.
+  `sym-lib-table`/`fp-lib-table` and `${KIPRJMOD}` libraries are preserved and
+  copied, project DRC rules map onto `DrcRules`, and `ProjectBundle` follows
+  the hierarchy. This is not full KiCad project compatibility.
+
+### P2 KiCad interoperability (complete)
+
+- Semantic board models cover zones, fills, keepouts, copper arcs, board
+  graphics and rect/roundrect/oval/circle/trapezoid pads; DRC uses the real
+  pad outline and checks zone fills and keepouts.
+- Project bundles load and rewrite child schematics, boards,
+  `sym-lib-table`/`fp-lib-table` and project-local libraries; project
+  `min_clearance`, `min_track_width` and `min_via_annular_width` load into
+  `DrcRules`.
+- A KiCad 10 fixture plus hierarchy edit/save/reopen coverage complement the
+  corpus; all 19 installed template boards and 19 template project hierarchies
+  validate with KiCad 10.0.6. Custom pad primitives, dimensions and some setup
+  fields remain source-preserved.
 
 ---
 
@@ -164,7 +180,7 @@ Add `docs/RELEASE.md` with a beta checklist that records, at minimum:
 The checklist must distinguish verified items from deferred ones; do not mark
 future work complete.
 
-### 3.5 Tests (target: 12–16 new tests, at least 354 total)
+### 3.5 Tests (target: 12–16 new tests, at least 385 total)
 
 Cover at least:
 

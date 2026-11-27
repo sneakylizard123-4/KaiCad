@@ -193,7 +193,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥384 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥385 tests, clippy/fmt/doc/link/release clean
 
 ## 🚧 Full KiCad parity — post-beta program
 
@@ -205,6 +205,7 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - [x] `.kicad_pcb` supported-subset read/write, CLI conversion and unknown-construct preservation
 - [x] `.kicad_pro` / `.kicad_sch` / `.kicad_mod` file-level read/write and unknown-node preservation
 - [x] Semantic zones/arcs/graphics/DRC rules, library tables and a broad KiCad 9/10 corpus
+- [ ] Custom pad primitive semantics, dimensions and full-fidelity setup fields
 - [ ] Footprint placement/editing, zones, net classes, differential pairs and length matching
 - [ ] Gerber, drill, BOM and pick-and-place outputs
 - [ ] Symbol/footprint editors, scripting, collaboration transport and complete kAI
@@ -217,8 +218,8 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 ### Phase 2 — PCB core (Weeks 5–8)
 - ✅ Board outline, layers and stackup (Week 5)
 - ✅ Footprint library loading (Week 5)
-- ⬜ Push-and-shove routing
-- ⬜ Interactive routing
+- ✅ Push-and-shove routing (Phase 2 completion)
+- ✅ Interactive routing (Phase 2 completion)
 - ✅ Deterministic DRC (Week 6)
 - ✅ Deterministic single-layer grid routing (Week 7)
 - ✅ Multi-layer routing with vias (Week 8)
@@ -250,7 +251,7 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - ✅ SQLite plugin registry, activation state and CLI (Weeks 13–15; schema v6)
 - ⬜ Performance baselines
 - ⬜ User guides and API reference
-- 🚧 KiCad 9/10 file-interchange QA; semantic project compatibility remains deferred
+- ✅ KiCad 9/10 P2 file-interchange QA for the documented subset; P0/P1 semantic project compatibility remains deferred
 - ⬜ Beta release
 
 ## 🏠 Housekeeping

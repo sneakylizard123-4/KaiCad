@@ -86,12 +86,13 @@ viewport, runs DRC, inspects the stackup
 and footprints, and adds undoable click-to-route track editing with DRC
 preflight. `kicad-parser` also provides `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and
 `.kicad_pro` file interchange through `kai-cad pcb|sch|footprint|project`,
-retaining unmodelled constructs instead of silently dropping them. Zones,
-keepouts, arcs, graphics, standard pad shapes and project DRC rules are modeled
-semantically, and `ProjectBundle` handles library tables and `${KIPRJMOD}`
-libraries. Footprint placement, schematic capture, interactive zone editing and
-full KiCad project compatibility are deferred. PCB designs persist with their
-tracks, vias and DRC rules in SQLite.
+retaining unmodelled constructs instead of silently dropping them. The P2 KiCad
+interoperability milestone is complete: zones, keepouts, arcs, graphics,
+standard pad shapes and project DRC rules are modeled semantically, and
+`ProjectBundle` handles library tables and `${KIPRJMOD}` libraries. Footprint
+placement, schematic capture, interactive zone editing and full KiCad project
+compatibility are deferred. PCB designs persist with their tracks, vias and DRC
+rules in SQLite.
 The workspace has **384 passing tests**, clean `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and a successful
 release build. See
@@ -108,7 +109,7 @@ Phase 1 progress:
 | 3 | Symbol management: symbol libraries and KiCad symbol loading | ✅ Complete |
 | 4 | Schematic engine: netlist export, graph operations, broader ERC | ✅ Complete |
 
-Phase 2 progress:
+Foundation progress (Phases 2–4):
 
 | Week | Focus | Status |
 |------|-------|--------|

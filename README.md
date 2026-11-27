@@ -6,18 +6,18 @@
 
 ## Status
 - **Architecture:** Decided
-- **Implementation:** Phase 2 (PCB core + software renderer), board inspection, the first track-routing editor and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange complete (pre-alpha); full KiCad parity remains a multi-phase program
+- **Implementation:** Phase 2 (PCB core + software renderer), board inspection, the first track-routing editor, the P2 KiCad interoperability milestone and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange complete (pre-alpha); full KiCad parity remains a multi-phase program
 - **Target:** Rust, Linux (primary), Windows, macOS
 
 This repository currently contains the workspace structure, the shared data
 model, a SQLite engineering database, engine skeletons, CI configuration,
-documentation, examples and a Criterion benchmark. It is **not** a usable EDA
-tool yet.
+documentation, examples and a Criterion benchmark. It is **not yet a complete
+EDA tool**.
 
 ## Features
 - Native Studio GUI for board viewing, DRC and undoable track routing (placement and schematic editing planned)
 - Deterministic software 2D/3D rendering (Vulkan GPU backend planned)
-- KiCad `.kicad_sym` symbol import and `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange through `kai-cad` (integrated schematic/board project document not implemented)
+- KiCad `.kicad_sym` symbol import and `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange through `kai-cad`, including semantic board objects, library tables and recursive project bundles (integrated schematic/board project document not implemented)
 - Full schematic and PCB design capabilities target (not complete)
 - Integrated design-rule and electrical-rule checking
 - Advanced PCB routing and engineering analysis
@@ -125,6 +125,7 @@ KaiCad/
 │   ├── ARCHITECTURE.md         # crate graph, layering, data flow, design rules
 │   ├── DEVELOPMENT.md          # setup, commands, examples, benchmarks, CI
 │   ├── CONTRIBUTING.md         # branches, commits, review checklist, license
+│   ├── KICAD_PARITY.md         # full-KiCad gap analysis and parity sequence
 │   └── NEXT_AGENT_PROMPT.md    # self-contained brief for the next implementation pass
 ├── core/                       # shared data model (Project, Symbol, Net, Sheet)
 │   ├── src/
@@ -133,7 +134,14 @@ KaiCad/
 │   └── benches/
 │       └── serialization.rs
 ├── schematic/                  # netlist, connectivity graph, ERC
-├── pcb/                        # footprints, layers, routing
+├── pcb/                        # PcbDesign, footprints, layers, DRC, routing
+│   ├── src/
+│   │   ├── board.rs            # zones, fills, keepouts, arcs, graphics
+│   │   ├── drc.rs              # deterministic design-rule checking
+│   │   ├── footprint.rs        # pads, shapes and footprint libraries
+│   │   ├── layer.rs            # layer-stack validation
+│   │   ├── routing.rs          # A*, push-and-shove, interactive routing
+│   │   └── lib.rs              # PcbDesign, tracks and vias
 │   └── examples/
 │       └── board_outline.rs
 ├── renderer/                   # software 2D/3D renderer + Vulkan config skeleton
@@ -142,6 +150,7 @@ KaiCad/
 │       ├── app.rs              # StudioState, viewport and eframe panels
 │       ├── demo.rs             # built-in DRC-clean demo board
 │       ├── document.rs         # native .kicad_pcb open/save (JSON optional)
+│       ├── editor.rs           # click-to-route track editor and undo/redo
 │       ├── lib.rs
 │       └── main.rs             # kai-cad-gui binary
 ├── ai/                         # kAI subsystem
@@ -161,10 +170,14 @@ KaiCad/
 │       └── project_crud.rs
 ├── kicad-parser/               # KiCad symbol, PCB, schematic, footprint and project I/O
 │   ├── src/
-│   │   ├── lib.rs              # `.kicad_sym` parser
+│   │   ├── lib.rs              # `.kicad_sym` parser and shared exports
 │   │   ├── pcb.rs              # `.kicad_pcb` and `.kicad_mod` I/O with preservation
-│   │   └── schematic.rs        # `.kicad_sch` and `.kicad_pro` preservation
-│   └── tests/                  # compatibility corpus and structural round trips
+│   │   ├── schematic.rs        # `.kicad_sch` and `.kicad_pro` preservation
+│   │   ├── project.rs          # recursive bundles and project DRC rules
+│   │   └── library_table.rs    # `sym-lib-table` and `fp-lib-table`
+│   ├── tests/
+│   │   ├── compatibility.rs    # corpus and hierarchy round trips
+│   │   └── fixtures/           # KiCad 8/10 board, schematic, footprint, project
 │   └── examples/
 │       └── parse_library.rs
 ├── kai-cad/                    # application binary (kai-cad)
@@ -193,7 +206,7 @@ KaiCad/
 ## Current State
 
 Weeks 1–15, the Phase 2 PCB/renderer scope, the first Studio editing
-increment and a KiCad file-interchange layer are complete and verified:
+increment and the P2 KiCad interoperability milestone are complete and verified:
 **384 tests pass**, `cargo clippy --workspace --all-targets -- -D warnings`
 and `cargo fmt --all -- --check` are clean, and the release build succeeds.
 Phase 2 added pad rotation, blind/buried vias, deterministic push-and-shove
@@ -312,8 +325,8 @@ What each crate provides today:
 | 2 | 5–8 | PCB core: stackups, footprints, routing, DRC, basic renderer | ✅ Complete (basic software renderer; Vulkan GPU backend deferred) |
 | GUI | — | KaiCad Studio desktop editor: open/save, 2D/3D, DRC, track routing | 🚧 Viewer + track routing; footprint placement next |
 | 3 | 9–12 | kAI, collaboration, plugin architecture, performance tests | 🚧 Week 12 complete; kAI generation, real-time sync and plugin execution deferred |
-| 4 | 13–16 | Plugin persistence and management, polish, beta and foundation-level KiCad compatibility work | 🚧 Weeks 13–15 complete; `.kicad_pcb` subset landed; release readiness next |
-| Parity | post-beta | Full KiCad workflow and project-file compatibility | ⬜ Multi-phase; see the parity plan |
+| 4 | 13–16 | Plugin persistence and management, polish, beta and foundation-level KiCad compatibility work | 🚧 Weeks 13–15 and P2 interoperability complete; Week 16 release readiness next |
+| Parity | post-beta | Full KiCad workflow and project-file compatibility | 🚧 P2 file interoperability complete; P0/P1/P3–P5 remain |
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the foundation roadmap,
 [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) for the full replacement

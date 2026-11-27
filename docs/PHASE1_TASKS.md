@@ -1,8 +1,9 @@
 # KaiCad Phase 1 — Foundation Tasks (Weeks 1-4)
 
 > **Status legend:** ✅ complete · 🚧 partial (some acceptance criteria met) ·
-> ⬜ not started. Phase 1 (Weeks 1–4) is complete and verified, and Phase 2
-> began with Week 5 (PCB core). See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for
+> ⬜ not started. Phase 1 (Weeks 1–4) is complete and verified, Phase 2
+> (Weeks 5–8) and the P2 KiCad interoperability milestone are complete, and
+> Week 16 release hardening is next. See [`WEEK1_TASKS.md`](WEEK1_TASKS.md) for
 > Week 1 evidence and [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md) for the
 > Week 16 brief.
 

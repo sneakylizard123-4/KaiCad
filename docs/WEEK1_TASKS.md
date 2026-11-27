@@ -123,8 +123,9 @@ After the first Week 1 review the following issues were fixed:
   in `collab`) and a corrupted tracked file left by a bad write.
 - **Fixed `CollabManager::create_session`** — it now uses the passed
   `project_id` and seeds an `Owner` participant.
-- **Replaced the copied `collab` module in `renderer`** — `renderer` no longer
-  depends on any workspace crate.
+- **Replaced the copied `collab` module in `renderer`** — `renderer` had no
+  workspace dependencies at that point; it later gained a `pcb` dependency for
+  board rendering.
 - **Added a real serialization API** — `core::serialization` with
   `to_json`/`to_json_pretty`/`from_json`/`save`/`load` and `Project` helpers.
 - **Added `--help`, `--version` and a subsystem self-check** to the `kai-cad`

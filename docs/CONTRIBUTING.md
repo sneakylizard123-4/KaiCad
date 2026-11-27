@@ -3,6 +3,7 @@
 KaiCad is a pre-alpha Rust project. The core data model, schematic and PCB
 engines, routing, software renderer, persistence, collaboration primitives and
 a desktop GUI editor/inspection shell are implemented and tested, along with
+the P2 KiCad interoperability milestone and
 `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange,
 while full board and schematic editing, semantic KiCad project compatibility,
 the Vulkan GPU backend and some advanced engines remain incomplete. Contributions that move

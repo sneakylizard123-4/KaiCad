@@ -11,7 +11,7 @@
 **Primary EDA compatibility:** KiCad 10  
 **Secondary EDA compatibility:** KiCad 9  
 **Rendering:** Vulkan target; deterministic software 2D/3D renderer implemented\
-**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor, the P2 KiCad interoperability milestone and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange implemented; the integrated schematic/board project document remains a post-beta program; pre-alpha
+**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange implemented, with the P2 KiCad interoperability milestone complete; the integrated schematic/board project document remains a post-beta program; pre-alpha
 
 ---
 
