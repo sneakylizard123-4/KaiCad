@@ -12,7 +12,7 @@ Practical instructions for building, testing and hacking on KaiCad.
 >
 > **Current state:** Weeks 1–15, the Phase 2 PCB/renderer scope, the first
 > Studio editing increment and the P2 KiCad interoperability milestone are
-> complete (389 tests, clippy/fmt/doc/release all clean). Week 16 release
+> complete (401 tests, clippy/fmt/doc/release all clean). Week 16 release
 > hardening is described in [`NEXT_AGENT_PROMPT.md`](NEXT_AGENT_PROMPT.md);
 > full KiCad parity is tracked separately in
 > [`KICAD_PARITY.md`](KICAD_PARITY.md).
@@ -143,14 +143,14 @@ benchmarks; a bare `cargo check` misses them.
 
 ## Tests
 
-`cargo test --workspace` currently runs **389 tests**, all passing:
+`cargo test --workspace` currently runs **401 tests**, all passing:
 
 | Suite | Tests |
 |-------|------:|
 | `ai` (`src/lib.rs`) | 12 |
 | `collab` (`src/lib.rs`) | 27 |
 | `core` (`src/tests.rs`, `edit.rs`, `history.rs` and inline modules) | 63 |
-| `gui` (`src/app.rs`, `editor.rs`, `demo.rs`, `document.rs`) | 22 |
+| `gui` (`src/app.rs`, `editor.rs`, `schematic.rs`, `demo.rs`, `document.rs`) | 34 |
 | `kicad-parser` (`src/lib.rs`, `pcb.rs`, `schematic.rs`, `project.rs`, `library_table.rs`, corpus tests) | 43 |
 | `pcb` (`src/lib.rs`, `drc.rs`, `routing.rs`, `board.rs` and modules) | 92 |
 | `plugin` (`src/lib.rs` and inline modules) | 18 |
@@ -230,22 +230,34 @@ native format: Save writes it through `kicad-parser`, preserving constructs the
 editor does not model. `.json` is accepted when interoperability or debugging
 needs an explicit KaiCad board document.
 
-In the 2D view, select **Route**, a copper layer, a net and a width, then click
-a start point and a destination. A click within 2 mm of a pad snaps to its
+**Schematic workspace.** File → New/Open schematic switches Studio to the
+schematic document. The canvas draws the supported `.kicad_sch` model — wires,
+junctions, local/global labels, no-connects, child-sheet symbols and labeled
+component bodies — with the same wheel zoom, drag panning and `+`/`-`/`0`
+controls as the board. Click once to set a wire start and once to finish it;
+endpoints snap to a 1.27 mm grid, and `Ctrl+Z`/`Ctrl+Y` undo and redo wire
+edits. `.kicad_sch` is saved through `kicad-parser`, retaining unmodelled
+nodes. Symbol graphics are placeholder bodies; symbol/label placement and
+cross-probing are not implemented.
+
+In the 2D board view, select **Route**, a copper layer, a net and a width, then
+click a start point and a destination. A click within 2 mm of a pad snaps to its
 centre and adopts its net. The grid router adds copper immediately, runs DRC
 before applying it, and stores a board snapshot for undo. A route that adds a
 new DRC finding is rejected without changing the board. This is a first editor
 increment: there is no route preview, footprint placement, pad/via editing,
-schematic capture or project-wide file navigation yet.
+symbol placement inside schematics or project-wide file navigation yet.
 
 | Input | Action |
 |-------|--------|
-| `Ctrl+O` | open the board-path dialog |
-| `Ctrl+S` | save to the current path, or open Save As |
-| Mouse wheel | zoom the 2D view at the pointer |
+| `Ctrl+O` | open the active document's path dialog |
+| `Ctrl+S` | save the active document, or open Save As |
+| Mouse wheel | zoom the 2D board view or schematic at the pointer |
 | Middle-drag, or primary-drag in Inspect | pan the 2D view |
 | `+` / `-` | zoom in / out |
-| `0` | fit the board |
+| `0` | fit the board or schematic |
+| Click in the schematic | set a wire start / finish a wire |
+| Drag in the schematic | pan the schematic canvas |
 | `Ctrl+Z` | undo the last routed track edit |
 | `Ctrl+Y` | redo the last track edit |
 | `F5` | run DRC |
@@ -254,12 +266,13 @@ schematic capture or project-wide file navigation yet.
 | Drop a file on the window | open that board |
 
 Current limits: footprint, pad and via editing are not implemented; the 3D
-view auto-fits the board while the 2D view supports zoom and pan; open/save
-paths are typed rather than chosen from a native file picker; `.kicad_pcb` is
-the native Studio format, while `.json` is optional; and schematic capture is
-not wired up. The viewport is capped at 2048 pixels on its longest side. The
-window uses OpenGL through eframe; board pixels still come from the CPU
-renderer, and no Vulkan loader is required.
+view auto-fits the board while the 2D views support zoom and pan; schematic
+symbol graphics and symbol/label placement are not modeled; cross-probing is
+not implemented; open/save paths are typed rather than chosen from a native
+file picker; `.kicad_pcb` and `.kicad_sch` are the native Studio formats, while
+board `.json` is optional. The board viewport is capped at 2048 pixels on its
+longest side. The window uses OpenGL through eframe; board pixels still come
+from the CPU renderer, and no Vulkan loader is required.
 
 ## Examples
 

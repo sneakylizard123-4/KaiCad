@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use core::Point;
+use core::sheet::LabelType;
 use eframe::egui::{self, Color32, RichText, TextureHandle, TextureOptions};
 use pcb::{DrcReport, DrcSeverity, PcbDesign, run_drc};
 use renderer::{
@@ -13,6 +14,9 @@ use uuid::Uuid;
 use crate::demo::demo_design;
 use crate::document::{DocumentError, save_design};
 use crate::editor::{RouteClick, RouteEditError, TrackEditor};
+use crate::schematic::{
+    SCHEMATIC_ZOOM_STEP, SchematicDocument, SchematicTransform, WIRE_GRID, WireClick,
+};
 
 /// Largest viewport side, in pixels, sent to the software rasterizer.
 pub const MAX_VIEWPORT_SIDE: u32 = 2048;
@@ -60,6 +64,13 @@ impl Notice {
 pub enum StudioTool {
     Inspect,
     Route,
+}
+
+/// Top-level document shown in Studio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StudioMode {
+    Board,
+    Schematic,
 }
 
 /// Headless application state: the board, editing history, DRC and status.
@@ -561,22 +572,26 @@ fn rasterize(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FileMode {
-    Open,
-    Save,
+    OpenBoard,
+    SaveBoard,
+    OpenSchematic,
+    SaveSchematic,
 }
 
 impl FileMode {
     fn title(self) -> &'static str {
         match self {
-            Self::Open => "Open KiCad board",
-            Self::Save => "Save KiCad board as",
+            Self::OpenBoard => "Open KiCad board",
+            Self::SaveBoard => "Save KiCad board as",
+            Self::OpenSchematic => "Open KiCad schematic",
+            Self::SaveSchematic => "Save KiCad schematic as",
         }
     }
 
     fn action(self) -> &'static str {
         match self {
-            Self::Open => "Open",
-            Self::Save => "Save",
+            Self::OpenBoard | Self::OpenSchematic => "Open",
+            Self::SaveBoard | Self::SaveSchematic => "Save",
         }
     }
 }
@@ -590,6 +605,10 @@ struct FileDialog {
 /// Native KaiCad Studio window.
 pub struct StudioApp {
     state: StudioState,
+    mode: StudioMode,
+    schematic: Option<SchematicDocument>,
+    schematic_path_input: String,
+    schematic_notice: Notice,
     path_input: String,
     viewport: Viewport,
     file_dialog: Option<FileDialog>,
@@ -597,18 +616,28 @@ pub struct StudioApp {
 }
 
 impl StudioApp {
-    /// Create the app, optionally opening a board supplied on the command line.
+    /// Create the app, optionally opening a board or schematic supplied on the command line.
     pub fn new(cc: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
         configure_style(&cc.egui_ctx);
         let mut app = Self {
             state: StudioState::new_demo(),
+            mode: StudioMode::Board,
+            schematic: Some(SchematicDocument::demo()),
+            schematic_path_input: String::new(),
+            schematic_notice: Notice::info(
+                "Demo schematic loaded. Click two points to add a wire.",
+            ),
             path_input: String::new(),
             viewport: Viewport::new(),
             file_dialog: None,
             show_about: false,
         };
         if let Some(path) = initial_path {
-            app.open_board(path);
+            if is_schematic_path(&path) {
+                app.open_schematic(path);
+            } else {
+                app.open_board(path);
+            }
         }
         app
     }
@@ -616,6 +645,61 @@ impl StudioApp {
     fn open_board(&mut self, path: PathBuf) {
         self.path_input = path.display().to_string();
         let _ = self.state.open_path(&path);
+        self.mode = StudioMode::Board;
+    }
+
+    fn new_schematic(&mut self) {
+        self.schematic = Some(SchematicDocument::empty());
+        self.schematic_path_input.clear();
+        self.mode = StudioMode::Schematic;
+        self.schematic_notice =
+            Notice::info("New schematic created. Click two points to add a wire.");
+    }
+
+    fn open_schematic(&mut self, path: PathBuf) {
+        self.schematic_path_input = path.display().to_string();
+        let mut document = self.schematic.take().unwrap_or_else(SchematicDocument::empty);
+        match document.open_path(&path) {
+            Ok(()) => {
+                let preserved = document.warnings().len();
+                self.schematic = Some(document);
+                self.mode = StudioMode::Schematic;
+                let mut text = format!("Opened {}", path.display());
+                if preserved > 0 {
+                    text.push_str(&format!("; {preserved} schematic construct(s) preserved"));
+                }
+                self.schematic_notice = Notice::info(text);
+            }
+            Err(error) => {
+                self.schematic = Some(document);
+                self.mode = StudioMode::Schematic;
+                self.schematic_notice = Notice::error(error.to_string());
+            }
+        }
+    }
+
+    fn save_schematic_to(&mut self, path: PathBuf) {
+        let Some(document) = self.schematic.as_mut() else {
+            return;
+        };
+        match document.save_path(&path) {
+            Ok(()) => {
+                self.schematic_path_input = path.display().to_string();
+                self.schematic_notice = Notice::info(format!("Saved {}", path.display()));
+            }
+            Err(error) => {
+                self.schematic_notice = Notice::error(error.to_string());
+            }
+        }
+    }
+
+    fn save_schematic_current(&mut self) {
+        let path =
+            self.schematic.as_ref().and_then(|document| document.path()).map(Path::to_path_buf);
+        match path {
+            Some(path) => self.save_schematic_to(path),
+            None => self.open_save_schematic_dialog(),
+        }
     }
 
     fn save_board(&mut self, path: PathBuf) {
@@ -646,14 +730,50 @@ impl StudioApp {
             .to_string()
     }
 
+    fn suggested_schematic_path(&self) -> String {
+        if let Some(path) = self.schematic.as_ref().and_then(SchematicDocument::path) {
+            return path.display().to_string();
+        }
+        if !self.schematic_path_input.trim().is_empty() {
+            return self.schematic_path_input.trim().to_string();
+        }
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("schematic.kicad_sch")
+            .display()
+            .to_string()
+    }
+
     fn open_dialog(&mut self) {
-        self.file_dialog =
-            Some(FileDialog { mode: FileMode::Open, path: self.suggested_path(), focused: false });
+        self.file_dialog = Some(FileDialog {
+            mode: FileMode::OpenBoard,
+            path: self.suggested_path(),
+            focused: false,
+        });
     }
 
     fn open_save_dialog(&mut self) {
-        self.file_dialog =
-            Some(FileDialog { mode: FileMode::Save, path: self.suggested_path(), focused: false });
+        self.file_dialog = Some(FileDialog {
+            mode: FileMode::SaveBoard,
+            path: self.suggested_path(),
+            focused: false,
+        });
+    }
+
+    fn open_schematic_dialog(&mut self) {
+        self.file_dialog = Some(FileDialog {
+            mode: FileMode::OpenSchematic,
+            path: self.suggested_schematic_path(),
+            focused: false,
+        });
+    }
+
+    fn open_save_schematic_dialog(&mut self) {
+        self.file_dialog = Some(FileDialog {
+            mode: FileMode::SaveSchematic,
+            path: self.suggested_schematic_path(),
+            focused: false,
+        });
     }
 
     fn confirm_dialog(&mut self) {
@@ -662,15 +782,33 @@ impl StudioApp {
         };
         let mut path = PathBuf::from(dialog.path.trim());
         if path.as_os_str().is_empty() {
-            self.state.set_status("Enter a board path first.", NoticeKind::Error);
+            match dialog.mode {
+                FileMode::OpenSchematic | FileMode::SaveSchematic => {
+                    self.mode = StudioMode::Schematic;
+                    self.schematic_notice = Notice::error("Enter a schematic path first.");
+                }
+                FileMode::OpenBoard | FileMode::SaveBoard => {
+                    self.state.set_status("Enter a board path first.", NoticeKind::Error);
+                }
+            }
             return;
         }
-        if dialog.mode == FileMode::Save && path.extension().is_none() {
-            path.set_extension("kicad_pcb");
+        if path.extension().is_none() {
+            match dialog.mode {
+                FileMode::SaveBoard => {
+                    path.set_extension("kicad_pcb");
+                }
+                FileMode::SaveSchematic => {
+                    path.set_extension("kicad_sch");
+                }
+                FileMode::OpenBoard | FileMode::OpenSchematic => {}
+            }
         }
         match dialog.mode {
-            FileMode::Open => self.open_board(path),
-            FileMode::Save => self.save_board(path),
+            FileMode::OpenBoard => self.open_board(path),
+            FileMode::SaveBoard => self.save_board(path),
+            FileMode::OpenSchematic => self.open_schematic(path),
+            FileMode::SaveSchematic => self.save_schematic_to(path),
         }
     }
 
@@ -683,10 +821,18 @@ impl StudioApp {
             )
         });
         if save {
-            self.save_current();
+            if self.mode == StudioMode::Schematic {
+                self.save_schematic_current();
+            } else {
+                self.save_current();
+            }
         }
         if open {
-            self.open_dialog();
+            if self.mode == StudioMode::Schematic {
+                self.open_schematic_dialog();
+            } else {
+                self.open_dialog();
+            }
         }
 
         let (undo, redo) = if typing || self.file_dialog.is_some() {
@@ -700,13 +846,22 @@ impl StudioApp {
             })
         };
         if undo {
-            self.state.undo_edit();
+            if self.mode == StudioMode::Schematic {
+                self.undo_schematic();
+            } else {
+                self.state.undo_edit();
+            }
         }
         if redo {
-            self.state.redo_edit();
+            if self.mode == StudioMode::Schematic {
+                self.redo_schematic();
+            } else {
+                self.state.redo_edit();
+            }
         }
 
-        if !typing
+        if self.mode == StudioMode::Board
+            && !typing
             && self.file_dialog.is_none()
             && ctx.input(|input| input.key_pressed(egui::Key::R))
         {
@@ -721,7 +876,7 @@ impl StudioApp {
             self.state.set_tool(tool);
         }
 
-        if !typing && self.file_dialog.is_none() && self.state.view() == ViewMode::TwoD {
+        if !typing && self.file_dialog.is_none() {
             let (zoom_in, zoom_out, fit) = ctx.input(|input| {
                 (
                     input.key_pressed(egui::Key::Plus) || input.key_pressed(egui::Key::Equals),
@@ -729,24 +884,37 @@ impl StudioApp {
                     input.key_pressed(egui::Key::Num0),
                 )
             });
-            if zoom_in {
-                self.state.zoom_by(ZOOM_STEP);
-            }
-            if zoom_out {
-                self.state.zoom_by(1.0 / ZOOM_STEP);
-            }
-            if fit {
-                self.state.reset_board_view();
+            let zoomable =
+                self.mode == StudioMode::Schematic || self.state.view() == ViewMode::TwoD;
+            if zoomable {
+                if zoom_in {
+                    self.zoom_active(SCHEMATIC_ZOOM_STEP);
+                }
+                if zoom_out {
+                    self.zoom_active(1.0 / SCHEMATIC_ZOOM_STEP);
+                }
+                if fit {
+                    self.fit_active();
+                }
             }
         }
 
-        if ctx.input(|input| input.key_pressed(egui::Key::F5)) {
+        if self.mode == StudioMode::Board
+            && !typing
+            && ctx.input(|input| input.key_pressed(egui::Key::F5))
+        {
             self.state.run_drc_checks();
         }
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             if self.file_dialog.is_some() {
                 self.file_dialog = None;
-            } else if self.state.editor().pending_start().is_some() {
+            } else if self.mode == StudioMode::Schematic
+                && self.schematic.as_ref().is_some_and(|doc| doc.pending_start().is_some())
+            {
+                self.cancel_schematic_wire();
+            } else if self.mode == StudioMode::Board
+                && self.state.editor().pending_start().is_some()
+            {
                 self.state.cancel_route();
             }
         }
@@ -754,8 +922,57 @@ impl StudioApp {
         let dropped =
             ctx.input(|input| input.raw.dropped_files.first().and_then(|file| file.path.clone()));
         if let Some(path) = dropped {
-            self.open_board(path);
+            if is_schematic_path(&path) {
+                self.open_schematic(path);
+            } else {
+                self.open_board(path);
+            }
         }
+    }
+
+    fn zoom_active(&mut self, factor: f64) {
+        if self.mode == StudioMode::Schematic {
+            if let Some(document) = self.schematic.as_mut() {
+                document.zoom_by(factor);
+            }
+        } else {
+            self.state.zoom_by(factor);
+        }
+    }
+
+    fn fit_active(&mut self) {
+        if self.mode == StudioMode::Schematic {
+            if let Some(document) = self.schematic.as_mut() {
+                document.reset_view();
+            }
+        } else {
+            self.state.reset_board_view();
+        }
+    }
+
+    fn undo_schematic(&mut self) {
+        let changed = self.schematic.as_mut().is_some_and(SchematicDocument::undo);
+        self.schematic_notice = if changed {
+            Notice::info("Undid the last schematic edit.")
+        } else {
+            Notice::info("Nothing to undo in the schematic.")
+        };
+    }
+
+    fn redo_schematic(&mut self) {
+        let changed = self.schematic.as_mut().is_some_and(SchematicDocument::redo);
+        self.schematic_notice = if changed {
+            Notice::info("Redid the last schematic edit.")
+        } else {
+            Notice::info("Nothing to redo in the schematic.")
+        };
+    }
+
+    fn cancel_schematic_wire(&mut self) {
+        if let Some(document) = self.schematic.as_mut() {
+            document.cancel_wire();
+        }
+        self.schematic_notice = Notice::info("Schematic wire cancelled.");
     }
 
     fn menu_bar(&mut self, ctx: &egui::Context) {
@@ -767,6 +984,7 @@ impl StudioApp {
                     if ui.button("New demo board").clicked() {
                         self.state.reset_demo();
                         self.path_input.clear();
+                        self.mode = StudioMode::Board;
                     }
                     if ui.button("Open board…").clicked() {
                         self.open_dialog();
@@ -781,90 +999,180 @@ impl StudioApp {
                         self.open_save_dialog();
                     }
                     ui.separator();
+                    if ui.button("New schematic").clicked() {
+                        self.new_schematic();
+                    }
+                    if ui.button("Open schematic…").clicked() {
+                        self.open_schematic_dialog();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.schematic
+                                .as_ref()
+                                .is_some_and(|document| document.path().is_some()),
+                            egui::Button::new("Save schematic"),
+                        )
+                        .clicked()
+                    {
+                        self.save_schematic_current();
+                    }
+                    if ui.button("Save schematic as…").clicked() {
+                        self.open_save_schematic_dialog();
+                    }
+                    ui.separator();
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
                 ui.menu_button("Edit", |ui| {
-                    if ui
-                        .add_enabled(
-                            self.state.editor().can_undo(),
-                            egui::Button::new("Undo track edit (Ctrl+Z)"),
-                        )
-                        .clicked()
-                    {
-                        self.state.undo_edit();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.state.editor().can_redo(),
-                            egui::Button::new("Redo track edit (Ctrl+Y)"),
-                        )
-                        .clicked()
-                    {
-                        self.state.redo_edit();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.state.editor().pending_start().is_some(),
-                            egui::Button::new("Cancel route (Esc)"),
-                        )
-                        .clicked()
-                    {
-                        self.state.cancel_route();
+                    if self.mode == StudioMode::Schematic {
+                        let can_undo =
+                            self.schematic.as_ref().is_some_and(SchematicDocument::can_undo);
+                        let can_redo =
+                            self.schematic.as_ref().is_some_and(SchematicDocument::can_redo);
+                        let pending = self
+                            .schematic
+                            .as_ref()
+                            .is_some_and(|document| document.pending_start().is_some());
+                        if ui
+                            .add_enabled(
+                                can_undo,
+                                egui::Button::new("Undo schematic edit (Ctrl+Z)"),
+                            )
+                            .clicked()
+                        {
+                            self.undo_schematic();
+                        }
+                        if ui
+                            .add_enabled(
+                                can_redo,
+                                egui::Button::new("Redo schematic edit (Ctrl+Y)"),
+                            )
+                            .clicked()
+                        {
+                            self.redo_schematic();
+                        }
+                        if ui.add_enabled(pending, egui::Button::new("Cancel wire (Esc)")).clicked()
+                        {
+                            self.cancel_schematic_wire();
+                        }
+                    } else {
+                        if ui
+                            .add_enabled(
+                                self.state.editor().can_undo(),
+                                egui::Button::new("Undo track edit (Ctrl+Z)"),
+                            )
+                            .clicked()
+                        {
+                            self.state.undo_edit();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.state.editor().can_redo(),
+                                egui::Button::new("Redo track edit (Ctrl+Y)"),
+                            )
+                            .clicked()
+                        {
+                            self.state.redo_edit();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.state.editor().pending_start().is_some(),
+                                egui::Button::new("Cancel route (Esc)"),
+                            )
+                            .clicked()
+                        {
+                            self.state.cancel_route();
+                        }
                     }
                 });
                 ui.menu_button("View", |ui| {
                     if ui
-                        .selectable_label(self.state.view() == ViewMode::TwoD, "2D top view")
+                        .selectable_label(self.mode == StudioMode::Board, "Board document")
                         .clicked()
                     {
-                        self.state.set_view(ViewMode::TwoD);
+                        self.mode = StudioMode::Board;
                     }
-                    if ui
-                        .selectable_label(self.state.view() == ViewMode::ThreeD, "3D perspective")
-                        .clicked()
-                    {
-                        self.state.set_view(ViewMode::ThreeD);
-                    }
+                    let has_schematic = self.schematic.is_some();
+                    ui.add_enabled_ui(has_schematic, |ui| {
+                        if ui
+                            .selectable_label(
+                                self.mode == StudioMode::Schematic,
+                                "Schematic document",
+                            )
+                            .clicked()
+                        {
+                            self.mode = StudioMode::Schematic;
+                        }
+                    });
                     ui.separator();
-                    let two_d = self.state.view() == ViewMode::TwoD;
-                    if ui.add_enabled(two_d, egui::Button::new("Zoom in (+)")).clicked() {
-                        self.state.zoom_by(ZOOM_STEP);
+                    let board_mode = self.mode == StudioMode::Board;
+                    ui.add_enabled_ui(board_mode, |ui| {
+                        if ui
+                            .selectable_label(self.state.view() == ViewMode::TwoD, "2D top view")
+                            .clicked()
+                        {
+                            self.state.set_view(ViewMode::TwoD);
+                        }
+                        if ui
+                            .selectable_label(
+                                self.state.view() == ViewMode::ThreeD,
+                                "3D perspective",
+                            )
+                            .clicked()
+                        {
+                            self.state.set_view(ViewMode::ThreeD);
+                        }
+                    });
+                    ui.separator();
+                    let zoomable =
+                        self.mode == StudioMode::Schematic || self.state.view() == ViewMode::TwoD;
+                    if ui.add_enabled(zoomable, egui::Button::new("Zoom in (+)")).clicked() {
+                        self.zoom_active(ZOOM_STEP);
                     }
-                    if ui.add_enabled(two_d, egui::Button::new("Zoom out (-)")).clicked() {
-                        self.state.zoom_by(1.0 / ZOOM_STEP);
+                    if ui.add_enabled(zoomable, egui::Button::new("Zoom out (-)")).clicked() {
+                        self.zoom_active(1.0 / ZOOM_STEP);
                     }
-                    if ui.add_enabled(two_d, egui::Button::new("Fit board (0)")).clicked() {
-                        self.state.reset_board_view();
+                    if ui.add_enabled(zoomable, egui::Button::new("Fit (0)")).clicked() {
+                        self.fit_active();
                     }
                 });
                 ui.menu_button("Tools", |ui| {
-                    if ui
-                        .selectable_label(self.state.tool() == StudioTool::Inspect, "Inspect")
-                        .clicked()
-                    {
-                        self.state.set_tool(StudioTool::Inspect);
-                    }
-                    if ui
-                        .selectable_label(
-                            self.state.tool() == StudioTool::Route,
-                            "Route tracks (R)",
-                        )
-                        .clicked()
-                    {
-                        if self.state.view() != ViewMode::TwoD {
-                            self.state.set_status(
-                                "Switch to the 2D view to route tracks.",
-                                NoticeKind::Error,
-                            );
-                        } else {
-                            self.state.set_tool(StudioTool::Route);
+                    if self.mode == StudioMode::Schematic {
+                        ui.label("Schematic wire capture");
+                        if ui.button("Cancel wire (Esc)").clicked() {
+                            self.cancel_schematic_wire();
                         }
-                    }
-                    ui.separator();
-                    if ui.button("Run DRC (F5)").clicked() {
-                        self.state.run_drc_checks();
+                        if ui.button("Fit schematic (0)").clicked() {
+                            self.fit_active();
+                        }
+                    } else {
+                        if ui
+                            .selectable_label(self.state.tool() == StudioTool::Inspect, "Inspect")
+                            .clicked()
+                        {
+                            self.state.set_tool(StudioTool::Inspect);
+                        }
+                        if ui
+                            .selectable_label(
+                                self.state.tool() == StudioTool::Route,
+                                "Route tracks (R)",
+                            )
+                            .clicked()
+                        {
+                            if self.state.view() != ViewMode::TwoD {
+                                self.state.set_status(
+                                    "Switch to the 2D view to route tracks.",
+                                    NoticeKind::Error,
+                                );
+                            } else {
+                                self.state.set_tool(StudioTool::Route);
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Run DRC (F5)").clicked() {
+                            self.state.run_drc_checks();
+                        }
                     }
                 });
                 ui.menu_button("Help", |ui| {
@@ -887,51 +1195,217 @@ impl StudioApp {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     ui.add_space(6.0);
-                    ui.heading("Board");
-                    ui.label(RichText::new(self.state.display_name()).strong().size(16.0));
-                    ui.label(RichText::new(self.view_label()).color(ACCENT).small());
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(self.state.view() == ViewMode::TwoD, "2D").clicked()
-                        {
-                            self.state.set_view(ViewMode::TwoD);
-                        }
-                        if ui
-                            .selectable_label(self.state.view() == ViewMode::ThreeD, "3D")
-                            .clicked()
-                        {
-                            self.state.set_view(ViewMode::ThreeD);
-                        }
-                    });
-                    if self.state.view() == ViewMode::TwoD {
+                    if self.mode == StudioMode::Schematic {
+                        self.schematic_inspector(ui);
+                    } else {
+                        ui.heading("Board");
+                        ui.label(RichText::new(self.state.display_name()).strong().size(16.0));
+                        ui.label(RichText::new(self.view_label()).color(ACCENT).small());
                         ui.horizontal(|ui| {
-                            if ui.small_button("−").on_hover_text("Zoom out (-)").clicked() {
-                                self.state.zoom_by(1.0 / ZOOM_STEP);
+                            if ui
+                                .selectable_label(self.state.view() == ViewMode::TwoD, "2D")
+                                .clicked()
+                            {
+                                self.state.set_view(ViewMode::TwoD);
                             }
-                            ui.label(format!("{:.0}%", self.state.board_view().zoom * 100.0));
-                            if ui.small_button("+").on_hover_text("Zoom in (+)").clicked() {
-                                self.state.zoom_by(ZOOM_STEP);
-                            }
-                            if ui.small_button("Fit").on_hover_text("Fit board (0)").clicked() {
-                                self.state.reset_board_view();
+                            if ui
+                                .selectable_label(self.state.view() == ViewMode::ThreeD, "3D")
+                                .clicked()
+                            {
+                                self.state.set_view(ViewMode::ThreeD);
                             }
                         });
-                        ui.label(
-                            RichText::new("Wheel to zoom · middle-drag to pan").weak().small(),
-                        );
+                        if self.state.view() == ViewMode::TwoD {
+                            ui.horizontal(|ui| {
+                                if ui.small_button("−").on_hover_text("Zoom out (-)").clicked() {
+                                    self.state.zoom_by(1.0 / ZOOM_STEP);
+                                }
+                                ui.label(format!("{:.0}%", self.state.board_view().zoom * 100.0));
+                                if ui.small_button("+").on_hover_text("Zoom in (+)").clicked() {
+                                    self.state.zoom_by(ZOOM_STEP);
+                                }
+                                if ui.small_button("Fit").on_hover_text("Fit board (0)").clicked() {
+                                    self.state.reset_board_view();
+                                }
+                            });
+                            ui.label(
+                                RichText::new("Wheel to zoom · middle-drag to pan").weak().small(),
+                            );
+                        }
+                        ui.separator();
+                        self.document_section(ui);
+                        ui.separator();
+                        self.routing_section(ui);
+                        ui.separator();
+                        self.board_summary(ui);
+                        ui.separator();
+                        self.rules_summary(ui);
+                        ui.separator();
+                        self.drc_section(ui);
                     }
-                    ui.separator();
-                    self.document_section(ui);
-                    ui.separator();
-                    self.routing_section(ui);
-                    ui.separator();
-                    self.board_summary(ui);
-                    ui.separator();
-                    self.rules_summary(ui);
-                    ui.separator();
-                    self.drc_section(ui);
                     ui.add_space(12.0);
                 });
             });
+    }
+
+    fn schematic_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Schematic");
+        let name = self
+            .schematic
+            .as_ref()
+            .and_then(|document| document.path())
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Demo schematic".to_string());
+        ui.label(RichText::new(name).strong().size(16.0));
+        ui.label(RichText::new("KiCad .kicad_sch workspace").color(ACCENT).small());
+
+        let zoom = self.schematic.as_ref().map(|document| document.view().zoom).unwrap_or(1.0);
+        ui.horizontal(|ui| {
+            if ui.small_button("−").on_hover_text("Zoom out (-)").clicked() {
+                if let Some(document) = self.schematic.as_mut() {
+                    document.zoom_by(1.0 / SCHEMATIC_ZOOM_STEP);
+                }
+            }
+            ui.label(format!("{zoom:.0}%"));
+            if ui.small_button("+").on_hover_text("Zoom in (+)").clicked() {
+                if let Some(document) = self.schematic.as_mut() {
+                    document.zoom_by(SCHEMATIC_ZOOM_STEP);
+                }
+            }
+            if ui.small_button("Fit").on_hover_text("Fit schematic (0)").clicked() {
+                self.fit_active();
+            }
+        });
+        ui.label(RichText::new("Wheel to zoom · drag to pan").weak().small());
+
+        ui.separator();
+        ui.heading("Document");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.schematic_path_input)
+                .hint_text("path to schematic.kicad_sch")
+                .desired_width(f32::INFINITY),
+        );
+        ui.label(
+            RichText::new("Schematics open and save as .kicad_sch; unknown nodes are retained.")
+                .weak()
+                .small(),
+        );
+        ui.horizontal(|ui| {
+            if ui.button("Open").clicked() {
+                let path = PathBuf::from(self.schematic_path_input.trim());
+                if path.as_os_str().is_empty() {
+                    self.schematic_notice = Notice::error("Enter a schematic path first.");
+                } else {
+                    self.open_schematic(path);
+                }
+            }
+            if ui.button("Save").clicked() {
+                let path = PathBuf::from(self.schematic_path_input.trim());
+                if path.as_os_str().is_empty() {
+                    self.open_save_schematic_dialog();
+                } else {
+                    self.save_schematic_to(path);
+                }
+            }
+            if ui.button("Save as…").clicked() {
+                self.open_save_schematic_dialog();
+            }
+            if ui.button("New").clicked() {
+                self.new_schematic();
+            }
+        });
+
+        ui.separator();
+        ui.heading("Wire capture");
+        let (wires, pending, can_undo, can_redo) = self
+            .schematic
+            .as_ref()
+            .map(|document| {
+                let wires = document.root_sheet().map_or(0, |sheet| sheet.wires.len());
+                (wires, document.pending_start(), document.can_undo(), document.can_redo())
+            })
+            .unwrap_or((0, None, false, false));
+        ui.label(format!("{wires} wire(s) on the root sheet"));
+        ui.label(
+            RichText::new(format!(
+                "Click a wire start, then a destination. Endpoints snap to {WIRE_GRID:.2} mm."
+            ))
+            .weak()
+            .small(),
+        );
+        if let Some(start) = pending {
+            ui.label(
+                RichText::new(format!("Start: {:.2}, {:.2} mm", start.x, start.y)).color(ACCENT),
+            );
+            if ui.button("Cancel wire").clicked() {
+                self.cancel_schematic_wire();
+            }
+        } else {
+            ui.label(RichText::new("No wire start point set.").weak().small());
+        }
+        ui.horizontal(|ui| {
+            if ui.add_enabled(can_undo, egui::Button::new("Undo")).clicked() {
+                self.undo_schematic();
+            }
+            if ui.add_enabled(can_redo, egui::Button::new("Redo")).clicked() {
+                self.redo_schematic();
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Symbols are drawn as labeled bodies until schematic symbol graphics are modeled.",
+            )
+            .weak()
+            .small(),
+        );
+
+        ui.separator();
+        ui.heading("Schematic summary");
+        let (sheets, components, labels, junctions, no_connects) = self
+            .schematic
+            .as_ref()
+            .map(|document| {
+                let root = document.root_sheet();
+                (
+                    document.data().sheets.len(),
+                    document.data().components.len(),
+                    root.map_or(0, |sheet| sheet.labels.len()),
+                    root.map_or(0, |sheet| sheet.junctions.len()),
+                    root.map_or(0, |sheet| sheet.no_connects.len()),
+                )
+            })
+            .unwrap_or((0, 0, 0, 0, 0));
+        egui::Grid::new("kaicad-schematic-summary").num_columns(2).spacing([14.0, 4.0]).show(
+            ui,
+            |ui| {
+                ui.label("Sheets");
+                ui.label(sheets.to_string());
+                ui.end_row();
+                ui.label("Components");
+                ui.label(components.to_string());
+                ui.end_row();
+                ui.label("Labels");
+                ui.label(labels.to_string());
+                ui.end_row();
+                ui.label("Junctions");
+                ui.label(junctions.to_string());
+                ui.end_row();
+                ui.label("No-connects");
+                ui.label(no_connects.to_string());
+                ui.end_row();
+            },
+        );
+
+        if let Some(document) = self.schematic.as_ref() {
+            if !document.warnings().is_empty() {
+                ui.separator();
+                ui.heading("Preserved constructs");
+                for warning in document.warnings().iter().take(5) {
+                    ui.label(RichText::new(warning).weak().small());
+                }
+            }
+        }
     }
 
     fn view_label(&self) -> &'static str {
@@ -1222,6 +1696,10 @@ impl StudioApp {
     }
 
     fn right_panel(&self, ctx: &egui::Context) {
+        if self.mode == StudioMode::Schematic {
+            self.schematic_right_panel(ctx);
+            return;
+        }
         let design = self.state.design();
         egui::SidePanel::right("kaicad-stack")
             .resizable(true)
@@ -1292,24 +1770,97 @@ impl StudioApp {
             });
     }
 
+    fn schematic_right_panel(&self, ctx: &egui::Context) {
+        egui::SidePanel::right("kaicad-schematic-stack")
+            .resizable(true)
+            .default_width(260.0)
+            .width_range(220.0..=380.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.add_space(6.0);
+                    ui.heading("Components");
+                    let Some(document) = self.schematic.as_ref() else {
+                        ui.label(RichText::new("No schematic open.").weak());
+                        return;
+                    };
+                    if document.data().components.is_empty() {
+                        ui.label(RichText::new("None placed.").weak());
+                    }
+                    for component in &document.data().components {
+                        let value = component
+                            .properties
+                            .iter()
+                            .find(|property| property.name == "Value")
+                            .map(|property| property.value.as_str())
+                            .unwrap_or_default();
+                        ui.label(RichText::new(&component.reference_designator).strong());
+                        ui.label(
+                            RichText::new(format!("{} · {}", component.library_id, value))
+                                .weak()
+                                .small(),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{:.1}, {:.1} mm",
+                                component.placement.position.x, component.placement.position.y
+                            ))
+                            .weak()
+                            .small(),
+                        );
+                        ui.add_space(5.0);
+                    }
+
+                    ui.separator();
+                    ui.heading("Sheets");
+                    for sheet in &document.data().sheets {
+                        ui.label(RichText::new(&sheet.name).strong());
+                        if !sheet.file_name.is_empty() {
+                            ui.label(RichText::new(&sheet.file_name).weak().small());
+                        }
+                        ui.add_space(4.0);
+                    }
+                });
+            });
+    }
+
     fn status_bar(&self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("kaicad-status").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let notice = self.state.notice();
+                let notice = if self.mode == StudioMode::Schematic {
+                    &self.schematic_notice
+                } else {
+                    self.state.notice()
+                };
                 let color = match notice.kind {
                     NoticeKind::Info => ui.visuals().text_color(),
                     NoticeKind::Error => ERROR_COLOR,
                 };
                 ui.label(RichText::new(&notice.text).color(color));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let renderer_label = if self.state.view() == ViewMode::TwoD {
-                        format!("{:.0}% · software 2D/3D", self.state.board_view().zoom * 100.0)
+                    let (renderer_label, path) = if self.mode == StudioMode::Schematic {
+                        let zoom = self
+                            .schematic
+                            .as_ref()
+                            .map(|document| document.view().zoom)
+                            .unwrap_or(1.0);
+                        (
+                            format!("{zoom:.0}% · schematic"),
+                            self.schematic
+                                .as_ref()
+                                .and_then(SchematicDocument::path)
+                                .map(Path::to_path_buf),
+                        )
                     } else {
-                        "software 3D".to_string()
+                        let label = if self.state.view() == ViewMode::TwoD {
+                            format!("{:.0}% · software 2D/3D", self.state.board_view().zoom * 100.0)
+                        } else {
+                            "software 3D".to_string()
+                        };
+                        (label, self.state.path().map(Path::to_path_buf))
                     };
                     ui.label(RichText::new(renderer_label).weak().small());
                     ui.separator();
-                    if let Some(path) = self.state.path() {
+                    if let Some(path) = path {
                         ui.label(RichText::new(path.display().to_string()).weak().small());
                     }
                 });
@@ -1318,6 +1869,10 @@ impl StudioApp {
     }
 
     fn central_panel(&mut self, ctx: &egui::Context) {
+        if self.mode == StudioMode::Schematic {
+            self.schematic_canvas(ctx);
+            return;
+        }
         egui::CentralPanel::default().show(ctx, |ui| {
             let available = ui.available_size();
             if available.x < 2.0 || available.y < 2.0 {
@@ -1467,6 +2022,152 @@ impl StudioApp {
         });
     }
 
+    fn schematic_canvas(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let available = ui.available_size();
+            if available.x < 2.0 || available.y < 2.0 {
+                return;
+            }
+            let size = [available.x as f64, available.y as f64];
+            let (rect, response) =
+                ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+            let response = response.on_hover_cursor(egui::CursorIcon::Crosshair);
+
+            if response.dragged_by(egui::PointerButton::Middle)
+                || response.dragged_by(egui::PointerButton::Primary)
+            {
+                let delta = ui.input(|input| input.pointer.delta());
+                let transform = self.schematic.as_ref().and_then(|document| {
+                    SchematicTransform::for_view(
+                        document.data(),
+                        size[0],
+                        size[1],
+                        document.view(),
+                    )
+                });
+                if let Some(transform) = transform {
+                    if let Some(document) = self.schematic.as_mut() {
+                        let dx = -(delta.x as f64) / transform.scale();
+                        let dy = delta.y as f64 / transform.scale();
+                        if dx != 0.0 || dy != 0.0 {
+                            document.pan(dx, dy);
+                        }
+                    }
+                }
+            }
+
+            if response.hovered() {
+                let (scroll, pinch) =
+                    ui.input(|input| (input.smooth_scroll_delta.y, input.zoom_delta()));
+                let factor = if (pinch - 1.0).abs() > 1e-4 {
+                    pinch as f64
+                } else if scroll.abs() > 0.01 {
+                    (scroll as f64 * 0.002).exp()
+                } else {
+                    1.0
+                };
+                if factor != 1.0 {
+                    if let Some(pointer) = response.hover_pos() {
+                        let local = pointer - rect.min;
+                        if let Some(document) = self.schematic.as_mut() {
+                            document.zoom_at(
+                                factor,
+                                [local.x as f64, local.y as f64],
+                                size,
+                            );
+                        }
+                    }
+                }
+            }
+
+            let transform = self.schematic.as_ref().and_then(|document| {
+                SchematicTransform::for_view(
+                    document.data(),
+                    size[0],
+                    size[1],
+                    document.view(),
+                )
+            });
+
+            match (&self.schematic, transform) {
+                (Some(document), Some(transform)) => {
+                    draw_schematic(ui, rect, transform, document);
+                }
+                _ => {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "Open or create a schematic document.",
+                        egui::FontId::proportional(14.0),
+                        ui.visuals().weak_text_color(),
+                    );
+                }
+            }
+
+            if let (Some(document), Some(transform)) = (self.schematic.as_ref(), transform) {
+                if let Some(start) = document.pending_start() {
+                    let [x, y] = transform.schematic_to_screen(start.x, start.y);
+                    let screen = rect.min + egui::vec2(x as f32, y as f32);
+                    let stroke = egui::Stroke::new(1.5_f32, ACCENT);
+                    ui.painter().circle_stroke(screen, 6.0, stroke);
+                    ui.painter().line_segment(
+                        [screen - egui::vec2(9.0, 0.0), screen + egui::vec2(9.0, 0.0)],
+                        stroke,
+                    );
+                    ui.painter().line_segment(
+                        [screen - egui::vec2(0.0, 9.0), screen + egui::vec2(0.0, 9.0)],
+                        stroke,
+                    );
+                    if let Some(pointer) = response.hover_pos() {
+                        let local = pointer - rect.min;
+                        let [hover_x, hover_y] = transform.screen_to_schematic(
+                            local.x as f64,
+                            local.y as f64,
+                        );
+                        let [end_x, end_y] =
+                            transform.schematic_to_screen(hover_x, hover_y);
+                        let end = rect.min + egui::vec2(end_x as f32, end_y as f32);
+                        ui.painter().line_segment(
+                            [screen, end],
+                            egui::Stroke::new(1.0_f32, ACCENT),
+                        );
+                    }
+                }
+            }
+
+            if response.clicked() {
+                if let (Some(transform), Some(pointer)) =
+                    (transform, response.interact_pointer_pos())
+                {
+                    let local = pointer - rect.min;
+                    let [x, y] = transform
+                        .screen_to_schematic(local.x as f64, local.y as f64);
+                    if let Some(document) = self.schematic.as_mut() {
+                        let started = document.pending_start().is_some();
+                        let result = if started {
+                            document.add_wire(Point::new(x, y))
+                        } else {
+                            document.begin_wire(Point::new(x, y))
+                        };
+                        self.schematic_notice = match result {
+                            Ok(WireClick::Started) => {
+                                let snapped_x = (x / WIRE_GRID).round() * WIRE_GRID;
+                                let snapped_y = (y / WIRE_GRID).round() * WIRE_GRID;
+                                Notice::info(format!(
+                                    "Wire start set at {snapped_x:.2}, {snapped_y:.2} mm. Click a destination."
+                                ))
+                            }
+                            Ok(WireClick::Added) => {
+                                Notice::info("Wire added. Click another start point.")
+                            }
+                            Err(error) => Notice::error(error.to_string()),
+                        };
+                    }
+                }
+            }
+        });
+    }
+
     fn file_dialog_window(&mut self, ctx: &egui::Context) {
         let Some(dialog) = self.file_dialog.as_mut() else {
             return;
@@ -1494,13 +2195,15 @@ impl StudioApp {
                     response.request_focus();
                     dialog.focused = true;
                 }
-                ui.label(
-                    RichText::new(
-                        "Use an absolute path or a path relative to the launch directory. .kicad_pcb is native; .json is supported.",
-                    )
-                    .weak()
-                    .small(),
-                );
+                let hint = if matches!(
+                    dialog.mode,
+                    FileMode::OpenSchematic | FileMode::SaveSchematic
+                ) {
+                    "Use an absolute path or a path relative to the launch directory. .kicad_sch is required."
+                } else {
+                    "Use an absolute path or a path relative to the launch directory. .kicad_pcb is native; .json is supported."
+                };
+                ui.label(RichText::new(hint).weak().small());
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
@@ -1549,10 +2252,11 @@ impl StudioApp {
                 );
                 ui.label(
                     "Current shell: board opening/saving, 2D/3D views with 2D zoom/pan, \
-                     stackup and footprint inspection, DRC, and undoable track routing in 2D.",
+                     stackup and footprint inspection, DRC, undoable track routing in 2D, \
+                     and a schematic workspace with pan/zoom and wire capture.",
                 );
                 ui.label(
-                    "Footprint placement, schematic capture and cross-probing are not implemented.",
+                    "Footprint placement, schematic symbol placement and cross-probing are not implemented.",
                 );
             });
         self.show_about = open;
@@ -1569,6 +2273,144 @@ impl eframe::App for StudioApp {
         self.central_panel(ctx);
         self.file_dialog_window(ctx);
         self.about_window(ctx);
+    }
+}
+
+fn is_schematic_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("kicad_sch"))
+}
+
+fn draw_schematic(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    transform: SchematicTransform,
+    document: &SchematicDocument,
+) {
+    let painter = ui.painter().with_clip_rect(rect);
+    let map = |x: f64, y: f64| {
+        let [screen_x, screen_y] = transform.schematic_to_screen(x, y);
+        egui::pos2(rect.min.x + screen_x as f32, rect.min.y + screen_y as f32)
+    };
+    let data = document.data();
+
+    let sheet_stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(139, 180, 232));
+    for sheet in data.sheets.iter().filter(|sheet| sheet.parent.is_some()) {
+        let width = sheet.size.x.max(10.0);
+        let height = sheet.size.y.max(7.5);
+        let top_left = map(sheet.position.x, sheet.position.y + height);
+        let bottom_right = map(sheet.position.x + width, sheet.position.y);
+        let sheet_rect = egui::Rect::from_two_pos(top_left, bottom_right);
+        painter.rect_filled(sheet_rect, 2.0, Color32::from_rgb(24, 33, 45));
+        painter.rect_stroke(sheet_rect, 2.0, sheet_stroke, egui::StrokeKind::Inside);
+        painter.text(
+            sheet_rect.left_top() + egui::vec2(4.0, 4.0),
+            egui::Align2::LEFT_TOP,
+            &sheet.name,
+            egui::FontId::proportional(12.0),
+            Color32::from_rgb(200, 216, 236),
+        );
+        if !sheet.file_name.is_empty() {
+            painter.text(
+                sheet_rect.left_bottom() + egui::vec2(4.0, -4.0),
+                egui::Align2::LEFT_BOTTOM,
+                &sheet.file_name,
+                egui::FontId::proportional(10.0),
+                Color32::from_rgb(140, 156, 176),
+            );
+        }
+    }
+
+    for component in &data.components {
+        let position = component.placement.position;
+        let top_left = map(
+            position.x - crate::schematic::COMPONENT_WIDTH / 2.0,
+            position.y + crate::schematic::COMPONENT_HEIGHT / 2.0,
+        );
+        let bottom_right = map(
+            position.x + crate::schematic::COMPONENT_WIDTH / 2.0,
+            position.y - crate::schematic::COMPONENT_HEIGHT / 2.0,
+        );
+        let body = egui::Rect::from_two_pos(top_left, bottom_right);
+        painter.rect_filled(body, 3.0, Color32::from_rgb(30, 42, 55));
+        painter.rect_stroke(
+            body,
+            3.0,
+            egui::Stroke::new(1.5_f32, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            body.center_top() + egui::vec2(0.0, 4.0),
+            egui::Align2::CENTER_TOP,
+            &component.reference_designator,
+            egui::FontId::proportional(13.0),
+            Color32::WHITE,
+        );
+        if let Some(value) = component.properties.iter().find(|property| property.name == "Value") {
+            painter.text(
+                body.center_bottom() + egui::vec2(0.0, -4.0),
+                egui::Align2::CENTER_BOTTOM,
+                &value.value,
+                egui::FontId::proportional(12.0),
+                Color32::from_rgb(224, 196, 138),
+            );
+        }
+        painter.text(
+            body.center(),
+            egui::Align2::CENTER_CENTER,
+            &component.library_id,
+            egui::FontId::proportional(9.0),
+            Color32::from_rgb(140, 156, 176),
+        );
+    }
+
+    if let Some(root) = document.root_sheet() {
+        let wire_stroke = egui::Stroke::new(2.0_f32, Color32::from_rgb(122, 202, 143));
+        for wire in &root.wires {
+            for segment in wire.points.windows(2) {
+                painter.line_segment(
+                    [map(segment[0].x, segment[0].y), map(segment[1].x, segment[1].y)],
+                    wire_stroke,
+                );
+            }
+        }
+        for junction in &root.junctions {
+            painter.circle_filled(
+                map(junction.position.x, junction.position.y),
+                4.0,
+                Color32::from_rgb(122, 202, 143),
+            );
+        }
+        for no_connect in &root.no_connects {
+            let center = map(no_connect.position.x, no_connect.position.y);
+            let stroke = egui::Stroke::new(1.5_f32, Color32::from_rgb(232, 120, 120));
+            painter.line_segment(
+                [center + egui::vec2(-4.0, -4.0), center + egui::vec2(4.0, 4.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [center + egui::vec2(-4.0, 4.0), center + egui::vec2(4.0, -4.0)],
+                stroke,
+            );
+        }
+        for label in &root.labels {
+            let color = match label.label_type {
+                LabelType::Local => Color32::from_rgb(222, 218, 160),
+                LabelType::Global => Color32::from_rgb(232, 145, 51),
+                LabelType::Hierarchical => Color32::from_rgb(139, 180, 232),
+                LabelType::Power => Color32::from_rgb(244, 112, 112),
+            };
+            let center = map(label.position.x, label.position.y);
+            painter.circle_filled(center, 2.5, color);
+            painter.text(
+                center + egui::vec2(4.0, -4.0),
+                egui::Align2::LEFT_BOTTOM,
+                &label.name,
+                egui::FontId::proportional(13.0),
+                color,
+            );
+        }
     }
 }
 
@@ -1744,6 +2586,14 @@ mod tests {
         assert_eq!(state.tool(), StudioTool::Inspect);
 
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn schematic_paths_are_detected_by_extension() {
+        assert!(is_schematic_path(Path::new("main.kicad_sch")));
+        assert!(is_schematic_path(Path::new("MAIN.KICAD_SCH")));
+        assert!(!is_schematic_path(Path::new("main.kicad_pcb")));
+        assert!(!is_schematic_path(Path::new("main.json")));
     }
 
     #[test]

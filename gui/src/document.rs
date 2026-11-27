@@ -1,12 +1,15 @@
-//! Board-document persistence for KaiCad Studio.
+//! Board and schematic document persistence for KaiCad Studio.
 //!
-//! `.kicad_pcb` is the native Studio document format. A board is imported into
+//! `.kicad_pcb` is the native Studio board format. A board is imported into
 //! [`PcbDesign`] when opened and written back through the same KiCad exporter
 //! when saved, retaining source constructs that KaiCad does not model. JSON
-//! remains available as an explicit interchange/debug format.
+//! remains available as an explicit board interchange/debug format.
+//! `.kicad_sch` schematics use [`SchematicData`] and the KiCad schematic
+//! importer/exporter, including preservation of unmodelled nodes.
 
 use std::path::Path;
 
+use core::project::SchematicData;
 use pcb::PcbDesign;
 
 /// A board loaded from disk and any preservation warnings produced by import.
@@ -18,7 +21,17 @@ pub struct LoadedBoard {
     pub warnings: Vec<String>,
 }
 
-/// Failure while reading or writing a board document.
+/// A schematic loaded from disk and any preservation warnings produced by
+/// import.
+#[derive(Debug, Clone)]
+pub struct LoadedSchematic {
+    /// The schematic model.
+    pub data: SchematicData,
+    /// Constructs retained in the source document but not semantically modeled.
+    pub warnings: Vec<String>,
+}
+
+/// Failure while reading or writing a board or schematic document.
 #[derive(Debug)]
 pub enum DocumentError {
     /// No path was supplied.
@@ -27,10 +40,12 @@ pub enum DocumentError {
     Io(std::io::Error),
     /// The document is not valid KaiCad board JSON.
     Json(serde_json::Error),
-    /// The document is not a supported KiCad board.
+    /// The document is not a supported KiCad board or schematic.
     KiCad(kicad_parser::ParseError),
     /// The extension does not identify a supported board format.
     UnsupportedExtension(String),
+    /// The extension does not identify a supported schematic format.
+    UnsupportedSchematicExtension(String),
 }
 
 impl std::fmt::Display for DocumentError {
@@ -44,6 +59,9 @@ impl std::fmt::Display for DocumentError {
                 formatter,
                 "unsupported board format '{extension}'; expected .kicad_pcb or .json"
             ),
+            Self::UnsupportedSchematicExtension(extension) => {
+                write!(formatter, "unsupported schematic format '{extension}'; expected .kicad_sch")
+            }
         }
     }
 }
@@ -51,7 +69,9 @@ impl std::fmt::Display for DocumentError {
 impl std::error::Error for DocumentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::EmptyPath | Self::UnsupportedExtension(_) => None,
+            Self::EmptyPath
+            | Self::UnsupportedExtension(_)
+            | Self::UnsupportedSchematicExtension(_) => None,
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
             Self::KiCad(error) => Some(error),
@@ -136,6 +156,49 @@ pub fn load_design(path: impl AsRef<Path>) -> Result<LoadedBoard, DocumentError>
     }
 }
 
+fn schematic_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+/// Load a schematic from a `.kicad_sch` file.
+pub fn load_schematic(path: impl AsRef<Path>) -> Result<LoadedSchematic, DocumentError> {
+    let path = path.as_ref();
+    if path.as_os_str().is_empty() {
+        return Err(DocumentError::EmptyPath);
+    }
+    let extension = schematic_extension(path);
+    if extension != "kicad_sch" {
+        return Err(DocumentError::UnsupportedSchematicExtension(if extension.is_empty() {
+            "<none>".to_string()
+        } else {
+            extension
+        }));
+    }
+    let imported = kicad_parser::load_schematic(path)?;
+    Ok(LoadedSchematic { data: imported.data, warnings: imported.warnings })
+}
+
+/// Save a schematic to a `.kicad_sch` file, creating parent directories.
+pub fn save_schematic(data: &SchematicData, path: impl AsRef<Path>) -> Result<(), DocumentError> {
+    let path = path.as_ref();
+    if path.as_os_str().is_empty() {
+        return Err(DocumentError::EmptyPath);
+    }
+    let extension = schematic_extension(path);
+    if extension != "kicad_sch" {
+        return Err(DocumentError::UnsupportedSchematicExtension(if extension.is_empty() {
+            "<none>".to_string()
+        } else {
+            extension
+        }));
+    }
+    kicad_parser::save_schematic(data, path)?;
+    Ok(())
+}
+
 /// Save a board to `path`, creating parent directories as needed.
 ///
 /// `.kicad_pcb` is written through the KiCad exporter and remains the native
@@ -218,6 +281,35 @@ mod tests {
         assert!(matches!(
             error,
             DocumentError::UnsupportedExtension(extension) if extension == "kicad_sch"
+        ));
+    }
+
+    #[test]
+    fn schematic_fixture_loads_and_round_trips() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../kicad-parser/tests/fixtures/compat.kicad_sch");
+        let loaded = load_schematic(&fixture).expect("schematic fixture loads");
+        let root = loaded.data.sheets.first().expect("root sheet");
+        assert_eq!(loaded.data.components.len(), 1);
+        assert_eq!(root.wires.len(), 2);
+        assert_eq!(root.junctions.len(), 1);
+        assert_eq!(root.no_connects.len(), 1);
+        assert_eq!(root.labels.len(), 2);
+
+        let path = temp_path("round-trip.kicad_sch");
+        save_schematic(&loaded.data, &path).expect("schematic saves");
+        let reopened = load_schematic(&path).expect("schematic reloads");
+        assert_eq!(reopened.data.components.len(), 1);
+        assert_eq!(reopened.data.sheets[0].wires.len(), 2);
+        let _ = std::fs::remove_dir_all(path.parent().and_then(Path::parent).expect("temp root"));
+    }
+
+    #[test]
+    fn non_schematic_extensions_are_rejected() {
+        let error = load_schematic(temp_path("main.kicad_pcb")).expect_err("not a schematic");
+        assert!(matches!(
+            error,
+            DocumentError::UnsupportedSchematicExtension(extension) if extension == "kicad_pcb"
         ));
     }
 

@@ -163,6 +163,12 @@ see [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md).
 - `+`/`-`/`0` shortcuts and status-bar zoom percentage; opening a board or reloading the demo resets the view
 - 3 new renderer tests and 2 new GUI tests; total tests: 389
 
+### Schematic workspace
+- Studio switches between board and schematic documents; `.kicad_sch` files open and save through `kicad-parser`
+- Canvas draws wires, junctions, local/global labels, no-connects, child-sheet symbols and labeled component bodies with pan/zoom
+- Wire capture snaps to a 1.27 mm grid, uses deterministic UUIDv5 ids, and supports bounded undo/redo plus save/reload
+- 12 new GUI tests; total tests: 401
+
 ### KiCad PCB compatibility subset
 - `kicad-parser` now reads and writes `.kicad_pcb` boards for the subset represented by `PcbDesign`
 - Preserves layers, named nets (`PcbNet`), Edge.Cuts outlines, footprints/pads (including pad numbers and rotated placement), tracks and vias
@@ -199,7 +205,7 @@ See [`docs/NEXT_AGENT_PROMPT.md`](docs/NEXT_AGENT_PROMPT.md) for the full brief.
 - [ ] Add a user guide for build, plugin management and limitations
 - [ ] Add performance baselines without timing assertions
 - [ ] Complete the release checklist and compatibility audit
-- [ ] Target: ≥390 tests, clippy/fmt/doc/link/release clean
+- [ ] Target: ≥402 tests, clippy/fmt/doc/link/release clean
 
 ## 🚧 Full KiCad parity — post-beta program
 
@@ -207,7 +213,7 @@ See [`docs/KICAD_PARITY.md`](docs/KICAD_PARITY.md) for the gap matrix, exit
 criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 
 - [ ] Integrated project document owning schematic and PCB
-- [ ] Schematic capture, annotation, hierarchy and geometry-based connectivity
+- [ ] Full schematic capture: symbol/label placement, annotation, hierarchy and geometry-based connectivity
 - [x] `.kicad_pcb` supported-subset read/write, CLI conversion and unknown-construct preservation
 - [x] `.kicad_pro` / `.kicad_sch` / `.kicad_mod` file-level read/write and unknown-node preservation
 - [x] Semantic zones/arcs/graphics/DRC rules, library tables and a broad KiCad 9/10 corpus
@@ -239,9 +245,10 @@ criteria and sequence. The 16-week plan is a foundation, not a claim of parity.
 - ✅ Keyboard shortcuts, drag-and-drop opening and headless state tests
 - ✅ Click-to-route track editing with DRC preflight and undo/redo
 - ✅ 2D wheel zoom, drag panning and fit-to-board (`+`/`-`/`0`)
+- ✅ Schematic workspace with `.kicad_sch` open/save, pan/zoom and wire capture
 - ⬜ Footprint/pad placement and full transactional board editing
 - ⬜ Native file picker, selection/measurement tools and continuous DRC
-- ⬜ Schematic capture and cross-probing
+- ⬜ Schematic symbol graphics, symbol/label placement, annotation and cross-probing
 - [x] Decide GUI scope and slot it into the roadmap (editable PCB shell after Phase 2; full parity later)
 
 ### Phase 3 — kAI & collaboration (Weeks 9–12)

@@ -20,8 +20,8 @@
 > Studio shell adds native `.kicad_pcb` open/save, board viewing, inspection, DRC
 > and click-to-route track editing, plus `.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 > file interchange, semantic zones/arcs/graphics/keepouts, library tables and
-> shape-aware DRC. The P2 KiCad interoperability milestone is complete. The
-> workspace has 389 passing tests.
+> shape-aware DRC, and a schematic workspace with wire capture. The P2 KiCad
+> interoperability milestone is complete. The workspace has 401 passing tests.
 
 KaiCad is a Rust workspace containing a shared data model, per-domain engines,
 a deterministic software renderer, an AI subsystem (`kAI`), a collaboration
@@ -119,8 +119,9 @@ flowchart BT
 The UI layer has two front ends. `kai-cad` is the CLI (`kai-cad/src/main.rs`):
 it prints a banner, supports `--help`/`--version`, manages plugins, and runs a
 deterministic self-check that calls every subsystem. `kai-cad-gui` is KaiCad
-Studio (`gui/`): a native eframe window for board viewing, inspection, DRC and
-2D track routing. Footprint/pad editing, schematic capture and pan/zoom remain
+Studio (`gui/`): a native eframe window for board viewing, inspection, DRC,
+2D track routing and a schematic workspace with pan/zoom and wire capture.
+Footprint/pad editing, schematic symbol placement and cross-probing remain
 unimplemented.
 The AI and collaboration layers are optional: KaiCad must remain usable without
 AI, network access or external services (`PRD.md` §1.2, §1.3).
@@ -505,21 +506,29 @@ and the external `eframe`/`egui` window stack. The crate has a library
 - `demo` — deterministic two-layer demo board with five footprints, front and
   back tracks, and two through vias. It is DRC-clean under the default rules
   and renders in both views.
-- `document` — format detection by extension: `.kicad_pcb` is loaded and saved
-  through `kicad-parser`, while `.json` is an explicit interchange format.
-  `LoadedBoard` carries the design and preservation warnings; unsupported
-  extensions are rejected before I/O. Saving creates parent directories, and
-  every I/O, JSON or KiCad failure is returned to the UI and shown in the status
-  bar.
+- `document` — format detection by extension: `.kicad_pcb` and `.kicad_sch`
+  are loaded and saved through `kicad-parser`, while board `.json` is an
+  explicit interchange format. `LoadedBoard`/`LoadedSchematic` carry the data
+  and preservation warnings; unsupported extensions are rejected before I/O.
+  Saving creates parent directories, and every I/O, JSON or KiCad failure is
+  returned to the UI and shown in the status bar.
+- `schematic` — `SchematicDocument` owns `.kicad_sch` data, a bounded wire
+  history and a `BoardView`-based canvas view. `SchematicTransform` fits the
+  sheet content and round-trips schematic millimetres and logical points. Wire
+  capture snaps to a 1.27 mm grid and assigns deterministic UUIDv5 ids;
+  `undo`/`redo` keep bounded snapshots.
 
 Input and shortcuts: `Ctrl+O` opens the path dialog, `Ctrl+S` saves to the
 current path or opens Save As, `Ctrl+Z`/`Ctrl+Y` undo and redo track edits,
 `R` toggles Inspect/Route, `F5` runs DRC, `Esc` cancels a pending route, and a
 dropped file opens as a board. In 2D, the wheel zooms at the pointer,
 middle-drag pans (primary-drag also pans in Inspect), `+`/`-` zoom and `0`
-fits the board; the 3D view auto-fits. The shell offers a typed path rather
-than a native file picker and has no footprint/pad/via editing or schematic
-capture. The window uses eframe/glow for presentation but
+fits the board; the 3D view auto-fits. The schematic workspace uses the same
+wheel, `+`/`-` and `0` controls, pans with a drag, and captures a two-point
+wire from two left clicks. `StudioApp` switches between board and schematic
+documents, and drag-and-drop dispatches on the extension. The shell offers a
+typed path rather than a native file picker and has no footprint/pad/via
+editing, schematic symbol placement or cross-probing. The window uses eframe/glow for presentation but
 the board image itself is still the deterministic CPU rasterizer; no Vulkan
 code is involved.
 
@@ -744,11 +753,12 @@ manifests with deterministic registry ordering, local discovery, SQLite
 persistence, activation state, capability filters and CLI management, a
 deterministic software 2D/3D renderer, the `kai-cad` self-check binary, a
 post-Phase-2 Studio shell (`gui`) for board viewing, 2D zoom/pan, inspection,
-DRC and undoable track routing, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
+DRC, undoable track routing, and a schematic workspace for `.kicad_sch` with
+pan/zoom and wire capture, and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro`
 file interchange with semantic zones/arcs/graphics, library tables and opaque
 preservation, a five-file corpus and a 19-project template validation pass, CI
 (including a Markdown link check and coverage job), and documentation. The
-workspace has **389 passing tests**.
+workspace has **401 passing tests**.
 
 **Next (Week 16):** foundation release hardening. The planned work is:
 

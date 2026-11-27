@@ -2,9 +2,9 @@
 
 KaiCad is a pre-alpha Rust project. The core data model, schematic and PCB
 engines, routing, software renderer, persistence, collaboration primitives and
-a desktop GUI editor/inspection shell are implemented and tested, along with
-the P2 KiCad interoperability milestone and
-`.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange,
+a desktop GUI editor/inspection shell and a schematic wire-capture workspace
+are implemented and tested, along with the P2 KiCad interoperability milestone
+and `.kicad_pcb`, `.kicad_sch`, `.kicad_mod` and `.kicad_pro` file interchange,
 while full board and schematic editing, semantic KiCad project compatibility,
 the Vulkan GPU backend and some advanced engines remain incomplete. Contributions that move
 the architecture forward — or that honestly document what is missing — are
@@ -38,11 +38,13 @@ delivery sequence are in [`KICAD_PARITY.md`](KICAD_PARITY.md).
   must remain relative. Discovery must never load or execute plugin code.
   Activation is separate registry state, not a manifest field.
 - **GUI state is headless.** `gui::StudioState` owns board, path, view and DRC
-  state so it can be tested without a window; `StudioApp` is only an eframe
-  adapter. Do not duplicate PCB geometry or rasterization in the UI. The
-  viewport must keep using `renderer::Renderer`; 2D zoom and pan must go
+  state, and `gui::SchematicDocument` owns schematic data, view and wire
+  history, so both can be tested without a window; `StudioApp` is only an
+  eframe adapter. Do not duplicate PCB geometry or rasterization in the UI. The
+  board viewport must keep using `renderer::Renderer`; 2D zoom and pan must go
   through `renderer::BoardView`/`BoardTransform` so rendering and hit-testing
-  agree. Board edits must go through the PCB/routing engines, preflight DRC,
+  agree. Schematic edits use the bounded `SchematicDocument` snapshots and
+  must save through `kicad-parser`; do not bypass either with ad-hoc state. Board edits must go through the PCB/routing engines, preflight DRC,
   and preserve an undoable headless history; project edits use `core::edit`
   transactions. Do not mutate an unvalidated private copy of the design.
 - **Deterministic operations.** Do not introduce unseeded randomness into

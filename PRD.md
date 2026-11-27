@@ -11,7 +11,7 @@
 **Primary EDA compatibility:** KiCad 10  
 **Secondary EDA compatibility:** KiCad 9  
 **Rendering:** Vulkan target; deterministic software 2D/3D renderer implemented\
-**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange implemented, with the P2 KiCad interoperability milestone complete; the integrated schematic/board project document remains a post-beta program; pre-alpha
+**Status:** Architecture decisions finalized; Phase 1, Weeks 9–15, Phase 2 functional scope, the first KaiCad Studio track editor, a first schematic wire-capture workspace and `.kicad_pcb`/`.kicad_sch`/`.kicad_mod`/`.kicad_pro` file interchange implemented, with the P2 KiCad interoperability milestone complete; the integrated schematic/board project document remains a post-beta program; pre-alpha
 
 ---
 
@@ -172,9 +172,12 @@ and sync staging, bounded multi-step edit history, and a validated local
 plugin registry with SQLite persistence, activation state and CLI management.
 A native eframe-based Studio shell now opens and saves `.kicad_pcb` boards, renders
 2D/3D views with 2D zoom and pan, reports DRC, stackup and footprint information,
-and supports undoable click-to-route track editing with DRC preflight. Footprint placement,
-schematic capture, manufacturing outputs and full KiCad project-file
-compatibility have not been implemented. The CLI imports and exports supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod`
+and supports undoable click-to-route track editing with DRC preflight. A second
+workspace opens and saves `.kicad_sch` schematics, draws the supported sheet
+model on a pan/zoom canvas, and captures wires with undo/redo. Footprint
+placement, schematic symbol graphics and placement, cross-probing,
+manufacturing outputs and full KiCad project-file compatibility have not been
+implemented. The CLI imports and exports supported `.kicad_pcb`, `.kicad_sch`, `.kicad_mod`
 and `.kicad_pro` files. P2 interoperability models zones, keepouts, copper
 arcs, graphics, standard pad shapes and project DRC rules, reads and writes
 library tables, and copies project-local libraries through `project bundle`.
